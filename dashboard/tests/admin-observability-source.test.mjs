@@ -21,3 +21,18 @@ test("Admin Errors loads debug only from the selected detail endpoint", () => {
   assert.match(page, /requireSuperAdmin/);
   assert.doesNotMatch(page, /selectedFailure\.debug_curl/);
 });
+
+test("Admin API Metrics exposes and renders read-model freshness", () => {
+  const api = read("src/lib/api.ts");
+  const page = read("src/app/admin/api-metrics/page.tsx");
+
+  assert.match(api, /export interface MetricsFreshness/);
+  assert.match(api, /freshness\?:\s*MetricsFreshness/);
+  assert.match(api, /data_state:\s*"exact"\s*\|\s*"approximate"\s*\|\s*"delayed"/);
+  assert.match(api, /percentiles_approximate:\s*boolean/);
+  assert.match(api, /missing_rollup_hours\?:\s*number/);
+  assert.match(page, /metricsFreshness/);
+  assert.match(page, /Approximate percentiles/);
+  assert.match(page, /Metrics data delayed/);
+  assert.match(page, /missing_rollup_hours/);
+});

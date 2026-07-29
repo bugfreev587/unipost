@@ -491,14 +491,15 @@ func TestAPIMetricsV2RouteContracts(t *testing.T) {
 			assertV2MetricsQuery(t, v2.lastQuery, workspaceID, test.admin)
 			var response struct {
 				Data      json.RawMessage                     `json:"data"`
-				Meta      observabilityreads.MetricsFreshness `json:"meta"`
+				Meta      *MetaResponse                       `json:"meta"`
+				Freshness observabilityreads.MetricsFreshness `json:"freshness"`
 				RequestID string                              `json:"request_id"`
 			}
 			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
 				t.Fatalf("unmarshal response: %v", err)
 			}
-			if response.Meta != v2.freshness || response.RequestID != "metrics-contract-request" {
-				t.Fatalf("meta/request_id = %#v/%q, want %#v/metrics-contract-request", response.Meta, response.RequestID, v2.freshness)
+			if response.Meta != nil || response.Freshness != v2.freshness || response.RequestID != "metrics-contract-request" {
+				t.Fatalf("meta/freshness/request_id = %#v/%#v/%q, want nil/%#v/metrics-contract-request", response.Meta, response.Freshness, response.RequestID, v2.freshness)
 			}
 			assertJSONContract(t, response.Data, test.wantData)
 		})

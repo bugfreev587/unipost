@@ -91,6 +91,50 @@ func TestHubOpenLogConnectionsUseOneDynamicModeReadPerEnvelope(t *testing.T) {
 	}
 }
 
+func TestHubProjectsOneLogEnvelopePerBroadcast(t *testing.T) {
+	h := NewHub().WithLogReadSelector(staticLogReadSelector(true))
+	var calls atomic.Int64
+	project := func(payload []byte, useV2 bool) ([]byte, bool) {
+		calls.Add(1)
+		return ProjectLogEnvelope(payload, useV2)
+	}
+	first := &Conn{send: make(chan []byte, 1), project: project}
+	second := &Conn{send: make(chan []byte, 1), project: project}
+	h.Register("ws_1", first)
+	h.Register("ws_1", second)
+	defer h.Unregister("ws_1", first)
+	defer h.Unregister("ws_1", second)
+
+	canonical, _ := json.Marshal(RequestEventLogEnvelope(requestevents.Event{ID: "event-1", WorkspaceID: "ws_1"}))
+	h.Broadcast("ws_1", canonical)
+
+	assertHubLogID(t, first.send, "request:event-1")
+	assertHubLogID(t, second.send, "request:event-1")
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("projection calls = %d, want 1 per workspace broadcast", got)
+	}
+}
+
+func TestHubLogSelectorCanBeReplacedDuringBroadcast(t *testing.T) {
+	h := NewHub().WithLogReadSelector(staticLogReadSelector(false))
+	connection := &Conn{send: make(chan []byte, 256)}
+	h.RegisterLog("ws_1", connection)
+	defer h.Unregister("ws_1", connection)
+	payload, _ := json.Marshal(LogEnvelope(db.IntegrationLog{ID: 42, WorkspaceID: "ws_1", Category: "oauth"}))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			h.WithLogReadSelector(staticLogReadSelector(i%2 == 0))
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		h.Broadcast("ws_1", payload)
+	}
+	<-done
+}
+
 func assertHubLogID(t *testing.T, messages <-chan []byte, want any) {
 	t.Helper()
 	select {

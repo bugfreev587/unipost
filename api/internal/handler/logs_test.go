@@ -3,8 +3,10 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -460,6 +462,46 @@ func TestLogsV2GetUsesQualifiedIDAndMapsNotFound(t *testing.T) {
 			}
 			if v2.getWorkspaceID != "ws_authed" || v2.getID != tt.id {
 				t.Fatalf("get call = (%q, %q)", v2.getWorkspaceID, v2.getID)
+			}
+		})
+	}
+}
+
+func TestLogsV2DoesNotExposeReadFailures(t *testing.T) {
+	sentinel := errors.New("postgres password=secret")
+	tests := []struct {
+		name   string
+		invoke func(*LogsHandler, *httptest.ResponseRecorder)
+	}{
+		{
+			name: "list",
+			invoke: func(h *LogsHandler, w *httptest.ResponseRecorder) {
+				h.List(w, newLogsRequest("/v1/logs", "ws_authed"))
+			},
+		},
+		{
+			name: "detail",
+			invoke: func(h *LogsHandler, w *httptest.ResponseRecorder) {
+				r := newLogsRequest("/v1/logs/integration:12", "ws_authed")
+				rctx := chi.NewRouteContext()
+				rctx.URLParams.Add("id", "integration:12")
+				h.Get(w, r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx)))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v2 := &fakeObservabilityLogReader{listErr: sentinel, getErr: sentinel}
+			h := NewLogsHandler(&fakeLogsStore{}).SetObservabilityReads(fakeObservabilitySelector{enabled: true}, v2)
+			w := httptest.NewRecorder()
+
+			tt.invoke(h, w)
+
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500: %s", w.Code, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), sentinel.Error()) {
+				t.Fatalf("response exposed internal error: %s", w.Body.String())
 			}
 		})
 	}

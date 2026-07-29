@@ -86,6 +86,8 @@ type Hub struct {
 // Broadcast. It must be configured before the hub begins serving traffic.
 func (h *Hub) WithLogReadSelector(selector logReadSelector) *Hub {
 	if h != nil {
+		h.mu.Lock()
+		defer h.mu.Unlock()
 		h.logSelector = selector
 	}
 	return h
@@ -263,14 +265,20 @@ func (h *Hub) Broadcast(workspaceID string, msg []byte) {
 		useV2 = h.logSelector.UseV2(context.Background())
 	}
 
+	var projectedPayload []byte
+	var projectedOK bool
+	projectionReady := false
 	for c := range h.conns[workspaceID] {
 		payload := msg
 		if c.project != nil {
-			var ok bool
-			payload, ok = c.project(msg, useV2)
-			if !ok {
+			if !projectionReady {
+				projectedPayload, projectedOK = c.project(msg, useV2)
+				projectionReady = true
+			}
+			if !projectedOK {
 				continue
 			}
+			payload = projectedPayload
 		}
 		select {
 		case c.send <- payload:

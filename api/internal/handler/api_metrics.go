@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -538,13 +537,11 @@ func metricsQuery(workspaceID string, opts apiMetricsOptions, admin bool) observ
 }
 
 func writeMetricsSuccess(w http.ResponseWriter, data any, freshness observabilityreads.MetricsFreshness) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(struct {
+	writeJSON(w, http.StatusOK, struct {
 		Data      any                                 `json:"data"`
-		Meta      observabilityreads.MetricsFreshness `json:"meta"`
+		Freshness observabilityreads.MetricsFreshness `json:"freshness"`
 		RequestID string                              `json:"request_id,omitempty"`
-	}{Data: data, Meta: freshness, RequestID: requestIDFromResponse(w)})
+	}{Data: data, Freshness: freshness, RequestID: requestIDFromResponse(w)})
 }
 
 func writeMetricsReadError(w http.ResponseWriter, operation string, err error) {

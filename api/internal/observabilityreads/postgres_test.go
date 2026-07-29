@@ -127,8 +127,10 @@ func TestReadSelectorUsesOnlyGlobalPublicEvaluation(t *testing.T) {
 
 func TestListQueriesAreMetadataOnlyBoundedAndSourceAware(t *testing.T) {
 	for name, query := range map[string]string{
-		"request":     requestLogListSQL,
-		"integration": integrationLogListSQL,
+		"admin request":         requestLogAdminListSQL,
+		"admin integration":     integrationLogAdminListSQL,
+		"workspace request":     requestLogWorkspaceListSQL,
+		"workspace integration": integrationLogWorkspaceListSQL,
 	} {
 		t.Run(name, func(t *testing.T) {
 			lower := strings.ToLower(query)
@@ -137,39 +139,93 @@ func TestListQueriesAreMetadataOnlyBoundedAndSourceAware(t *testing.T) {
 					t.Fatalf("list query contains %q: %s", forbidden, query)
 				}
 			}
-			if !strings.Contains(lower, "limit $22") {
-				t.Fatalf("list query must bound candidates per source with LIMIT $22: %s", query)
+			if !strings.Contains(lower, "limit $23") {
+				t.Fatalf("list query must bound candidates per source with LIMIT $23: %s", query)
 			}
-			cursorIDType := "$21::text"
-			if name == "integration" {
-				cursorIDType = "$21::bigint"
+			cursorIDType := "$22::text"
+			if strings.Contains(name, "integration") {
+				cursorIDType = "$22::bigint"
 			}
-			if !strings.Contains(lower, "$20::text") || !strings.Contains(lower, cursorIDType) {
+			if !strings.Contains(lower, "$21::text") || !strings.Contains(lower, cursorIDType) {
 				t.Fatalf("list query lacks source-aware cursor predicate: %s", query)
 			}
 		})
 	}
-	if !strings.Contains(strings.ToLower(integrationLogListSQL), "category <> 'api_request'") {
-		t.Fatal("integration list must exclude legacy api_request duplicates")
+	for _, query := range []string{integrationLogAdminListSQL, integrationLogWorkspaceListSQL} {
+		if !strings.Contains(strings.ToLower(query), "category <> 'api_request'") {
+			t.Fatal("integration list must exclude legacy api_request duplicates")
+		}
 	}
 }
 
 func TestAdminGeneralSearchMatchesOwnerEmailInBothSources(t *testing.T) {
 	for name, query := range map[string]string{
-		"request":     requestLogListSQL,
-		"integration": integrationLogListSQL,
+		"request":     requestLogAdminListSQL,
+		"integration": integrationLogAdminListSQL,
 	} {
 		t.Run(name, func(t *testing.T) {
 			searchStart := strings.Index(query, "$14::TEXT = ''")
-			searchEnd := strings.Index(query[searchStart:], ")\n  AND ($15::TEXT")
+			searchEnd := strings.Index(query[searchStart:], ")\n  AND ($16::TEXT")
 			if searchStart < 0 || searchEnd < 0 {
 				t.Fatalf("could not isolate $14 general-search predicate: %s", query)
 			}
 			search := strings.ToLower(query[searchStart : searchStart+searchEnd])
-			if !strings.Contains(search, "u.email ilike '%' || $14 || '%'") {
+			if !strings.Contains(search, "u.email ilike $15 escape") {
 				t.Fatalf("$14 general search does not match owner email: %s", search)
 			}
 		})
+	}
+}
+
+func TestWorkspaceQueriesAvoidAdminEnrichment(t *testing.T) {
+	for name, query := range map[string]string{
+		"request list":       requestLogWorkspaceListSQL,
+		"integration list":   integrationLogWorkspaceListSQL,
+		"request detail":     requestLogWorkspaceBaseSQL,
+		"integration detail": integrationLogWorkspaceBaseSQL,
+	} {
+		t.Run(name, func(t *testing.T) {
+			lower := strings.ToLower(query)
+			for _, forbidden := range []string{"join workspaces", "join users", "from subscriptions"} {
+				if strings.Contains(lower, forbidden) {
+					t.Fatalf("workspace query contains admin enrichment %q: %s", forbidden, query)
+				}
+			}
+		})
+	}
+	for name, query := range map[string]string{
+		"request":     requestLogAdminListSQL,
+		"integration": integrationLogAdminListSQL,
+	} {
+		t.Run("admin "+name, func(t *testing.T) {
+			lower := strings.ToLower(query)
+			for _, required := range []string{"join workspaces", "join users", "from subscriptions"} {
+				if !strings.Contains(lower, required) {
+					t.Fatalf("admin query lacks enrichment %q: %s", required, query)
+				}
+			}
+		})
+	}
+}
+
+func TestLogListArgsEscapesLikeWildcardsButKeepsExactSearch(t *testing.T) {
+	filters := LogFilters{
+		OwnerEmail: `owner_100%@example.com`,
+		Query:      `request_100%\path`,
+		From:       time.Unix(100, 0),
+		To:         time.Unix(200, 0),
+	}
+
+	args := logListArgs(filters, nil, 101, LogSourceRequest)
+
+	if got := args[1]; got != `%owner\_100\%@example.com%` {
+		t.Fatalf("owner email LIKE pattern = %q", got)
+	}
+	if got := args[13]; got != filters.Query {
+		t.Fatalf("exact general search = %q, want %q", got, filters.Query)
+	}
+	if got := args[14]; got != `%request\_100\%\\path%` {
+		t.Fatalf("general search LIKE pattern = %q", got)
 	}
 }
 

@@ -523,13 +523,11 @@ LIMIT $17`
 func (h *AdminHandler) listLogsV2(w http.ResponseWriter, r *http.Request, reader observabilityreads.LogReader) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	if limit <= 0 {
+	if limit <= 0 || limit > 500 {
 		limit = 100
-	} else if limit > 200 {
-		limit = 200
 	}
 	to := parseAdminLogTime(q.Get("to"), time.Now())
-	from := parseAdminLogTime(q.Get("from"), to.Add(-24*time.Hour))
+	from := parseAdminLogTime(q.Get("from"), to.AddDate(0, 0, -7))
 	var cursor *observabilityreads.LogCursor
 	if raw := strings.TrimSpace(q.Get("cursor")); raw != "" {
 		decoded, err := observabilityreads.DecodeLogCursor(raw)

@@ -502,7 +502,7 @@ func (s *PostgresMetricsStore) Summary(ctx context.Context, query MetricsQuery) 
 		for _, row := range rows {
 			usedRollup = usedRollup || groups[metricGroupKey{Path: row.Path, Method: row.Method}].UsedRollup
 		}
-		return rows, freshnessForReturnedProvenance(freshness, usedRollup), nil
+		return legacyCompatibleMetricsRows(rows), freshnessForReturnedProvenance(freshness, usedRollup), nil
 	})
 }
 
@@ -529,7 +529,7 @@ func (s *PostgresMetricsStore) Trend(ctx context.Context, query MetricsQuery) ([
 		for _, aggregate := range groups {
 			usedRollup = usedRollup || aggregate.UsedRollup
 		}
-		return rows, freshnessForReturnedProvenance(freshness, usedRollup), nil
+		return legacyCompatibleMetricsRows(rows), freshnessForReturnedProvenance(freshness, usedRollup), nil
 	})
 }
 
@@ -554,29 +554,30 @@ func (s *PostgresMetricsStore) StatusCodes(ctx context.Context, query MetricsQue
 		for _, row := range rows {
 			usedRollup = usedRollup || groups[metricGroupKey{Path: row.Path, Method: row.Method, StatusCode: int(row.StatusCode)}].UsedRollup
 		}
-		return rows, freshnessForReturnedProvenance(freshness, usedRollup), nil
+		return legacyCompatibleMetricsRows(rows), freshnessForReturnedProvenance(freshness, usedRollup), nil
 	})
 }
 
 func (s *PostgresMetricsStore) Workspaces(ctx context.Context, query MetricsQuery) ([]AdminMetricsWorkspaceRow, MetricsFreshness, error) {
 	return withMetricsSnapshot(ctx, s, func(db metricsDB, now time.Time) ([]AdminMetricsWorkspaceRow, MetricsFreshness, error) {
-		totalGroups, freshness, err := s.loadAt(ctx, db, query, metricGroupWorkspaceTotal, now)
+		plan, err := prepareMetricsSourcePlan(ctx, db, query, now)
 		if err != nil {
-			return nil, freshness, err
+			return nil, MetricsFreshness{}, err
 		}
-		routeGroups, routeFreshness, err := s.loadAt(ctx, db, query, metricGroupWorkspaceRoute, now)
+		totalGroups, _, err := s.loadAtWithPlan(ctx, db, query, metricGroupWorkspaceTotal, plan)
 		if err != nil {
-			return nil, routeFreshness, err
+			return nil, MetricsFreshness{}, err
 		}
-		freshness.Approximate = freshness.Approximate || routeFreshness.Approximate
-		if routeFreshness.DataState == MetricsDataDelayed {
-			freshness = routeFreshness
+		routeGroups, _, err := s.loadAtWithPlan(ctx, db, query, metricGroupWorkspaceRoute, plan)
+		if err != nil {
+			return nil, MetricsFreshness{}, err
 		}
 		totals := map[string]metricAggregate{}
 		names := map[string]string{}
 		endpoints := map[string]struct {
-			path string
-			p95  int64
+			path       string
+			p95        int64
+			usedRollup bool
 		}{}
 		for key, a := range totalGroups {
 			totals[key.WorkspaceID] = a
@@ -585,22 +586,23 @@ func (s *PostgresMetricsStore) Workspaces(ctx context.Context, query MetricsQuer
 		for key, a := range routeGroups {
 			metric, err := a.Overall()
 			if err != nil {
-				return nil, freshness, err
+				return nil, MetricsFreshness{}, err
 			}
 			p95 := metric.P95MS
 			current := endpoints[key.WorkspaceID]
 			if shouldReplaceSlowestEndpoint(current.path, current.p95, key.Path, p95) {
 				endpoints[key.WorkspaceID] = struct {
-					path string
-					p95  int64
-				}{key.Path, p95}
+					path       string
+					p95        int64
+					usedRollup bool
+				}{path: key.Path, p95: p95, usedRollup: a.UsedRollup}
 			}
 		}
 		rows := make([]AdminMetricsWorkspaceRow, 0, len(totals))
 		for id, a := range totals {
 			m, err := a.Overall()
 			if err != nil {
-				return nil, freshness, err
+				return nil, MetricsFreshness{}, err
 			}
 			if m.TotalCalls < int64(max32(query.MinCalls, 1)) {
 				continue
@@ -612,9 +614,9 @@ func (s *PostgresMetricsStore) Workspaces(ctx context.Context, query MetricsQuer
 		rows = limitSlice(rows, query.Limit)
 		usedRollup := false
 		for _, row := range rows {
-			usedRollup = usedRollup || totals[row.WorkspaceID].UsedRollup
+			usedRollup = usedRollup || totals[row.WorkspaceID].UsedRollup || endpoints[row.WorkspaceID].usedRollup
 		}
-		return rows, freshnessForReturnedProvenance(freshness, usedRollup), nil
+		return legacyCompatibleMetricsRows(rows), freshnessFromSourcePlan(plan, usedRollup), nil
 	})
 }
 
@@ -647,6 +649,13 @@ func max32(a, b int32) int32 {
 func limitSlice[T any](rows []T, limit int32) []T {
 	if limit > 0 && len(rows) > int(limit) {
 		return rows[:limit]
+	}
+	return rows
+}
+
+func legacyCompatibleMetricsRows[T any](rows []T) []T {
+	if len(rows) == 0 {
+		return nil
 	}
 	return rows
 }
@@ -704,22 +713,30 @@ func (s *PostgresMetricsStore) loadAt(ctx context.Context, db metricsDB, q Metri
 	if err != nil {
 		return nil, MetricsFreshness{}, err
 	}
+	groups, usedRollup, err := s.loadAtWithPlan(ctx, db, q, mode, plan)
+	if err != nil {
+		return nil, MetricsFreshness{}, err
+	}
+	return groups, freshnessFromSourcePlan(plan, usedRollup), nil
+}
+
+func (s *PostgresMetricsStore) loadAtWithPlan(ctx context.Context, db metricsDB, q MetricsQuery, mode metricGroupMode, plan MetricsSourcePlan) (map[metricGroupKey]metricAggregate, bool, error) {
 	groups := map[metricGroupKey]metricAggregate{}
 	if len(plan.RawRanges) > 0 {
 		if err := s.loadRaw(ctx, db, groups, q, mode, plan.RawRanges); err != nil {
-			return nil, MetricsFreshness{}, err
+			return nil, false, err
 		}
 	}
 	if len(plan.RollupRanges) > 0 {
 		if err := s.loadRollup(ctx, db, groups, q, mode, plan.RollupRanges); err != nil {
-			return nil, MetricsFreshness{}, err
+			return nil, false, err
 		}
 	}
 	usedRollup := false
 	for _, aggregate := range groups {
 		usedRollup = usedRollup || aggregate.UsedRollup
 	}
-	return groups, freshnessFromSourcePlan(plan, usedRollup), nil
+	return groups, usedRollup, nil
 }
 
 func prepareMetricsSourcePlan(ctx context.Context, db metricsDB, q MetricsQuery, now time.Time) (MetricsSourcePlan, error) {
