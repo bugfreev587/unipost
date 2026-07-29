@@ -123,7 +123,9 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			x_credits_counted BIGINT NOT NULL DEFAULT 0,
 			x_credit_operation TEXT,
 			x_credit_catalog_version TEXT,
-			x_credit_billing_mode TEXT
+			x_credit_billing_mode TEXT,
+			daily_reservation_operation_key TEXT,
+			daily_reservation_release_pending BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE TABLE post_delivery_jobs (
 			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
@@ -150,7 +152,9 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			lease_expires_at TIMESTAMPTZ,
 			lease_owner TEXT,
 			first_claimed_at TIMESTAMPTZ,
-			platform_started_at TIMESTAMPTZ
+			platform_started_at TIMESTAMPTZ,
+			connection_id TEXT,
+			binding_version BIGINT
 		);
 		CREATE TABLE post_failures (
 			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
@@ -219,7 +223,10 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			external_user_id TEXT,
 			external_user_email TEXT,
 			last_refreshed_at TIMESTAMPTZ,
-			x_app_mode TEXT
+			x_app_mode TEXT,
+			connection_id TEXT,
+			binding_version BIGINT NOT NULL DEFAULT 1,
+			binding_status TEXT NOT NULL DEFAULT 'active'
 		);
 		CREATE TABLE platform_publishing_restrictions (
 			platform TEXT PRIMARY KEY,
@@ -303,6 +310,158 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 	`)
 	if err != nil {
 		t.Fatalf("create restricted-delivery integration tables: %v", err)
+	}
+	setupSocialConnectionPublishingFixtureSchema(t, pool)
+}
+
+func setupSocialConnectionPublishingFixtureSchema(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		CREATE TABLE social_connections (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL,
+			platform TEXT NOT NULL,
+			provider_identity TEXT,
+			access_token TEXT NOT NULL,
+			refresh_token TEXT,
+			token_expires_at TIMESTAMPTZ,
+			account_name TEXT,
+			account_avatar_url TEXT,
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+			scope TEXT[] NOT NULL DEFAULT '{}',
+			status TEXT NOT NULL DEFAULT 'active',
+			connection_type TEXT NOT NULL DEFAULT 'byo',
+			external_user_id TEXT,
+			external_user_email TEXT,
+			last_refreshed_at TIMESTAMPTZ,
+			x_app_mode TEXT,
+			connected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			disconnected_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE TABLE physical_daily_publish_reservations (
+			workspace_id TEXT NOT NULL,
+			physical_account_id TEXT NOT NULL,
+			platform TEXT NOT NULL,
+			utc_date DATE NOT NULL,
+			reserved_count INTEGER NOT NULL CHECK (reserved_count >= 0),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (workspace_id, physical_account_id, platform, utc_date)
+		);
+		CREATE TABLE physical_daily_publish_operations (
+			workspace_id TEXT NOT NULL,
+			operation_key TEXT NOT NULL,
+			physical_account_id TEXT NOT NULL,
+			platform TEXT NOT NULL,
+			utc_date DATE NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('reserved', 'finalized')),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (workspace_id, operation_key, utc_date)
+		);
+		CREATE OR REPLACE FUNCTION reserve_physical_daily_publish(
+			requested_workspace_id TEXT,
+			requested_physical_account_id TEXT,
+			requested_platform TEXT,
+			requested_operation_key TEXT,
+			requested_daily_cap INTEGER
+		)
+		RETURNS INTEGER
+		LANGUAGE plpgsql
+		AS $$
+		DECLARE
+			operation_created INTEGER;
+			resulting_count INTEGER;
+			today_utc DATE := (NOW() AT TIME ZONE 'UTC')::DATE;
+		BEGIN
+			INSERT INTO physical_daily_publish_operations (
+				workspace_id, operation_key, physical_account_id, platform, utc_date, status
+			) VALUES (
+				requested_workspace_id, requested_operation_key,
+				requested_physical_account_id, requested_platform, today_utc, 'reserved'
+			)
+			ON CONFLICT (workspace_id, operation_key, utc_date) DO NOTHING;
+
+			GET DIAGNOSTICS operation_created = ROW_COUNT;
+			IF operation_created = 0 THEN
+				RETURN 1;
+			END IF;
+
+			INSERT INTO physical_daily_publish_reservations (
+				workspace_id, physical_account_id, platform, utc_date, reserved_count
+			) VALUES (
+				requested_workspace_id, requested_physical_account_id,
+				requested_platform, today_utc, 1
+			)
+			ON CONFLICT (workspace_id, physical_account_id, platform, utc_date)
+			DO UPDATE SET
+				reserved_count = physical_daily_publish_reservations.reserved_count + 1,
+				updated_at = NOW()
+			WHERE physical_daily_publish_reservations.reserved_count < requested_daily_cap
+			RETURNING reserved_count INTO resulting_count;
+
+			IF resulting_count IS NULL THEN
+				DELETE FROM physical_daily_publish_operations
+				WHERE workspace_id = requested_workspace_id
+				  AND operation_key = requested_operation_key
+				  AND utc_date = today_utc;
+				RETURN 0;
+			END IF;
+			RETURN 2;
+		END;
+		$$;
+		CREATE OR REPLACE FUNCTION release_physical_daily_publish(
+			requested_workspace_id TEXT,
+			requested_operation_key TEXT
+		)
+		RETURNS BOOLEAN
+		LANGUAGE plpgsql
+		AS $$
+		DECLARE
+			released physical_daily_publish_operations%ROWTYPE;
+			today_utc DATE := (NOW() AT TIME ZONE 'UTC')::DATE;
+		BEGIN
+			DELETE FROM physical_daily_publish_operations
+			WHERE workspace_id = requested_workspace_id
+			  AND operation_key = requested_operation_key
+			  AND utc_date = today_utc
+			  AND status = 'reserved'
+			RETURNING * INTO released;
+
+			IF released.operation_key IS NULL THEN
+				RETURN FALSE;
+			END IF;
+			UPDATE physical_daily_publish_reservations
+			SET reserved_count = GREATEST(reserved_count - 1, 0), updated_at = NOW()
+			WHERE workspace_id = released.workspace_id
+			  AND physical_account_id = released.physical_account_id
+			  AND platform = released.platform
+			  AND utc_date = released.utc_date;
+			RETURN TRUE;
+		END;
+		$$;
+		CREATE OR REPLACE FUNCTION finalize_physical_daily_publish(
+			requested_workspace_id TEXT,
+			requested_operation_key TEXT
+		)
+		RETURNS BOOLEAN
+		LANGUAGE SQL
+		AS $$
+			WITH finalized AS (
+				UPDATE physical_daily_publish_operations
+				SET status = 'finalized', updated_at = NOW()
+				WHERE workspace_id = requested_workspace_id
+				  AND operation_key = requested_operation_key
+				  AND utc_date = (NOW() AT TIME ZONE 'UTC')::DATE
+				RETURNING 1
+			)
+			SELECT EXISTS (SELECT 1 FROM finalized)
+		$$;
+	`)
+	if err != nil {
+		t.Fatalf("create social connection publishing fixture schema: %v", err)
 	}
 }
 

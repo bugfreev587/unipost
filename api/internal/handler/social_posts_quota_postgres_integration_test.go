@@ -1921,7 +1921,10 @@ func setupScheduledQuotaSnapshotIntegrationSchema(t *testing.T, pool *pgxpool.Po
 			external_user_id TEXT,
 			external_user_email TEXT,
 			last_refreshed_at TIMESTAMPTZ,
-			x_app_mode TEXT
+			x_app_mode TEXT,
+			connection_id TEXT,
+			binding_version BIGINT NOT NULL DEFAULT 1,
+			binding_status TEXT NOT NULL DEFAULT 'active'
 		);
 		CREATE TABLE social_posts (
 			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
@@ -1967,7 +1970,9 @@ func setupScheduledQuotaSnapshotIntegrationSchema(t *testing.T, pool *pgxpool.Po
 			x_credits_counted BIGINT NOT NULL DEFAULT 0,
 			x_credit_operation TEXT,
 			x_credit_catalog_version TEXT,
-			x_credit_billing_mode TEXT
+			x_credit_billing_mode TEXT,
+			daily_reservation_operation_key TEXT,
+			daily_reservation_release_pending BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE TABLE post_delivery_jobs (
 			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
@@ -1994,7 +1999,9 @@ func setupScheduledQuotaSnapshotIntegrationSchema(t *testing.T, pool *pgxpool.Po
 			lease_expires_at TIMESTAMPTZ,
 			lease_owner TEXT,
 			first_claimed_at TIMESTAMPTZ,
-			platform_started_at TIMESTAMPTZ
+			platform_started_at TIMESTAMPTZ,
+			connection_id TEXT,
+			binding_version BIGINT
 		);
 		CREATE TABLE post_failures (
 			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
@@ -2087,4 +2094,5 @@ func setupScheduledQuotaSnapshotIntegrationSchema(t *testing.T, pool *pgxpool.Po
 	if err != nil {
 		t.Fatalf("setup scheduled quota snapshot schema: %v", err)
 	}
+	setupSocialConnectionPublishingFixtureSchema(t, pool)
 }
