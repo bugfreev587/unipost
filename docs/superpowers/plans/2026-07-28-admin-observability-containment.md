@@ -23,6 +23,7 @@ Only these files may change in this workstream:
 - `api/internal/db/migrations/128_admin_logs_global_time_index.sql`
 - `api/internal/db/admin_logs_index_migration_test.go`
 - `api/internal/db/migrate_test.go`
+- `api/internal/db/migration_gate_postgres_integration_test.go`
 - `dashboard/src/lib/api.ts`
 - `dashboard/src/app/admin/errors/page.tsx`
 - `dashboard/tests/admin-observability-source.test.mjs`
@@ -473,6 +474,8 @@ git commit -m "docs: record admin observability implementation plan"
 ### Task 7: Preview Acceptance and development promotion
 
 **Files:** None locally unless a verified failure requires an in-scope fix.
+
+The first PR head exposed an in-scope migration-fixture defect: the version 123/124 PostgreSQL fixtures did not include `integration_logs`, even though migration 66 creates it, and schema-version assertions still stopped at 127. The replacement SHA may update only that test fixture and this plan before the complete gate is rerun.
 
 - [ ] **Step 1: Push only `dev-log-storage-observability`**
 
