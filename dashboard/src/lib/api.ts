@@ -3024,8 +3024,9 @@ export interface AdminUserPostFailure {
   platform_error_code?: string;
   is_retriable?: boolean;
   next_action?: string;
-  // Curl dump of every failing HTTP request the adapter made. Server
-  // redacts Authorization header + token query params before sending.
+}
+
+export interface AdminPostFailureDebugDetail {
   debug_curl?: string;
 }
 
@@ -3851,6 +3852,13 @@ export async function listAdminPostFailures(
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();
   return request(`/v1/admin/post-failures${s ? `?${s}` : ""}`, token);
+}
+
+export async function getAdminPostFailureDebug(
+  token: string,
+  id: string,
+): Promise<ApiResponse<AdminPostFailureDebugDetail>> {
+  return request(`/v1/admin/post-failures/${encodeURIComponent(id)}/debug`, token);
 }
 
 export async function listAdminErrorTriageRuns(

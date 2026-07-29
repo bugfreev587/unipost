@@ -17,6 +17,7 @@ import {
 } from "react";
 
 import {
+  getAdminPostFailureDebug,
   listAdminPostFailures,
   type AdminPostFailureListParams,
   type AdminUserPostFailure,
@@ -78,6 +79,10 @@ function AdminErrorsContent() {
   const [source, setSource] = useState(initialFilters.source);
   const [range, setRange] = useState<FailureRange>(initialFilters.range);
   const [selectedFailureId, setSelectedFailureId] = useState<string | null>(null);
+  const [debugCurl, setDebugCurl] = useState<string | null>(null);
+  const [debugLoading, setDebugLoading] = useState(false);
+  const [debugError, setDebugError] = useState<string | null>(null);
+  const [debugReloadKey, setDebugReloadKey] = useState(0);
   const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
   const [rawCopied, setRawCopied] = useState(false);
   const loadRequestSeq = useRef(0);
@@ -159,6 +164,42 @@ function AdminErrorsContent() {
     }
   }, [selectedFailure, selectedFailureId]);
 
+  useEffect(() => {
+    setDebugCurl(null);
+    setDebugError(null);
+    const id = selectedFailure ? debugDetailID(selectedFailure) : null;
+    if (!id) {
+      setDebugLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDebugLoading(true);
+    void (async () => {
+      try {
+        const token = await getToken();
+        if (!token) throw new Error("Not authenticated");
+        const res = await getAdminPostFailureDebug(token, id);
+        if (!cancelled) setDebugCurl(res.data.debug_curl ?? null);
+      } catch (detailError) {
+        if (!cancelled) {
+          setDebugError(detailError instanceof Error ? detailError.message : "Failed to load diagnostic detail");
+        }
+      } finally {
+        if (!cancelled) setDebugLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [debugReloadKey, getToken, selectedFailure]);
+
+  const selectedFailureWithDebug = useMemo(() => {
+    if (!selectedFailure) return null;
+    return debugCurl ? { ...selectedFailure, debug_curl: debugCurl } : selectedFailure;
+  }, [debugCurl, selectedFailure]);
+
   const openFailureDetail = useCallback((failure: AdminUserPostFailure, idx: number) => {
     setSelectedFailureId(failureKey(failure, idx));
     setDrawerTab("attributes");
@@ -167,15 +208,18 @@ function AdminErrorsContent() {
 
   const closeDetail = useCallback(() => {
     setSelectedFailureId(null);
+    setDebugCurl(null);
+    setDebugError(null);
+    setDebugLoading(false);
     setRawCopied(false);
   }, []);
 
   const copyRawFailure = useCallback(async () => {
-    if (!selectedFailure) return;
-    await navigator.clipboard.writeText(JSON.stringify(selectedFailure, null, 2));
+    if (!selectedFailureWithDebug) return;
+    await navigator.clipboard.writeText(JSON.stringify(selectedFailureWithDebug, null, 2));
     setRawCopied(true);
     window.setTimeout(() => setRawCopied(false), 1200);
-  }, [selectedFailure]);
+  }, [selectedFailureWithDebug]);
 
   const stopLinkClick = useCallback((event: MouseEvent<HTMLAnchorElement>) => {
     event.stopPropagation();
@@ -183,7 +227,7 @@ function AdminErrorsContent() {
   const rangeLabel = range === "this_month" ? "this month" : `the last ${range} days`;
 
   return (
-    <AdminShell title="Errors" loading={loading} onRefresh={loadFailures}>
+    <AdminShell title="Errors" loading={loading} onRefresh={loadFailures} requireSuperAdmin>
       {error && (
         <div style={{ background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 22%, transparent)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
           {error}
@@ -363,7 +407,7 @@ function AdminErrorsContent() {
             />
 
             {drawerTab === "raw" ? (
-              <pre style={drawerRawJsonStyle}>{JSON.stringify(selectedFailure, null, 2)}</pre>
+              <pre style={drawerRawJsonStyle}>{JSON.stringify(selectedFailureWithDebug, null, 2)}</pre>
             ) : (
               <div style={{ display: "grid", gap: 14 }}>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -411,8 +455,21 @@ function AdminErrorsContent() {
 
                 <div style={sectionStyle}>
                   <div style={sectionTitleStyle}>Debug curl</div>
-                  {selectedFailure.debug_curl ? (
-                    <pre style={drawerCodeBlockStyle}>{selectedFailure.debug_curl}</pre>
+                  {debugLoading ? (
+                    <div style={{ color: "var(--dmuted2)", fontSize: 13 }}>Loading diagnostic detail…</div>
+                  ) : debugError ? (
+                    <div role="alert" style={{ display: "grid", gap: 8, color: "var(--danger)", fontSize: 13 }}>
+                      <span>{debugError}</span>
+                      <button
+                        type="button"
+                        onClick={() => setDebugReloadKey((value) => value + 1)}
+                        style={{ ...drawerCopyButtonStyle, justifySelf: "start" }}
+                      >
+                        Retry diagnostic load
+                      </button>
+                    </div>
+                  ) : debugCurl ? (
+                    <pre style={drawerCodeBlockStyle}>{debugCurl}</pre>
                   ) : (
                     <div style={{ color: "var(--dmuted2)", fontSize: 13 }}>No debug curl captured for this failure.</div>
                   )}
@@ -435,7 +492,7 @@ function AdminErrorsContent() {
 
 export default function AdminErrorsPage() {
   return (
-    <Suspense fallback={<AdminShell title="Errors" loading><div /></AdminShell>}>
+    <Suspense fallback={<AdminShell title="Errors" loading requireSuperAdmin><div /></AdminShell>}>
       <AdminErrorsContent />
     </Suspense>
   );
@@ -445,6 +502,10 @@ function failureKey(failure: AdminUserPostFailure, idx: number) {
   if (failure.post_failure_id) return failure.post_failure_id;
   if (failure.social_post_result_id) return failure.social_post_result_id;
   return `${failure.post_id}-${failure.platform || "parent"}-${failure.created_at}-${idx}`;
+}
+
+function debugDetailID(failure: AdminUserPostFailure) {
+  return failure.social_post_result_id || failure.post_failure_id || null;
 }
 
 function handleFailureKeyDown(event: KeyboardEvent<HTMLElement>, open: () => void) {
