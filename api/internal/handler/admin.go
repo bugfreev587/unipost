@@ -935,23 +935,57 @@ type adminPostFailure struct {
 }
 
 type adminPostFailureDebugResponse struct {
-	DebugCurl *string `json:"debug_curl"`
+	DebugCurl     *string `json:"debug_curl"`
+	OriginalBytes int64   `json:"original_bytes"`
+	StoredBytes   int64   `json:"stored_bytes"`
+	Truncated     bool    `json:"truncated"`
+	SourceKind    string  `json:"source_kind"`
 }
 
 const adminPostFailureDebugSQL = `
 WITH target_result AS (
-  SELECT social_post_result_id AS id, 0 AS priority
-  FROM post_failures
-  WHERE id = $1
+  SELECT pf.social_post_result_id AS id, pf.workspace_id, 0 AS priority
+  FROM post_failures pf
+  WHERE pf.id = $1 AND pf.social_post_result_id IS NOT NULL
 
   UNION ALL
 
-  SELECT id, 1 AS priority
-  FROM social_post_results
-  WHERE id = $1
+  SELECT spr.id, sp.workspace_id, 1 AS priority
+  FROM social_post_results spr
+  JOIN social_posts sp ON sp.id = spr.post_id
+  WHERE spr.id = $1
 )
-SELECT NULLIF(spr.debug_curl, '') AS debug_curl
+SELECT
+  target.workspace_id,
+  COALESCE(
+    LEFT(NULLIF(detail.debug_text, ''), 8192),
+    LEFT(NULLIF(spr.debug_curl, ''), 8192)
+  ) AS debug_curl,
+  COALESCE(
+    detail.original_bytes,
+    OCTET_LENGTH(NULLIF(spr.debug_curl, '')),
+    0
+  ) AS original_bytes,
+  COALESCE(
+    OCTET_LENGTH(LEFT(NULLIF(detail.debug_text, ''), 8192)),
+    OCTET_LENGTH(LEFT(NULLIF(spr.debug_curl, ''), 8192)),
+    0
+  ) AS stored_bytes,
+  CASE
+    WHEN detail.social_post_result_id IS NOT NULL THEN
+      detail.truncated OR CHAR_LENGTH(detail.debug_text) > 8192
+    WHEN NULLIF(spr.debug_curl, '') IS NOT NULL THEN
+      CHAR_LENGTH(spr.debug_curl) > 8192
+    ELSE FALSE
+  END AS truncated,
+  CASE
+    WHEN detail.social_post_result_id IS NOT NULL THEN 'bounded'
+    WHEN NULLIF(spr.debug_curl, '') IS NOT NULL THEN 'legacy'
+    ELSE 'none'
+  END AS source_kind
 FROM target_result target
+LEFT JOIN post_failure_debug_details detail
+  ON detail.social_post_result_id = target.id
 LEFT JOIN social_post_results spr ON spr.id = target.id
 ORDER BY target.priority
 LIMIT 1`
@@ -2736,8 +2770,18 @@ func (h *AdminHandler) GetPostFailureDebug(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var out adminPostFailureDebugResponse
-	err := h.pool.QueryRow(r.Context(), adminPostFailureDebugSQL, id).Scan(&out.DebugCurl)
+	var (
+		workspaceID string
+		out         adminPostFailureDebugResponse
+	)
+	err := h.pool.QueryRow(r.Context(), adminPostFailureDebugSQL, id).Scan(
+		&workspaceID,
+		&out.DebugCurl,
+		&out.OriginalBytes,
+		&out.StoredBytes,
+		&out.Truncated,
+		&out.SourceKind,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Failure not found")
 		return
@@ -2746,6 +2790,22 @@ func (h *AdminHandler) GetPostFailureDebug(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load failure debug detail")
 		return
 	}
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID:  workspaceID,
+		ActorUserID:  auth.GetUserID(r.Context()),
+		Action:       audit.ActionPostFailureDebugViewed,
+		ResourceType: "post_failure_debug_detail",
+		ResourceID:   id,
+		Category:     audit.CategoryPublishing,
+		IPAddress:    r.RemoteAddr,
+		UserAgent:    r.UserAgent(),
+		Metadata: map[string]any{
+			"source_kind":    out.SourceKind,
+			"original_bytes": out.OriginalBytes,
+			"stored_bytes":   out.StoredBytes,
+			"truncated":      out.Truncated,
+		},
+	})
 
 	writeSuccess(w, out)
 }

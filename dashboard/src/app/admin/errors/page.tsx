@@ -19,6 +19,7 @@ import {
 import {
   getAdminPostFailureDebug,
   listAdminPostFailures,
+  type AdminPostFailureDebugDetail,
   type AdminPostFailureListParams,
   type AdminUserPostFailure,
 } from "@/lib/api";
@@ -79,7 +80,7 @@ function AdminErrorsContent() {
   const [source, setSource] = useState(initialFilters.source);
   const [range, setRange] = useState<FailureRange>(initialFilters.range);
   const [selectedFailureId, setSelectedFailureId] = useState<string | null>(null);
-  const [debugCurl, setDebugCurl] = useState<string | null>(null);
+  const [debugDetail, setDebugDetail] = useState<AdminPostFailureDebugDetail | null>(null);
   const [debugLoading, setDebugLoading] = useState(false);
   const [debugError, setDebugError] = useState<string | null>(null);
   const [debugReloadKey, setDebugReloadKey] = useState(0);
@@ -165,7 +166,7 @@ function AdminErrorsContent() {
   }, [selectedFailure, selectedFailureId]);
 
   useEffect(() => {
-    setDebugCurl(null);
+    setDebugDetail(null);
     setDebugError(null);
     const id = selectedFailure ? debugDetailID(selectedFailure) : null;
     if (!id) {
@@ -180,7 +181,7 @@ function AdminErrorsContent() {
         const token = await getToken();
         if (!token) throw new Error("Not authenticated");
         const res = await getAdminPostFailureDebug(token, id);
-        if (!cancelled) setDebugCurl(res.data.debug_curl ?? null);
+        if (!cancelled) setDebugDetail(res.data);
       } catch (detailError) {
         if (!cancelled) {
           setDebugError(detailError instanceof Error ? detailError.message : "Failed to load diagnostic detail");
@@ -197,8 +198,10 @@ function AdminErrorsContent() {
 
   const selectedFailureWithDebug = useMemo(() => {
     if (!selectedFailure) return null;
-    return debugCurl ? { ...selectedFailure, debug_curl: debugCurl } : selectedFailure;
-  }, [debugCurl, selectedFailure]);
+    return debugDetail?.debug_curl
+      ? { ...selectedFailure, debug_curl: debugDetail.debug_curl, debug_detail: debugDetail }
+      : selectedFailure;
+  }, [debugDetail, selectedFailure]);
 
   const openFailureDetail = useCallback((failure: AdminUserPostFailure, idx: number) => {
     setSelectedFailureId(failureKey(failure, idx));
@@ -208,7 +211,7 @@ function AdminErrorsContent() {
 
   const closeDetail = useCallback(() => {
     setSelectedFailureId(null);
-    setDebugCurl(null);
+    setDebugDetail(null);
     setDebugError(null);
     setDebugLoading(false);
     setRawCopied(false);
@@ -468,8 +471,15 @@ function AdminErrorsContent() {
                         Retry diagnostic load
                       </button>
                     </div>
-                  ) : debugCurl ? (
-                    <pre style={drawerCodeBlockStyle}>{debugCurl}</pre>
+                  ) : debugDetail?.debug_curl ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {debugDetail?.truncated ? (
+                        <div style={{ color: "var(--warning)", fontSize: 12, lineHeight: 1.45 }}>
+                          Showing a bounded excerpt ({fmtNumber(debugDetail.stored_bytes)} of {fmtNumber(debugDetail.original_bytes)} bytes).
+                        </div>
+                      ) : null}
+                      <pre style={drawerCodeBlockStyle}>{debugDetail.debug_curl}</pre>
+                    </div>
                   ) : (
                     <div style={{ color: "var(--dmuted2)", fontSize: 13 }}>No debug curl captured for this failure.</div>
                   )}

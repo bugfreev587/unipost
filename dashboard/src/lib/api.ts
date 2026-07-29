@@ -3027,7 +3027,11 @@ export interface AdminUserPostFailure {
 }
 
 export interface AdminPostFailureDebugDetail {
-  debug_curl?: string;
+  debug_curl: string | null;
+  original_bytes: number;
+  stored_bytes: number;
+  truncated: boolean;
+  source_kind: "bounded" | "legacy" | "none";
 }
 
 export type ErrorTriageClassification =

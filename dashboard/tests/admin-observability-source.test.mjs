@@ -10,8 +10,13 @@ test("Admin Errors loads debug only from the selected detail endpoint", () => {
 
   assert.match(api, /getAdminPostFailureDebug/);
   assert.match(api, /post-failures\/\$\{encodeURIComponent\(id\)\}\/debug/);
+  assert.match(api, /debug_curl:\s*string\s*\|\s*null/);
+  assert.match(api, /original_bytes:\s*number/);
+  assert.match(api, /stored_bytes:\s*number/);
+  assert.match(api, /truncated:\s*boolean/);
   assert.match(page, /getAdminPostFailureDebug/);
   assert.match(page, /debugLoading/);
+  assert.match(page, /debugDetail\?\.truncated/);
   assert.match(page, /debugDetailID/);
   assert.match(page, /requireSuperAdmin/);
   assert.doesNotMatch(page, /selectedFailure\.debug_curl/);
