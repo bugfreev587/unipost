@@ -1,5 +1,5 @@
 import { ArrowRight, Braces, CheckCircle2, Code2, Database, Send } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { PublicPlatformIcon } from "@/components/public/public-platform-icon";
 
 const PLATFORMS = ["twitter", "linkedin", "instagram", "tiktok", "threads", "youtube", "facebook", "pinterest", "bluesky"];
 
@@ -16,7 +16,7 @@ export function BlogCover({ compact = false }: { compact?: boolean }) {
         <div className="blog-cover-platforms" aria-hidden="true">
           {PLATFORMS.map((platform) => (
             <span key={platform} className="blog-cover-platform">
-              <PlatformIcon platform={platform} size={compact ? 14 : 17} />
+              <PublicPlatformIcon platform={platform} size={compact ? 14 : 17} />
             </span>
           ))}
         </div>

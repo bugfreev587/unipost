@@ -8,7 +8,7 @@ import {
   KeyRound,
   Plug,
 } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { PublicPlatformIcon } from "@/components/public/public-platform-icon";
 import { MarketingCTA, PublicSiteHeader } from "@/components/marketing/nav";
 
 const HOMEPAGE_TITLE = "UniPost | Social Media Posting API for Developers";
@@ -885,7 +885,7 @@ export default function LandingPage() {
                   <div className="lp-model-platforms">
                     {PLATFORMS.slice(0, 8).map((platform) => (
                       <div className="lp-model-platform" key={platform.key}>
-                        <PlatformIcon platform={platform.key} size={19} />
+                        <PublicPlatformIcon platform={platform.key} size={19} />
                         {platform.name}
                       </div>
                     ))}
@@ -900,7 +900,7 @@ export default function LandingPage() {
               <div className="lp-platform-strip">
                 {PLATFORMS.map((platform) => (
                   <div className="lp-platform-card" key={platform.key}>
-                    <PlatformIcon platform={platform.key} size={22} />
+                    <PublicPlatformIcon platform={platform.key} size={22} />
                     {platform.name}
                   </div>
                 ))}

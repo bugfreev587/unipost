@@ -1,18 +1,49 @@
 import assert from "node:assert/strict";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import test from "node:test";
 import ts from "typescript";
 
 const root = process.cwd();
 const sourceRoot = resolve("src");
-const authenticatedRoots = [
-  resolve("src/app/(dashboard)"),
-  resolve("src/app/admin"),
-];
+const publicRoot = resolve("public");
+const explicitlyPublicAppRoots = new Set([
+  "(platforms)",
+  "about",
+  "alternatives",
+  "blog",
+  "changelog",
+  "compare",
+  "connect",
+  "contact",
+  "docs",
+  "marketing",
+  "preview",
+  "pricing",
+  "privacy",
+  "resources",
+  "social-media-api",
+  "social-media-posting-api",
+  "social-media-publishing-api",
+  "solutions",
+  "terms",
+  "tools",
+]);
+const nonUiAppRoots = new Set(["api"]);
+const authenticatedRoots = readdirSync(resolve("src/app"), { withFileTypes: true })
+  .filter((entry) => (
+    entry.isDirectory()
+    && !explicitlyPublicAppRoots.has(entry.name)
+    && !nonUiAppRoots.has(entry.name)
+  ))
+  .map((entry) => resolve("src/app", entry.name));
 const platformIconDefinition = resolve("src/components/platform-icons.tsx");
+const publicYouTubeBrandIconDefinition = resolve("src/components/public/youtube-brand-icon.tsx");
+const rootLayoutDefinition = resolve("src/app/layout.tsx");
 const resolvableExtensions = [".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs", ".css"];
+const staticAssetExtensions = [".svg", ".png", ".webp"];
+const dependencyExtensions = [...resolvableExtensions, ...staticAssetExtensions];
 const allowedDynamicPlatformIconConsumers = new Set([
   "src/components/account-destination-icon.tsx", // rejects YouTube before delegating
   "src/components/analytics/meta-platform-analytics-view.tsx", // type-constrained to Instagram/Threads
@@ -42,6 +73,16 @@ async function codeFiles(directory) {
   return nested.flat();
 }
 
+async function staticAssetFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return staticAssetFiles(path);
+    return staticAssetExtensions.includes(extname(entry.name)) ? [path] : [];
+  }));
+  return nested.flat();
+}
+
 function repositoryPath(path) {
   return relative(root, path).split("\\").join("/");
 }
@@ -63,7 +104,7 @@ function parseSource(path, contents) {
 }
 
 function moduleSpecifiers(path, contents) {
-  if (path.endsWith(".css")) return [];
+  if (path.endsWith(".css") || staticAssetExtensions.includes(extname(path))) return [];
   const specifiers = new Set();
   const sourceFile = parseSource(path, contents);
 
@@ -103,8 +144,8 @@ function resolveLocalDependency(importer, specifier) {
 
   const candidates = [
     base,
-    ...resolvableExtensions.map((extension) => `${base}${extension}`),
-    ...resolvableExtensions.map((extension) => join(base, `index${extension}`)),
+    ...dependencyExtensions.map((extension) => `${base}${extension}`),
+    ...dependencyExtensions.map((extension) => join(base, `index${extension}`)),
   ];
   const match = candidates.find((candidate) => (
     isInsideSource(candidate) && existsSync(candidate) && statSync(candidate).isFile()
@@ -113,7 +154,10 @@ function resolveLocalDependency(importer, specifier) {
 }
 
 async function authenticatedDependencyFiles() {
-  const entryFiles = (await Promise.all(authenticatedRoots.map(codeFiles))).flat();
+  const entryFiles = [
+    rootLayoutDefinition,
+    ...(await Promise.all(authenticatedRoots.map(codeFiles))).flat(),
+  ];
   const pending = [...entryFiles];
   const visited = new Set();
 
@@ -236,27 +280,128 @@ function assertPlatformIconBoundary(path, contents) {
   }
 }
 
+function assertNoOfficialYouTubeGraphics(path, contents) {
+  const repoPath = repositoryPath(path);
+  const inspectableContents = contents
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  const pureYouTubeRedPatterns = [
+    /#(?:ff0000(?:[0-9a-f]{2})?|f00(?:[0-9a-f])?)\b/i,
+    /\brgba?\(\s*255(?:\s*,\s*|\s+)0(?:\s*,\s*|\s+)0(?:\s*(?:,|\/)\s*(?:0|1|0?\.\d+|\d+%))?\s*\)/i,
+    /\brgba?\(\s*100%(?:\s*,\s*|\s+)0%(?:\s*,\s*|\s+)0%(?:\s*(?:,|\/)\s*(?:0|1|0?\.\d+|\d+%))?\s*\)/i,
+    /\bhsla?\(\s*(?:(?:0|360)(?:deg)?|1turn)(?:\s*,\s*|\s+)100%(?:\s*,\s*|\s+)50%(?:\s*(?:,|\/)\s*(?:0|1|0?\.\d+|\d+%))?\s*\)/i,
+    /\b(?:fill|stroke|stopColor|color|backgroundColor)\s*(?:=|:)\s*(?:\{\s*)?["']?\s*red\b/i,
+  ];
+  for (const pattern of pureYouTubeRedPatterns) {
+    assert.doesNotMatch(inspectableContents, pattern, `${repoPath} contains official YouTube red`);
+  }
+  assert.doesNotMatch(inspectableContents, /M23\.498\s+6\.186/i, `${repoPath} contains the legacy YouTube path`);
+  assert.doesNotMatch(
+    inspectableContents,
+    /(?:^|["'/(])(?:youtube|yt)[\w.-]*\.(?:png|svg|webp)/i,
+    `${repoPath} references a YouTube brand asset`,
+  );
+}
+
+test("authenticated roots include onboarding, direct protected routes, and the shared root layout", async () => {
+  assert.ok(authenticatedRoots.includes(resolve("src/app/(onboarding)")));
+  assert.ok(authenticatedRoots.includes(resolve("src/app/invite")));
+  assert.ok((await authenticatedDependencyFiles()).includes(rootLayoutDefinition));
+});
+
+test("the shared PlatformIcon module contains no official YouTube artwork", async () => {
+  const contents = await readFile(platformIconDefinition, "utf8");
+
+  assert.doesNotMatch(contents, /\byoutube\s*:/i);
+  assertNoOfficialYouTubeGraphics(platformIconDefinition, contents);
+  assert.ok(existsSync(publicYouTubeBrandIconDefinition), "the official mark belongs in the public-only module");
+});
+
+test("the public YouTube brand component is the only owner of the official path", async () => {
+  const files = await codeFiles(sourceRoot);
+
+  for (const path of files) {
+    if (path === publicYouTubeBrandIconDefinition) continue;
+    const contents = await readFile(path, "utf8");
+    assert.doesNotMatch(
+      contents,
+      /M23\.498\s+6\.186/i,
+      `${repositoryPath(path)} duplicates the official YouTube artwork`,
+    );
+  }
+
+  const assets = [
+    ...(await staticAssetFiles(sourceRoot)),
+    ...(await staticAssetFiles(publicRoot)),
+  ];
+  for (const path of assets) {
+    assert.doesNotMatch(
+      basename(path),
+      /^(?:youtube|yt)[\w.-]*\.(?:png|svg|webp)$/i,
+      `${repositoryPath(path)} creates a second YouTube brand asset owner`,
+    );
+    if (extname(path) === ".svg") {
+      const contents = await readFile(path, "utf8");
+      assert.doesNotMatch(
+        contents,
+        /M23\.498\s+6\.186/i,
+        `${repositoryPath(path)} duplicates the official YouTube artwork`,
+      );
+    }
+  }
+});
+
+test("the brand guard recognizes canonical representations of pure YouTube red", () => {
+  for (const [name, contents] of [
+    ["rgb comma", 'fill="rgb(255, 0, 0)"'],
+    ["rgb spaces", 'fill="rgb(255 0 0)"'],
+    ["rgba", 'fill="rgba(255, 0, 0, 0.8)"'],
+    ["hex alpha", 'fill="#ff0000ff"'],
+    ["rgb percentages", 'fill="rgb(100% 0% 0%)"'],
+    ["hsl comma", 'fill="hsl(0, 100%, 50%)"'],
+    ["hsl spaces", 'fill="hsl(0 100% 50%)"'],
+    ["hsl full turn", 'fill="hsl(360 100% 50%)"'],
+    ["keyword", 'fill="red"'],
+  ]) {
+    assert.throws(
+      () => assertNoOfficialYouTubeGraphics(resolve(`src/app/(dashboard)/${name}.tsx`), contents),
+      /official YouTube red/,
+      name,
+    );
+  }
+
+  assert.doesNotThrow(() => (
+    assertNoOfficialYouTubeGraphics(resolve("src/app/(dashboard)/semantic-error.tsx"), 'color: "#ef4444"')
+  ));
+});
+
+test("the brand guard rejects YouTube-named static image references", () => {
+  assert.throws(
+    () => assertNoOfficialYouTubeGraphics(
+      resolve("src/app/(dashboard)/static-asset.tsx"),
+      '<img src="/youtube.svg" alt="" />',
+    ),
+    /YouTube brand asset/,
+  );
+});
+
 test("authenticated Dashboard dependency graph defaults to no official YouTube graphics", async () => {
   const files = await authenticatedDependencyFiles();
 
   for (const path of files) {
-    if (path === platformIconDefinition) continue;
-    const repoPath = repositoryPath(path);
     const contents = await readFile(path, "utf8");
 
-    assert.doesNotMatch(contents, /#(?:ff0000|f00)\b/i, `${repoPath} contains official YouTube red`);
-    assert.doesNotMatch(contents, /M23\.498\s+6\.186/i, `${repoPath} contains the legacy YouTube path`);
-    assert.doesNotMatch(
-      contents,
-      /(?:youtube|yt)[\w./-]*(?:icon|logo)[\w./-]*\.(?:png|svg|webp)/i,
-      `${repoPath} references a YouTube brand asset`,
-    );
+    assertNoOfficialYouTubeGraphics(path, contents);
     assertPlatformIconBoundary(path, contents);
   }
 
   assert.ok(
     !files.some((path) => repositoryPath(path) === "src/components/tools/ToolCard.tsx"),
     "the public ToolCard must not enter the authenticated dependency graph",
+  );
+  assert.ok(
+    !files.includes(publicYouTubeBrandIconDefinition),
+    "the public YouTube brand module must not enter the authenticated dependency graph",
   );
 });
 
@@ -280,12 +425,11 @@ test("the authenticated boundary recognizes aliased and namespace PlatformIcon i
   );
 });
 
-test("the public ToolCard becomes forbidden if it enters the authenticated dependency graph", async () => {
-  const toolCardPath = resolve("src/components/tools/ToolCard.tsx");
-  const toolCardSource = await readFile(toolCardPath, "utf8");
+test("the public YouTube brand module is rejected by the authenticated graphics guard", async () => {
+  const brandSource = await readFile(publicYouTubeBrandIconDefinition, "utf8");
   assert.throws(
-    () => assertPlatformIconBoundary(toolCardPath, toolCardSource),
-    /not an approved authenticated consumer/,
+    () => assertNoOfficialYouTubeGraphics(publicYouTubeBrandIconDefinition, brandSource),
+    /official YouTube red/,
   );
 });
 
