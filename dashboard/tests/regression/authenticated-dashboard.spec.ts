@@ -282,8 +282,12 @@ async function expectYouTubeResultLinkValidation(page: Page, profileID: string) 
     `/projects/${profileID}/posts/list?post=youtube-result-fixture`,
   );
 
-  const validResult = page.locator(".posts-result-card").filter({ hasText: "Valid YouTube result" });
-  const invalidResult = page.locator(".posts-result-card").filter({ hasText: "Invalid YouTube result" });
+  const resultNamed = (name: string) =>
+    page.locator(".posts-result-card", {
+      has: page.locator(".posts-result-name", { hasText: new RegExp(`^${name}$`) }),
+    });
+  const validResult = resultNamed("Valid YouTube result");
+  const invalidResult = resultNamed("Invalid YouTube result");
   const validSourceLink = validResult.locator("[data-youtube-source-link]");
 
   await expect(validResult.locator("[data-youtube-destination-icon]")).toBeVisible();
