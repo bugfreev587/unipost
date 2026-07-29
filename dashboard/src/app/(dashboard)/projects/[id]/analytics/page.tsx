@@ -18,7 +18,9 @@ import {
   type AnalyticsTrend,
   type PlatformAnalytics,
 } from "@/lib/api";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
+import { YouTubeSourceLink } from "@/components/youtube/youtube-source-link";
+import { normalizeYouTubeContentUrl } from "@/lib/youtube-source";
 import {
   platformSupports,
   anyPlatformSupports,
@@ -855,7 +857,7 @@ function ByPlatformTable({ rows, profileId }: { rows: PlatformAnalytics[]; profi
                 <tr key={r.platform}>
                   <td style={tdStyle}>
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <PlatformIcon platform={r.platform} size={14} />
+                      <AccountDestinationIcon platform={r.platform} size={14} />
                       <span style={{ fontWeight: 500, color: "var(--dtext)", textTransform: "capitalize" }}>{r.platform}</span>
                       {r.platform === "tiktok" && (
                         <Link
@@ -1107,7 +1109,7 @@ function FragmentRow({
         <td style={tdStyle}>
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {platforms.map((p) => (
-              <PlatformIcon key={p} platform={p} size={14} />
+              <AccountDestinationIcon key={p} platform={p} size={14} />
             ))}
           </span>
         </td>
@@ -1226,6 +1228,7 @@ function ResultCard({
     : res.external_id
       ? postUrlFor(platform, res.external_id)
       : null;
+  const youtubeUrl = platform === "youtube" ? normalizeYouTubeContentUrl(url) : null;
   const isFailed = res.status === "failed";
   const accountName = res.account_name?.trim();
 
@@ -1242,13 +1245,20 @@ function ResultCard({
       {/* Header: platform + status pill + external link */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-          <PlatformIcon platform={platform} size={14} />
+          <AccountDestinationIcon platform={platform} size={14} />
           <span style={{ fontWeight: 600, color: "var(--dtext)", textTransform: "capitalize", fontSize: 13 }}>
             {platform || "unknown"}
           </span>
           <StatusPill status={res.status} />
         </span>
-        {url && (
+        {youtubeUrl ? (
+          <YouTubeSourceLink
+            href={youtubeUrl}
+            label={accountName || "published video"}
+            disclosure="View on YouTube"
+            onClick={(event) => event.stopPropagation()}
+          />
+        ) : platform !== "youtube" && url ? (
           <a
             href={url}
             target="_blank"
@@ -1259,7 +1269,7 @@ function ResultCard({
           >
             <ExternalLink style={{ width: 12, height: 12 }} />
           </a>
-        )}
+        ) : null}
       </div>
 
       {/* Account display name + per-account published timestamp */}

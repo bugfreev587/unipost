@@ -13,7 +13,8 @@ test("Dashboard platform analytics list exposes YouTube as a first-class platfor
   const listSource = await source("src/app/(dashboard)/projects/[id]/analytics/platforms/platform-analytics-list.tsx");
 
   assert.match(listSource, /analytics\/platforms\/youtube/);
-  assert.match(listSource, /<PlatformIcon platform="youtube"/);
+  assert.match(listSource, /<AccountDestinationIcon platform="youtube"/);
+  assert.doesNotMatch(listSource, /<PlatformIcon platform="youtube"/);
   assert.match(listSource, /youtube\.readonly\s*\/\s*yt-analytics\.readonly/);
   assert.match(listSource, /Subscribers, channel views, watch time, and top videos/);
   assert.doesNotMatch(listSource, /YouTube channel stats[\s\S]*same drilldown pattern later/);
@@ -51,4 +52,11 @@ test("YouTube analytics dashboard combines V1 account metrics and V2 Analytics A
   ]) {
     assert.match(componentSource, new RegExp(requiredText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+
+  assert.match(componentSource, /YouTubeChannelIdentity/);
+  assert.match(componentSource, /disclosure="Data from YouTube"/);
+  assert.match(componentSource, /AccountDestinationIcon platform="youtube"/);
+  assert.match(componentSource, /YouTubeSourceLink/);
+  assert.doesNotMatch(componentSource, /<PlatformIcon platform="youtube"/);
+  assert.doesNotMatch(componentSource, /`https:\/\/www\.youtube\.com\/channel\/\$\{account\.external_account_id\}`/);
 });
