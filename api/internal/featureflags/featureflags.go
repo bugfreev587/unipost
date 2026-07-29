@@ -8,32 +8,44 @@ import (
 )
 
 const (
-	XDMSV1            = "x_dms_v1"
-	XCreditsBillingV1 = "x_credits_billing_v1"
+	XDMSV1               = "x_dms_v1"
+	XCreditsBillingV1    = "x_credits_billing_v1"
+	ObservabilityReadsV2 = "observability_reads_v2"
 )
 
 var ErrUnknownFlag = errors.New("unknown feature flag")
 
 type Definition struct {
-	Key            string `json:"key"`
-	Label          string `json:"label"`
-	Description    string `json:"description"`
-	OwnerArea      string `json:"owner_area"`
-	DefaultEnabled bool   `json:"default_enabled"`
+	Key             string `json:"key"`
+	Label           string `json:"label"`
+	Description     string `json:"description"`
+	OwnerArea       string `json:"owner_area"`
+	DefaultEnabled  bool   `json:"default_enabled"`
+	Internal        bool   `json:"-"`
+	ActivationReady bool   `json:"-"`
 }
 
 var definitions = []Definition{
 	{
-		Key:         XDMSV1,
-		Label:       "X DMs",
-		Description: "Makes X direct messages available to regular users.",
-		OwnerArea:   "X Inbox",
+		Key:             XDMSV1,
+		Label:           "X DMs",
+		Description:     "Makes X direct messages available to regular users.",
+		OwnerArea:       "X Inbox",
+		ActivationReady: true,
 	},
 	{
-		Key:         XCreditsBillingV1,
-		Label:       "X Credits billing",
-		Description: "Counts managed X API operations against customer X Credits.",
-		OwnerArea:   "Billing",
+		Key:             XCreditsBillingV1,
+		Label:           "X Credits billing",
+		Description:     "Counts managed X API operations against customer X Credits.",
+		OwnerArea:       "Billing",
+		ActivationReady: true,
+	},
+	{
+		Key:         ObservabilityReadsV2,
+		Label:       "Observability reads v2",
+		Description: "Uses the canonical request-event model for Logs, Metrics, and Errors reads.",
+		OwnerArea:   "API / Admin Observability",
+		Internal:    true,
 	},
 }
 
@@ -114,6 +126,9 @@ func (e *Evaluator) Public(ctx context.Context, key string) (bool, error) {
 func (e *Evaluator) WorkspaceFlags(ctx context.Context, workspaceID string) (map[string]bool, error) {
 	flags := make(map[string]bool, len(definitions))
 	for _, definition := range definitions {
+		if definition.Internal {
+			continue
+		}
 		enabled, err := e.ForWorkspace(ctx, workspaceID, definition.Key)
 		if err != nil {
 			return nil, err
@@ -126,6 +141,9 @@ func (e *Evaluator) WorkspaceFlags(ctx context.Context, workspaceID string) (map
 func (e *Evaluator) PublicFlags(ctx context.Context) (map[string]bool, error) {
 	flags := make(map[string]bool, len(definitions))
 	for _, definition := range definitions {
+		if definition.Internal {
+			continue
+		}
 		enabled, err := e.Public(ctx, definition.Key)
 		if err != nil {
 			return nil, err

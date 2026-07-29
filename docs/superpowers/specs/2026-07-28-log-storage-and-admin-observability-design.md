@@ -225,7 +225,7 @@ The detail table is one-to-one with a failed request event and stores:
 - sanitized response payload;
 - original and stored byte counts;
 - content types;
-- SHA-256 for omitted binary content;
+- SHA-256 for omitted binary content only when the complete body fits within the 32 KB observation budget; oversized binary records `hash_omitted_size` instead of hashing the full body on the customer path;
 - truncation flags and omission reasons;
 - redaction policy version;
 - creation timestamp.

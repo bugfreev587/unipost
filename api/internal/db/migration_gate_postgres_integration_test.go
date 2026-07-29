@@ -111,6 +111,21 @@ func seedMigration124State(t *testing.T, database *sql.DB) {
 		CREATE TABLE workspaces (
 			id TEXT PRIMARY KEY
 		);
+		CREATE TABLE feature_flags (
+			key TEXT PRIMARY KEY CHECK (key IN ('x_dms_v1', 'x_credits_billing_v1')),
+			enabled BOOLEAN NOT NULL DEFAULT FALSE,
+			description TEXT NOT NULL,
+			updated_by TEXT NOT NULL DEFAULT 'system',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE TABLE feature_flag_changes (
+			id TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
+			flag_key TEXT NOT NULL REFERENCES feature_flags(key) ON DELETE RESTRICT,
+			previous_enabled BOOLEAN NOT NULL,
+			enabled BOOLEAN NOT NULL,
+			changed_by TEXT NOT NULL,
+			changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
 		CREATE TABLE webhooks (
 			id TEXT PRIMARY KEY
 		);
@@ -163,6 +178,21 @@ func seedMigration123State(t *testing.T, database *sql.DB) {
 		);
 		CREATE TABLE workspaces (
 			id TEXT PRIMARY KEY
+		);
+		CREATE TABLE feature_flags (
+			key TEXT PRIMARY KEY CHECK (key IN ('x_dms_v1', 'x_credits_billing_v1')),
+			enabled BOOLEAN NOT NULL DEFAULT FALSE,
+			description TEXT NOT NULL,
+			updated_by TEXT NOT NULL DEFAULT 'system',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE TABLE feature_flag_changes (
+			id TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
+			flag_key TEXT NOT NULL REFERENCES feature_flags(key) ON DELETE RESTRICT,
+			previous_enabled BOOLEAN NOT NULL,
+			enabled BOOLEAN NOT NULL,
+			changed_by TEXT NOT NULL,
+			changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 		CREATE TABLE webhooks (
 			id TEXT PRIMARY KEY
@@ -253,6 +283,69 @@ func successfulGateClient(config MigrationGateConfig, affected []AffectedMigrati
 	}
 }
 
+func freshPreviewGateConfig() MigrationGateConfig {
+	config := testMigrationGateConfig()
+	config.EnvironmentName = "unipost-pr-301"
+	config.ServicePublicDomain = "preview-api-unipost-pr-301.up.railway.app"
+	return config
+}
+
+func TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	config := freshPreviewGateConfig()
+
+	if err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil); err != nil {
+		t.Fatalf("fresh disposable Preview migration gate: %v", err)
+	}
+	var version int64
+	if err := database.QueryRowContext(context.Background(), `
+		SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 130 {
+		t.Fatalf("fresh disposable Preview final version = %d, want 130", version)
+	}
+}
+
+func TestMigrationGatePostgresDisposablePreviewWithExistingTableStillRequiresBackup(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	if _, err := database.ExecContext(context.Background(), `CREATE TABLE existing_preview_data (id BIGINT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	config := freshPreviewGateConfig()
+
+	err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil)
+	if err == nil || !strings.Contains(err.Error(), "backup client is missing") {
+		t.Fatalf("dirty disposable Preview gate error = %v", err)
+	}
+	var exists bool
+	if err := database.QueryRowContext(context.Background(), `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("dirty disposable Preview must remain unmigrated")
+	}
+}
+
+func TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	config := freshPreviewGateConfig()
+	config.ServicePublicDomain = "preview-api-unipost-pr-302.up.railway.app"
+
+	err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil)
+	if err == nil || !strings.Contains(err.Error(), "backup client is missing") {
+		t.Fatalf("mismatched disposable Preview gate error = %v", err)
+	}
+	var exists bool
+	if err := database.QueryRowContext(context.Background(), `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("mismatched disposable Preview must remain unmigrated")
+	}
+}
+
 func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
@@ -282,9 +375,9 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&retryable, &ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 129 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 130 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"version=%d retryable=%v owner_user_ids=%v, want version=129 retryable=false canonical owner backfill",
+			"version=%d retryable=%v owner_user_ids=%v, want version=130 retryable=false canonical owner backfill",
 			version, retryable, ownerUserIDs,
 		)
 	}
@@ -313,8 +406,8 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 129 {
-		t.Fatalf("zero-row pending irreversible migration final version = %d, want 129", version)
+	if version != 130 {
+		t.Fatalf("zero-row pending irreversible migration final version = %d, want 130", version)
 	}
 }
 
@@ -652,9 +745,9 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 129 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 130 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=129 retention_reason=active_post retryable=false canonical owner backfill",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=130 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
 			retentionReason,
 			retryable,
@@ -757,8 +850,8 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 129 {
-		t.Fatalf("final migration version = %d, want 129", version)
+	if version != 130 {
+		t.Fatalf("final migration version = %d, want 130", version)
 	}
 }
 
@@ -816,17 +909,17 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 129 {
-		t.Fatalf("replacement runner final migration version = %d, want 129", version)
+	if version != 130 {
+		t.Fatalf("replacement runner final migration version = %d, want 130", version)
 	}
 }
 
-func TestRequireCurrentSchemaRejects124AndAccepts127(t *testing.T) {
+func TestRequireCurrentSchemaRejects124AndAccepts130(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 
 	err := RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 129") {
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 130") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 
@@ -849,14 +942,14 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO goose_db_version (version_id, is_applied) VALUES (130, TRUE);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (131, TRUE);
 	`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	err = RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 129") || !strings.Contains(err.Error(), "rollback is unsafe") {
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 130") || !strings.Contains(err.Error(), "rollback is unsafe") {
 		t.Fatalf("schema-ahead guard error = %v", err)
 	}
 }

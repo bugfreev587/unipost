@@ -54,16 +54,58 @@ func (c fakeSuperAdminChecker) IsSuperAdmin(_ context.Context, userID string) bo
 
 func TestDefinitionsAreAllowlistedAndDefaultOff(t *testing.T) {
 	got := Definitions()
-	if len(got) != 2 {
-		t.Fatalf("Definitions() returned %d flags, want 2", len(got))
+	if len(got) != 3 {
+		t.Fatalf("Definitions() returned %d flags, want 3", len(got))
 	}
-	if got[0].Key != XDMSV1 || got[1].Key != XCreditsBillingV1 {
+	if got[0].Key != XDMSV1 || got[1].Key != XCreditsBillingV1 || got[2].Key != ObservabilityReadsV2 {
 		t.Fatalf("unexpected keys: %#v", got)
 	}
 	for _, definition := range got {
 		if definition.DefaultEnabled {
 			t.Fatalf("%s must default off", definition.Key)
 		}
+	}
+	if !got[0].ActivationReady || !got[1].ActivationReady || got[2].ActivationReady {
+		t.Fatalf("activation readiness = %#v", got)
+	}
+}
+
+func TestObservabilityReadFlagUsesGlobalEvaluatorWithoutSuperAdminBypass(t *testing.T) {
+	store := &fakeStore{
+		enabled: map[string]bool{ObservabilityReadsV2: false},
+		owner:   "super-admin-owner",
+	}
+	evaluator := NewEvaluator(store, fakeSuperAdminChecker{"super-admin-owner": true})
+
+	got, err := evaluator.Public(context.Background(), ObservabilityReadsV2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got {
+		t.Fatal("global observability read flag must remain OFF for Super Admin workspaces")
+	}
+}
+
+func TestInternalObservabilityFlagIsNotExposedToCustomerFeatureMaps(t *testing.T) {
+	store := &fakeStore{
+		enabled: map[string]bool{ObservabilityReadsV2: true},
+		owner:   "owner-1",
+	}
+	evaluator := NewEvaluator(store, fakeSuperAdminChecker{})
+
+	publicFlags, err := evaluator.PublicFlags(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceFlags, err := evaluator.WorkspaceFlags(context.Background(), "workspace-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exposed := publicFlags[ObservabilityReadsV2]; exposed {
+		t.Fatal("internal observability flag leaked through public features")
+	}
+	if _, exposed := workspaceFlags[ObservabilityReadsV2]; exposed {
+		t.Fatal("internal observability flag leaked through workspace features")
 	}
 }
 

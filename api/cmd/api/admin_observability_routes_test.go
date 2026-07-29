@@ -44,3 +44,36 @@ func TestPublishingFailureDebugWriterIsWiredAsBackgroundObservability(t *testing
 		}
 	}
 }
+
+func TestCanonicalRequestEventRecorderIsDarkDualWriteMiddleware(t *testing.T) {
+	body, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, required := range []string{
+		"requestevents.NewPostgresStore(pool)",
+		"requestevents.NewRecorder(",
+		"go requestEventRecorder.Start(ctx)",
+		"r.Use(integrationlogs.Middleware(integrationLogger))",
+		"r.Use(apiMetricsRecorder.Middleware)",
+		"r.Use(requestevents.Middleware(requestEventRecorder))",
+		"waitForRequestEventRecorderShutdown(",
+		"recorder.Stop()",
+		"recorder.Wait(",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("main.go missing dark request-event wiring %q", required)
+		}
+	}
+	if strings.Contains(source, "ObservabilityReadsV2") {
+		t.Fatal("write-model workstream must not evaluate the read-path flag")
+	}
+	if strings.Contains(source, "requestEventParityMonitor.Start") {
+		t.Fatal("async insert timestamps must not drive automatic exact-parity alerts")
+	}
+	statsPattern := regexp.MustCompile(`(?s)r\.With\(auth\.RequireSuperAdmin\([^\n]+Request-event telemetry is restricted to super admins[^\n]+\)\)\.\s*Get\("/v1/admin/observability/request-events", requestevents\.StatsHandler\(requestEventRecorder\)\)`)
+	if !statsPattern.MatchString(source) {
+		t.Fatal("request-event recorder stats route is missing or not protected by RequireSuperAdmin")
+	}
+}

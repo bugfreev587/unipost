@@ -42,6 +42,8 @@ func handleMigrationCommand(
 	config := db.MigrationGateConfig{
 		ProjectID:            strings.TrimSpace(getenv("RAILWAY_PROJECT_ID")),
 		EnvironmentID:        strings.TrimSpace(getenv("RAILWAY_ENVIRONMENT_ID")),
+		EnvironmentName:      strings.TrimSpace(getenv("RAILWAY_ENVIRONMENT_NAME")),
+		ServicePublicDomain:  strings.TrimSpace(getenv("RAILWAY_PUBLIC_DOMAIN")),
 		VolumeInstanceID:     strings.TrimSpace(getenv("RAILWAY_POSTGRES_VOLUME_INSTANCE_ID")),
 		PostgresServiceID:    strings.TrimSpace(getenv("RAILWAY_POSTGRES_SERVICE_ID")),
 		ApplicationServiceID: strings.TrimSpace(getenv("RAILWAY_SERVICE_ID")),

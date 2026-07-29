@@ -20,7 +20,7 @@ import {
 
 import { AdminShell } from "../_components/admin-ui";
 
-const FLAG_ORDER = ["x_dms_v1", "x_credits_billing_v1"] as const;
+const FLAG_ORDER = ["x_dms_v1", "x_credits_billing_v1", "observability_reads_v2"] as const;
 
 type PendingChange = {
   flag: AdminFeatureFlag;
@@ -90,7 +90,7 @@ export default function AdminFeatureFlagsPage() {
 
       <div className="ad-section-header aff-header">
         <div>
-          <div className="ad-section-title">Customer feature availability</div>
+          <div className="ad-section-title">Feature and infrastructure controls</div>
           <div className="ad-section-meta">
             One global value in this deployment; no test, percentage, or audience variants.
           </div>
@@ -101,9 +101,9 @@ export default function AdminFeatureFlagsPage() {
       <div className="aff-policy">
         <ShieldCheck aria-hidden="true" />
         <div>
-          <strong>OFF keeps the rollout private.</strong>
+          <strong>Confirm the control scope before changing it.</strong>
           <span>
-            The feature is unavailable to regular users, while Super Admin-owned workspaces retain access for acceptance testing.
+            Customer flags retain Super Admin acceptance access when OFF. Internal controls apply globally with no workspace bypass.
           </span>
         </div>
       </div>
@@ -115,12 +115,14 @@ export default function AdminFeatureFlagsPage() {
           <div className="aff-loading"><LoaderCircle aria-hidden="true" /> Loading feature flags…</div>
         ) : flags.map((flag) => {
           const saving = savingKey === flag.key;
+          const enableBlocked = !flag.enabled && !flag.activation_ready;
           return (
             <article className="aff-row" key={flag.key}>
               <div className="aff-card-top">
                 <div>
                   <div className="aff-title-row">
                     <h2>{flag.label}</h2>
+                    {flag.internal ? <span className="ad-badge ad-b-blue">Internal</span> : null}
                     <span className={`ad-badge ${flag.enabled ? "ad-b-green" : "ad-b-gray"}`}>
                       {flag.enabled ? "ON" : "OFF"}
                     </span>
@@ -131,7 +133,7 @@ export default function AdminFeatureFlagsPage() {
                   type="button"
                   className={`aff-toggle ${flag.enabled ? "is-on" : ""}`}
                   onClick={() => requestChange(flag, !flag.enabled)}
-                  disabled={saving}
+                  disabled={saving || enableBlocked}
                   aria-label={`${flag.enabled ? "Disable" : "Enable"} ${flag.label}`}
                   aria-pressed={flag.enabled}
                 >
@@ -140,7 +142,13 @@ export default function AdminFeatureFlagsPage() {
                     : flag.enabled
                       ? <ToggleRight aria-hidden="true" />
                       : <ToggleLeft aria-hidden="true" />}
-                  {saving ? "Saving…" : flag.enabled ? "Turn OFF" : "Turn ON"}
+                  {saving
+                    ? "Saving…"
+                    : flag.enabled
+                      ? "Turn OFF"
+                      : enableBlocked
+                        ? "Prepared"
+                        : "Turn ON"}
                 </button>
               </div>
 
@@ -149,9 +157,15 @@ export default function AdminFeatureFlagsPage() {
               <div className="aff-state">
                 <Check aria-hidden="true" />
                 <span>
-                  {flag.enabled
-                    ? "Feature is available to regular users."
-                    : "Feature is not available to regular users."}
+                  {!flag.activation_ready
+                    ? "The canonical write model is prepared. This read switch stays locked until read migration and exact-SHA acceptance are complete."
+                    : flag.internal
+                    ? flag.enabled
+                      ? "Canonical Logs, Metrics, and Errors reads are active across this deployment."
+                      : "Legacy Logs, Metrics, and Errors reads remain active; canonical dual writes continue."
+                    : flag.enabled
+                      ? "Feature is available to regular users."
+                      : "Feature is not available to regular users."}
                 </span>
               </div>
 
@@ -187,20 +201,28 @@ export default function AdminFeatureFlagsPage() {
                   Turn {pendingChange.flag.label} {pendingChange.enabled ? "ON" : "OFF"}?
                 </DialogTitle>
                 <DialogDescription>
-                  This changes availability for every regular user in this deployment.
+                  {pendingChange.flag.internal
+                    ? "This changes the observability read path across the entire deployment. No Super Admin workspace bypass applies."
+                    : "This changes availability for every regular user in this deployment."}
                 </DialogDescription>
               </DialogHeader>
 
               <div className="aff-dialog-impact">
                 <strong>
-                  {pendingChange.enabled
-                    ? "The feature will become available to regular users."
-                    : "The feature will no longer be available to regular users."}
+                  {pendingChange.flag.internal
+                    ? pendingChange.enabled
+                      ? "Logs, Metrics, and Errors will use the canonical read path."
+                      : "Logs, Metrics, and Errors will return to the legacy read path."
+                    : pendingChange.enabled
+                      ? "The feature will become available to regular users."
+                      : "The feature will no longer be available to regular users."}
                 </strong>
                 <span>
-                  {pendingChange.enabled
-                    ? "Existing workspace and API behavior will start enforcing this feature immediately."
-                    : "Super Admin-owned workspaces will retain access for acceptance testing."}
+                  {pendingChange.flag.internal
+                    ? "The switch controls reads only; dual writes, retention, and migrations are unaffected."
+                    : pendingChange.enabled
+                      ? "Existing workspace and API behavior will start enforcing this feature immediately."
+                      : "Super Admin-owned workspaces will retain access for acceptance testing."}
                 </span>
               </div>
 
