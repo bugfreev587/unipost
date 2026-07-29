@@ -45,6 +45,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/paidquotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailuredebug"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
@@ -232,6 +233,10 @@ func main() {
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
 	})
+	postFailureDebugWriter := postfailuredebug.NewWriter(
+		postfailuredebug.NewPostgresStore(pool),
+		postfailuredebug.Config{},
+	)
 
 	// Build the Stripe billing manager now that the DB is ready. The
 	// SUPER_ADMINS list may contain email addresses, which the manager
@@ -283,6 +288,9 @@ func main() {
 
 	if processMode == processModeAPI || processMode == processModePostDeliveryWorker {
 		go integrationLogger.Start(workerCtx)
+		// The diagnostic writer has its own lifecycle. Customer requests and
+		// delivery workers are quiesced before Stop closes queue admission.
+		go postFailureDebugWriter.Start(ctx)
 	}
 
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
@@ -596,7 +604,8 @@ func main() {
 		SetXTokenRefresher(xTokenRefresher).
 		SetPaidScheduleCoordinator(paidquota.NewPostgresCoordinator(pool)).
 		SetHoldReconciler(paidQuotaHoldReconciler).
-		SetPaidQuotaEvaluator(paidPlanQuotaEmailService)
+		SetPaidQuotaEvaluator(paidPlanQuotaEmailService).
+		SetPostFailureDebugSink(postFailureDebugWriter)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
@@ -678,6 +687,9 @@ func main() {
 			processName = "media worker"
 		}
 		waitForProcessShutdown(processName, workerCancel, port)
+		debugWaitCtx, debugWaitCancel := context.WithTimeout(context.Background(), 4*time.Second)
+		waitForPostFailureDebugShutdown(debugWaitCtx, postFailureDebugWriter)
+		debugWaitCancel()
 		return
 	}
 
@@ -1028,7 +1040,10 @@ func main() {
 		r.Post("/v1/admin/workspaces/{workspaceID}/plan", adminHandler.SetPlan)
 		r.Post("/v1/admin/workspaces/{workspaceID}/trials", adminHandler.GrantTrial)
 		r.Post("/v1/admin/workspaces/{workspaceID}/trials/{trialID}/revoke", adminHandler.RevokeTrial)
-		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin errors are restricted to super admins")).
+			Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin errors are restricted to super admins")).
+			Get("/v1/admin/post-failures/{id}/debug", adminHandler.GetPostFailureDebug)
 		r.Get("/v1/admin/error-triage/runs", errorTriageHandler.ListRuns)
 		r.Post("/v1/admin/error-triage/runs", errorTriageHandler.CreateRun)
 		r.Get("/v1/admin/error-triage/runs/{id}", errorTriageHandler.GetRun)
@@ -1363,11 +1378,32 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("server forced to shutdown", "error", err)
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		slog.Error("server forced to shutdown", "error", shutdownErr)
+	}
+	waitForPostFailureDebugShutdown(shutdownCtx, postFailureDebugWriter)
+	if shutdownErr != nil {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+func waitForPostFailureDebugShutdown(ctx context.Context, writer *postfailuredebug.Writer) {
+	if writer == nil {
+		return
+	}
+	writer.Stop()
+	if err := writer.Wait(ctx); err != nil {
+		stats := writer.Stats()
+		slog.Warn("post failure debug writer shutdown timed out",
+			"error", err,
+			"queue_depth", stats.QueueDepth,
+			"abandoned", stats.Abandoned,
+			"dropped", stats.Dropped,
+			"failures", stats.Failures,
+		)
+	}
 }
 
 func warnMissingPublishingRestrictionCampaignConfigFor(readiness publishingrestrictions.CampaignDeliveryReadiness) {

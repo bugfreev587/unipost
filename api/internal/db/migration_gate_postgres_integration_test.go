@@ -98,6 +98,10 @@ func seedMigration124State(t *testing.T, database *sql.DB) {
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
+		CREATE TABLE integration_logs (
+			id BIGSERIAL PRIMARY KEY,
+			ts TIMESTAMPTZ NOT NULL
+		);
 		CREATE TABLE social_posts (
 			id TEXT PRIMARY KEY,
 			workspace_id TEXT NOT NULL,
@@ -146,6 +150,10 @@ func seedMigration123State(t *testing.T, database *sql.DB) {
 			version_id BIGINT NOT NULL,
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE TABLE integration_logs (
+			id BIGSERIAL PRIMARY KEY,
+			ts TIMESTAMPTZ NOT NULL
 		);
 		CREATE TABLE social_posts (
 			id TEXT PRIMARY KEY,
@@ -274,9 +282,9 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&retryable, &ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 127 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 129 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"version=%d retryable=%v owner_user_ids=%v, want version=127 retryable=false canonical owner backfill",
+			"version=%d retryable=%v owner_user_ids=%v, want version=129 retryable=false canonical owner backfill",
 			version, retryable, ownerUserIDs,
 		)
 	}
@@ -305,8 +313,8 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 127 {
-		t.Fatalf("zero-row pending irreversible migration final version = %d, want 127", version)
+	if version != 129 {
+		t.Fatalf("zero-row pending irreversible migration final version = %d, want 129", version)
 	}
 }
 
@@ -644,9 +652,9 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 127 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 129 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=127 retention_reason=active_post retryable=false canonical owner backfill",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=129 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
 			retentionReason,
 			retryable,
@@ -749,8 +757,8 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 127 {
-		t.Fatalf("final migration version = %d, want 127", version)
+	if version != 129 {
+		t.Fatalf("final migration version = %d, want 129", version)
 	}
 }
 
@@ -808,8 +816,8 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 127 {
-		t.Fatalf("replacement runner final migration version = %d, want 127", version)
+	if version != 129 {
+		t.Fatalf("replacement runner final migration version = %d, want 129", version)
 	}
 }
 
@@ -818,7 +826,7 @@ func TestRequireCurrentSchemaRejects124AndAccepts127(t *testing.T) {
 	seedMigration124State(t, database)
 
 	err := RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 127") {
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 129") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 
@@ -841,14 +849,14 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO goose_db_version (version_id, is_applied) VALUES (128, TRUE);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (130, TRUE);
 	`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	err = RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 127") || !strings.Contains(err.Error(), "rollback is unsafe") {
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 129") || !strings.Contains(err.Error(), "rollback is unsafe") {
 		t.Fatalf("schema-ahead guard error = %v", err)
 	}
 }
