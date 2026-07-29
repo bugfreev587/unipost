@@ -278,6 +278,9 @@ jobs:
       - name: Run publishing restriction frontend contracts
         run: npm run test:publishing-restrictions
 
+      - name: Run YouTube UI compliance contracts
+        run: npm run test:youtube-compliance
+
       - name: Build dashboard
         run: npm run build
 

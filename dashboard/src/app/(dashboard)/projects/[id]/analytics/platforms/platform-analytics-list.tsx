@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { ArrowRight, BarChart3, Camera, CheckCircle2, Clock, FileText, ImageIcon, MessageCircle, MousePointerClick, ThumbsUp, Video } from "lucide-react";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { PlatformIcon } from "@/components/platform-icons";
 import { getMe } from "@/lib/api";
 
@@ -197,7 +198,7 @@ export function PlatformAnalyticsList({ profileId }: { profileId: string }) {
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div className="platform-icon-wrap"><PlatformIcon platform="youtube" /></div>
+            <div className="platform-icon-wrap"><AccountDestinationIcon platform="youtube" /></div>
             <div>
               <div style={{ color: "var(--dtext)", fontWeight: 700 }}>YouTube</div>
               <div style={{ color: "var(--dmuted)", fontSize: 12 }}>Channel metrics and Analytics reports</div>

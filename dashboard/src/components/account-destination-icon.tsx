@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { Link2, Video } from "lucide-react";
+import { Link2 } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 
 export function AccountDestinationIcon({ platform, size = 14 }: { platform: string; size?: number }) {
@@ -15,8 +15,24 @@ export function AccountDestinationIcon({ platform, size = 14 }: { platform: stri
     };
 
     return (
-      <span style={style} aria-hidden="true">
-        <Video width={size} height={size} strokeWidth={2} />
+      <span style={style} aria-hidden="true" data-youtube-destination-icon>
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <rect
+            x="3"
+            y="5"
+            width="18"
+            height="14"
+            rx="4"
+            stroke="currentColor"
+            strokeWidth="1.8"
+          />
+          <path
+            d="M10 9.25L15 12L10 14.75Z"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinejoin="round"
+          />
+        </svg>
       </span>
     );
   }
