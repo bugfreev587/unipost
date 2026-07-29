@@ -929,11 +929,32 @@ type adminPostFailure struct {
 	PlatformErrorCode  *string   `json:"platform_error_code,omitempty"`
 	IsRetriable        *bool     `json:"is_retriable,omitempty"`
 	NextAction         *string   `json:"next_action,omitempty"`
-	// DebugCurl is the redacted curl dump captured by debugrt when the
-	// adapter's HTTP call failed. Always included for admins — this
-	// is the primary diagnostic surface for platform failures.
+	// DebugCurl remains nil on list responses. The dedicated Super Admin
+	// detail endpoint reads the diagnostic field only after selection.
 	DebugCurl *string `json:"debug_curl,omitempty"`
 }
+
+type adminPostFailureDebugResponse struct {
+	DebugCurl *string `json:"debug_curl"`
+}
+
+const adminPostFailureDebugSQL = `
+WITH target_result AS (
+  SELECT social_post_result_id AS id, 0 AS priority
+  FROM post_failures
+  WHERE id = $1
+
+  UNION ALL
+
+  SELECT id, 1 AS priority
+  FROM social_post_results
+  WHERE id = $1
+)
+SELECT NULLIF(spr.debug_curl, '') AS debug_curl
+FROM target_result target
+LEFT JOIN social_post_results spr ON spr.id = target.id
+ORDER BY target.priority
+LIMIT 1`
 
 type adminPostFailureQuery struct {
 	UserID   string
@@ -1573,7 +1594,7 @@ WITH failed_results AS (
     NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
     NULLIF(COALESCE(pf.message, spr.error_message), '') AS error_message,
     NULL::TEXT AS error_summary,
-    NULLIF(spr.debug_curl, '') AS debug_curl,
+    NULL::TEXT AS debug_curl,
     NULLIF(COALESCE(pf.error_code, spr.error_code), '') AS error_code,
     NULLIF(COALESCE(pf.failure_stage, spr.failure_stage), '') AS failure_stage,
     NULLIF(COALESCE(pf.platform_error_code, spr.platform_error_code), '') AS platform_error_code,
@@ -1664,7 +1685,7 @@ linked_failure_events AS (
     NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
     NULLIF(COALESCE(pf.message, spr.error_message), '') AS error_message,
     NULLIF(sp.metadata->>'error_summary', '') AS error_summary,
-    NULLIF(spr.debug_curl, '') AS debug_curl,
+    NULL::TEXT AS debug_curl,
     NULLIF(COALESCE(pf.error_code, spr.error_code), '') AS error_code,
     NULLIF(COALESCE(pf.failure_stage, spr.failure_stage), '') AS failure_stage,
     NULLIF(COALESCE(pf.platform_error_code, spr.platform_error_code), '') AS platform_error_code,
@@ -2702,6 +2723,27 @@ func (h *AdminHandler) ListPostFailures(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load post failures: "+err.Error())
+		return
+	}
+
+	writeSuccess(w, out)
+}
+
+func (h *AdminHandler) GetPostFailureDebug(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid failure id")
+		return
+	}
+
+	var out adminPostFailureDebugResponse
+	err := h.pool.QueryRow(r.Context(), adminPostFailureDebugSQL, id).Scan(&out.DebugCurl)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Failure not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load failure debug detail")
 		return
 	}
 

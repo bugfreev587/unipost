@@ -1028,7 +1028,10 @@ func main() {
 		r.Post("/v1/admin/workspaces/{workspaceID}/plan", adminHandler.SetPlan)
 		r.Post("/v1/admin/workspaces/{workspaceID}/trials", adminHandler.GrantTrial)
 		r.Post("/v1/admin/workspaces/{workspaceID}/trials/{trialID}/revoke", adminHandler.RevokeTrial)
-		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin errors are restricted to super admins")).
+			Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin errors are restricted to super admins")).
+			Get("/v1/admin/post-failures/{id}/debug", adminHandler.GetPostFailureDebug)
 		r.Get("/v1/admin/error-triage/runs", errorTriageHandler.ListRuns)
 		r.Post("/v1/admin/error-triage/runs", errorTriageHandler.CreateRun)
 		r.Get("/v1/admin/error-triage/runs/{id}", errorTriageHandler.GetRun)

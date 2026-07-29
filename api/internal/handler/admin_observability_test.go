@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -18,5 +19,28 @@ func TestAdminLogsDetailSelectIncludesPayloadColumns(t *testing.T) {
 		if !strings.Contains(query, column) {
 			t.Fatalf("detail query missing %s", column)
 		}
+	}
+}
+
+func TestAdminPostFailuresListNeverReadsDebugCurl(t *testing.T) {
+	body, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	start := strings.Index(source, "func (h *AdminHandler) queryPostFailures")
+	if start < 0 {
+		t.Fatal("could not find queryPostFailures source")
+	}
+	end := strings.Index(source[start:], "func (h *AdminHandler) ListUserPostFailures")
+	if end < 0 {
+		t.Fatal("could not isolate queryPostFailures source")
+	}
+	query := strings.ToLower(source[start : start+end])
+	if strings.Contains(query, "spr.debug_curl") {
+		t.Fatalf("list query reads debug TOAST: %s", query)
+	}
+	if strings.Count(query, "null::text as debug_curl") != 3 {
+		t.Fatalf("all three list branches must project a null debug value")
 	}
 }
