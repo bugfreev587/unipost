@@ -1,5 +1,7 @@
 # YouTube Icon Source System Implementation Plan
 
+> **Superseded:** The official brand site requires a 100px minimum digital YouTube Icon height. The product owner approved the text-link A2 design instead. Execute `docs/superpowers/plans/2026-07-29-youtube-source-system-a2.md`; do not execute this file.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace ambiguous authenticated-Dashboard YouTube branding with a compliant two-tier system: official linked attribution for real YouTube identity/content and a refined neutral glyph for UniPost-owned operations and state.
