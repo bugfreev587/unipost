@@ -22,6 +22,14 @@ const managedUserPath = new URL(
   "../src/app/(dashboard)/projects/[id]/users/[external_user_id]/page.tsx",
   import.meta.url,
 );
+const inboxPath = new URL(
+  "../src/app/(dashboard)/projects/[id]/inbox/page.tsx",
+  import.meta.url,
+);
+const adminUsersPath = new URL(
+  "../src/app/admin/users/page.tsx",
+  import.meta.url,
+);
 
 test("YouTube source links are validated, accessible text links without brand artwork", async () => {
   const source = await readFile(linkPath, "utf8");
@@ -69,4 +77,23 @@ test("concrete account pages use channel identity while keeping status separate"
   }
   assert.match(accountsSource, /<th>UniPost status<\/th>/);
   assert.match(managedUserSource, /data-unipost-account-status/);
+});
+
+test("Inbox uses neutral platform glyphs and isolates validated YouTube source actions", async () => {
+  const source = await readFile(inboxPath, "utf8");
+
+  assert.doesNotMatch(source, /import \{ PlatformIcon \}/);
+  assert.match(source, /AccountDestinationIcon/);
+  assert.match(source, /Source: YouTube/);
+  assert.match(source, /normalizeYouTubeContentUrl/);
+  assert.match(source, /YouTubeSourceLink/);
+  assert.match(source, /data-youtube-inbox-source-action/);
+});
+
+test("Admin user summaries use neutral destinations for every dynamic platform list", async () => {
+  const source = await readFile(adminUsersPath, "utf8");
+
+  assert.doesNotMatch(source, /import \{ PlatformIcon \}/);
+  assert.match(source, /AccountDestinationIcon/);
+  assert.equal((source.match(/<AccountDestinationIcon/g) || []).length, 3);
 });

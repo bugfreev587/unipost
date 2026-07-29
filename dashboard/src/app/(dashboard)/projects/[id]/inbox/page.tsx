@@ -50,8 +50,10 @@ import {
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { useInboxWebSocket } from "@/lib/use-inbox-ws";
 import { buildContactPageHref } from "@/lib/support";
+import { normalizeYouTubeContentUrl } from "@/lib/youtube-source";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { PlanGate } from "@/components/dashboard/plan-gate";
-import { PlatformIcon } from "@/components/platform-icons";
+import { YouTubeSourceLink } from "@/components/youtube/youtube-source-link";
 import { isMetaDMReplyWindowClosed } from "./reply-window";
 import {
   AlertTriangle,
@@ -235,11 +237,12 @@ function timeAgo(dateStr: string): string {
 }
 
 function sourceLabel(source: InboxItem["source"]) {
+  if (source === "youtube_comment") return "Source: YouTube";
   return getInboxSourceDefinition(source).shortLabel;
 }
 
 // platformFromSource maps an InboxItem.source back to the platform
-// name used by PlatformIcon. Falls back to "instagram" for any
+// name used by AccountDestinationIcon. Falls back to "instagram" for any
 // unrecognized source so we never render a "missing icon" glyph —
 // worst case the IG icon is wrong for a row, but it's still
 // something recognizable.
@@ -1336,6 +1339,15 @@ function InboxPageInner() {
     ? mediaContext[selectedGroup.parentExternalID || selectedGroup.threadKey || ""] || null
     : null;
 
+  const selectedYouTubeSourceUrl = useMemo(() => {
+    if (selectedGroup?.source !== "youtube_comment") return null;
+    for (const item of selectedGroup.items) {
+      const safeUrl = normalizeYouTubeContentUrl(item.url);
+      if (safeUrl) return safeUrl;
+    }
+    return null;
+  }, [selectedGroup]);
+
   const detailStatus = selectedGroup ? selectedGroup.threadStatus || "open" : "open";
   const showHumanAgent = isDMSource(selectedGroup?.source);
   const commentTree = useMemo(
@@ -1739,7 +1751,7 @@ function InboxPageInner() {
         ) : null}
         {xSyncState.kind === "estimate" ? (
           <SyncStateCard
-            icon={<PlatformIcon platform="twitter" size={16} />}
+            icon={<AccountDestinationIcon platform="twitter" size={16} />}
             title="Confirm X Inbox sync"
             body={xCreditsEnabled
               ? `This 7-day backfill can use up to ${xSyncState.result.estimated_x_credits.toLocaleString()} X Credits across ${xSyncState.result.accounts_checked} account(s). The final charge is based on the server-returned result.`
@@ -1982,7 +1994,7 @@ function InboxPageInner() {
                 >
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                     <div style={{ paddingTop: 2 }}>
-                      <PlatformIcon platform={group.accountPlatform || platformFromSource(group.source)} size={18} />
+                      <AccountDestinationIcon platform={group.accountPlatform || platformFromSource(group.source)} size={18} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -2149,7 +2161,7 @@ function InboxPageInner() {
               {selectedGroup.source === "x_reply" ? (
                 <div className="x-inbox-context">
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <PlatformIcon platform="twitter" size={18} />
+                    <AccountDestinationIcon platform="twitter" size={18} />
                     <span className="dt-body-sm" style={{ fontWeight: 650, color: "var(--dtext)" }}>
                       X conversation
                     </span>
@@ -2175,7 +2187,7 @@ function InboxPageInner() {
                   <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1, background: "linear-gradient(90deg, transparent, rgba(16,185,129,.45), transparent)" }} />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <PlatformIcon platform={selectedGroup.accountPlatform || platformFromSource(selectedGroup.source)} size={18} />
+                      <AccountDestinationIcon platform={selectedGroup.accountPlatform || platformFromSource(selectedGroup.source)} size={18} />
                       <span className="dt-body-sm" style={{ fontWeight: 600, color: "var(--dtext)" }}>
                         {selectedPost || currentMediaContext ? "Original post" : selectedGroup.accountName ? `@${selectedGroup.accountName}` : "Post context"}
                       </span>
@@ -2190,6 +2202,29 @@ function InboxPageInner() {
                       </span>
                     ) : null}
                   </div>
+                  {selectedGroup.source === "youtube_comment" ? (
+                    <div
+                      data-youtube-inbox-source-action
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        flexWrap: "wrap",
+                        marginBottom: 8,
+                        color: "var(--dmuted)",
+                        fontSize: 12,
+                      }}
+                    >
+                      <span>Source: YouTube</span>
+                      {selectedYouTubeSourceUrl ? (
+                        <YouTubeSourceLink
+                          href={selectedYouTubeSourceUrl}
+                          label="comment context"
+                          disclosure="View on YouTube"
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
                   {selectedPost ? (
                     <div style={{ display: "grid", gap: 12 }}>
                       {selectedPost.media_urls && selectedPost.media_urls.length > 0 ? (
