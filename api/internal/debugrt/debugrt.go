@@ -411,6 +411,10 @@ func sanitizeStructuredPayload(data []byte, mediaType string) ([]byte, bool) {
 		for key := range values {
 			if isSensitiveFieldKey(key) {
 				values[key] = []string{"[REDACTED]"}
+				continue
+			}
+			for i, value := range values[key] {
+				values[key][i] = sanitizeDiagnosticText(value)
 			}
 		}
 		return []byte(values.Encode()), true
@@ -437,6 +441,8 @@ func redactJSONValue(value any) any {
 			out[i] = redactJSONValue(nested)
 		}
 		return out
+	case string:
+		return sanitizeDiagnosticText(typed)
 	default:
 		return typed
 	}
@@ -462,7 +468,8 @@ func isSensitiveFieldKey(key string) bool {
 
 var (
 	authorizationValuePattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[^\s,;]+`)
-	credentialPairPattern     = regexp.MustCompile(`(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|authorization|password|cookie|signature|appsecret[_-]?proof|token)\s*[:=]\s*[^\s&,;]+`)
+	credentialPairPattern     = regexp.MustCompile(`(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|authorization|password|cookie|signature|signed[_-]?request|appsecret[_-]?proof|token)\s*[:=]\s*[^\s&,;]+`)
+	diagnosticURLPattern      = regexp.MustCompile(`https?://[^\s'"<>]+`)
 )
 
 func normalizeDiagnosticText(value string) string {
@@ -472,6 +479,13 @@ func normalizeDiagnosticText(value string) string {
 
 func sanitizeDiagnosticText(value string) string {
 	value = normalizeDiagnosticText(value)
+	value = diagnosticURLPattern.ReplaceAllStringFunc(value, func(candidate string) string {
+		parsed, err := url.Parse(candidate)
+		if err != nil {
+			return candidate
+		}
+		return redactURL(parsed)
+	})
 	value = authorizationValuePattern.ReplaceAllString(value, "$1 [REDACTED]")
 	return credentialPairPattern.ReplaceAllString(value, "$1=[REDACTED]")
 }

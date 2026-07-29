@@ -305,12 +305,12 @@ func TestCaptureRedactsStructuredRequestAndResponseSecrets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":{"access_token":"response-secret","nested":{"client_secret":"nested-secret"}},"message":"invalid"}`))
+		_, _ = w.Write([]byte(`{"error":{"access_token":"response-secret","nested":{"client_secret":"nested-secret"}},"message":"invalid https://provider.example/error?fields=id&signed_request=response-url-secret"}`))
 	}))
 	defer server.Close()
 
 	recorder := NewRecorder()
-	requestBody := `{"caption":"safe","access_token":"request-secret","nested":{"refresh_token":"refresh-secret","password":"password-secret"}}`
+	requestBody := `{"caption":"safe https://callback.example/path?mode=publish&signed_request=request-url-secret","access_token":"request-secret","nested":{"refresh_token":"refresh-secret","password":"password-secret"}}`
 	req, err := http.NewRequestWithContext(
 		WithRecorder(context.Background(), recorder),
 		http.MethodPost,
@@ -341,12 +341,14 @@ func TestCaptureRedactsStructuredRequestAndResponseSecrets(t *testing.T) {
 		"nested-secret",
 		"header-secret",
 		"unknown-header-secret",
+		"request-url-secret",
+		"response-url-secret",
 	} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("diagnostic leaked %q: %s", secret, out)
 		}
 	}
-	for _, expected := range []string{`"caption":"safe"`, `"message":"invalid"`, "X-Restli-Protocol-Version: 2.0.0", "[REDACTED]"} {
+	for _, expected := range []string{`"caption":"safe https://callback.example/path?mode=%5BREDACTED%5D`, `"message":"invalid https://provider.example/error?fields=%5BREDACTED%5D`, "X-Restli-Protocol-Version: 2.0.0", "[REDACTED]"} {
 		if !strings.Contains(out, expected) {
 			t.Fatalf("diagnostic missing %q: %s", expected, out)
 		}
