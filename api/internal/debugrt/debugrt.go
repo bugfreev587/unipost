@@ -18,13 +18,17 @@ package debugrt
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Entry is one failing HTTP request/response cycle. CurlCommand is what
@@ -58,11 +62,15 @@ type Recorder struct {
 // 500 can be a 2MB HTML error page — we truncate to keep rows sane.
 const maxResponseBodyBytes = 8 * 1024
 
-// NewRecorder returns a Recorder with a sensible cap. 16 entries covers
-// the worst publish path (TikTok photo post: creator_info + init + 3x
-// photo pull + status poll × 12) with headroom.
+const (
+	maxRequestBodyBytes = 32 * 1024
+	maxSerializedBytes  = 64 * 1024
+	maxRecorderEntries  = 8
+)
+
+// NewRecorder returns a Recorder with a hard per-publish entry cap.
 func NewRecorder() *Recorder {
-	return &Recorder{maxEntries: 16}
+	return &Recorder{maxEntries: maxRecorderEntries}
 }
 
 // Entries returns a snapshot of all entries recorded so far.
@@ -123,7 +131,19 @@ func (r *Recorder) Serialize() string {
 	if dropped := r.Dropped(); dropped > 0 {
 		fmt.Fprintf(&b, "\n\n# (%d additional failing request%s were omitted)", dropped, plural(dropped))
 	}
-	return b.String()
+	return boundSerialized(b.String())
+}
+
+func boundSerialized(value string) string {
+	if len(value) <= maxSerializedBytes {
+		return value
+	}
+	const marker = "\n\n# diagnostic truncated at 65536 bytes"
+	prefix := value[:maxSerializedBytes-len(marker)]
+	for !utf8.ValidString(prefix) {
+		prefix = prefix[:len(prefix)-1]
+	}
+	return prefix + marker
 }
 
 func plural(n int) string {
@@ -185,9 +205,9 @@ func NewClient(timeout time.Duration) *http.Client {
 	}
 }
 
-// RoundTrip is the hot path. We buffer the request body once (so we can
-// log it and still forward it), fire the request, and — on failure
-// only — append a redacted curl entry to the context's recorder.
+// RoundTrip is the hot path. A bounded wrapper observes bytes only while
+// the underlying transport reads them. It never pre-reads or replaces the
+// caller's replay behavior, and only a failed request is retained.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rec := RecorderFromContext(req.Context())
 
@@ -197,28 +217,10 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return t.base.RoundTrip(req)
 	}
 
-	var bodyBytes []byte
+	var bodyCapture *requestBodyCapture
 	if req.Body != nil {
-		b, err := io.ReadAll(req.Body)
-		if err != nil {
-			// Reading the body failed — record what we can and let
-			// the caller's transport surface the real error.
-			rec.append(Entry{
-				CurlCommand:    buildCurl(req, nil),
-				TransportError: "request body unreadable: " + err.Error(),
-				RecordedAt:     time.Now(),
-			})
-			return nil, err
-		}
-		bodyBytes = b
-		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		// GetBody lets net/http replay the body on redirects and
-		// retries. Without it, redirected requests go out empty.
-		if req.GetBody == nil {
-			req.GetBody = func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(bodyBytes)), nil
-			}
-		}
+		bodyCapture = newRequestBodyCapture(req.Body, req.Header.Get("Content-Type"))
+		req.Body = bodyCapture
 	}
 
 	start := time.Now()
@@ -227,7 +229,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	if err != nil {
 		rec.append(Entry{
-			CurlCommand:    buildCurl(req, bodyBytes),
+			CurlCommand:    buildCurlFromCapture(req, snapshotRequestBody(bodyCapture)),
 			TransportError: err.Error(),
 			Duration:       elapsed,
 			RecordedAt:     time.Now(),
@@ -246,7 +248,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	bodyForCaller, bodyForRecorder := teeBounded(resp.Body, maxResponseBodyBytes)
 	resp.Body = bodyForCaller
 	rec.append(Entry{
-		CurlCommand:  buildCurl(req, bodyBytes),
+		CurlCommand:  buildCurlFromCapture(req, snapshotRequestBody(bodyCapture)),
 		Status:       resp.StatusCode,
 		ResponseBody: string(bodyForRecorder),
 		Duration:     elapsed,
@@ -272,12 +274,112 @@ type readCloser struct {
 	io.Closer
 }
 
+type capturedRequestBody struct {
+	Data        []byte
+	ContentType string
+	Observed    int64
+	SHA256      string
+	Omitted     bool
+	Truncated   bool
+}
+
+type requestBodyCapture struct {
+	body        io.ReadCloser
+	mu          sync.Mutex
+	hash        hash.Hash
+	data        []byte
+	contentType string
+	observed    int64
+	captureText bool
+}
+
+func newRequestBodyCapture(body io.ReadCloser, contentType string) *requestBodyCapture {
+	mediaType := normalizedContentType(contentType)
+	return &requestBodyCapture{
+		body:        body,
+		hash:        sha256.New(),
+		data:        make([]byte, 0, maxRequestBodyBytes),
+		contentType: mediaType,
+		captureText: isSafeTextContentType(mediaType),
+	}
+}
+
+func (c *requestBodyCapture) Read(p []byte) (int, error) {
+	n, err := c.body.Read(p)
+	if n > 0 {
+		chunk := p[:n]
+		c.mu.Lock()
+		c.observed += int64(n)
+		_, _ = c.hash.Write(chunk)
+		if c.captureText && len(c.data) < maxRequestBodyBytes {
+			remaining := maxRequestBodyBytes - len(c.data)
+			if remaining > n {
+				remaining = n
+			}
+			c.data = append(c.data, chunk[:remaining]...)
+		}
+		c.mu.Unlock()
+	}
+	return n, err
+}
+
+func (c *requestBodyCapture) Close() error {
+	return c.body.Close()
+}
+
+func (c *requestBodyCapture) snapshot() capturedRequestBody {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	snapshot := capturedRequestBody{
+		Data:        append([]byte(nil), c.data...),
+		ContentType: c.contentType,
+		Observed:    c.observed,
+		Omitted:     !c.captureText && c.observed > 0,
+		Truncated:   c.captureText && c.observed > int64(len(c.data)),
+	}
+	if c.observed > 0 {
+		snapshot.SHA256 = hex.EncodeToString(c.hash.Sum(nil))
+	}
+	return snapshot
+}
+
+func snapshotRequestBody(capture *requestBodyCapture) capturedRequestBody {
+	if capture == nil {
+		return capturedRequestBody{}
+	}
+	return capture.snapshot()
+}
+
+func normalizedContentType(value string) string {
+	mediaType, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(value)), ";")
+	mediaType = strings.TrimSpace(mediaType)
+	if mediaType == "" {
+		return "unknown"
+	}
+	return mediaType
+}
+
+func isSafeTextContentType(mediaType string) bool {
+	return strings.HasPrefix(mediaType, "text/") ||
+		mediaType == "application/json" ||
+		strings.HasSuffix(mediaType, "+json") ||
+		mediaType == "application/x-www-form-urlencoded"
+}
+
 // ── Curl formatting + redaction ─────────────────────────────────────────
 
 // buildCurl renders a copyable curl one-liner for the given request.
 // Sensitive headers / query params are redacted in place; the caller's
 // original request is not mutated.
 func buildCurl(req *http.Request, body []byte) string {
+	return buildCurlFromCapture(req, capturedRequestBody{
+		Data:        body,
+		ContentType: normalizedContentType(req.Header.Get("Content-Type")),
+		Observed:    int64(len(body)),
+	})
+}
+
+func buildCurlFromCapture(req *http.Request, body capturedRequestBody) string {
 	var b strings.Builder
 	b.WriteString("curl -X ")
 	b.WriteString(req.Method)
@@ -302,10 +404,15 @@ func buildCurl(req *http.Request, body []byte) string {
 		}
 	}
 
-	if len(body) > 0 {
+	if len(body.Data) > 0 {
 		b.WriteString(" \\\n  --data '")
-		b.WriteString(escapeSingleQuotes(string(body)))
+		b.WriteString(escapeSingleQuotes(string(body.Data)))
 		b.WriteString("'")
+	}
+	if body.Omitted {
+		fmt.Fprintf(&b, "\n# request body omitted: content_type=%s observed_bytes=%d sha256=%s", body.ContentType, body.Observed, body.SHA256)
+	} else if body.Truncated {
+		fmt.Fprintf(&b, "\n# request body truncated: content_type=%s observed_bytes=%d stored_bytes=%d sha256=%s", body.ContentType, body.Observed, len(body.Data), body.SHA256)
 	}
 	return b.String()
 }

@@ -1,7 +1,10 @@
 package debugrt
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +12,26 @@ import (
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type guardedBody struct {
+	reader  io.Reader
+	allowed *bool
+}
+
+func (b *guardedBody) Read(p []byte) (int, error) {
+	if !*b.allowed {
+		return 0, fmt.Errorf("request body read before base transport started")
+	}
+	return b.reader.Read(p)
+}
+
+func (b *guardedBody) Close() error { return nil }
 
 func TestNoRecorderNoCapture(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,5 +161,143 @@ func TestRecorderCap(t *testing.T) {
 	}
 	if !strings.Contains(rec.Serialize(), "3 additional failing request") {
 		t.Errorf("dropped count missing from serialize")
+	}
+}
+
+func TestCaptureDoesNotPreReadRequestBody(t *testing.T) {
+	baseStarted := false
+	body := &guardedBody{reader: strings.NewReader(`{"hello":"world"}`), allowed: &baseStarted}
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		baseStarted = true
+		if _, err := io.ReadAll(req.Body); err != nil {
+			return nil, err
+		}
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("bad request")),
+			Request:    req,
+		}, nil
+	})
+	recorder := NewRecorder()
+	req, err := http.NewRequestWithContext(WithRecorder(context.Background(), recorder), http.MethodPost, "https://example.test", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{Transport: Wrap(base)}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !baseStarted {
+		t.Fatal("base transport was never called")
+	}
+}
+
+func TestBinaryRequestBodyIsForwardedButOmitted(t *testing.T) {
+	payload := bytes.Repeat([]byte{0xab}, 2<<20)
+	received := make(chan []byte, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received <- body
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	recorder := NewRecorder()
+	req, err := http.NewRequestWithContext(WithRecorder(context.Background(), recorder), http.MethodPost, srv.URL, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "video/mp4")
+	resp, err := NewClient(5 * time.Second).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := <-received; !bytes.Equal(got, payload) {
+		t.Fatalf("server received %d bytes, want %d", len(got), len(payload))
+	}
+
+	out := recorder.Serialize()
+	if strings.Contains(out, "--data '") {
+		t.Fatal("binary request body was embedded in curl")
+	}
+	for _, expected := range []string{
+		"body omitted",
+		"video/mp4",
+		fmt.Sprintf("observed_bytes=%d", len(payload)),
+		fmt.Sprintf("sha256=%x", sha256.Sum256(payload)),
+	} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("binary omission metadata missing %q: %s", expected, out)
+		}
+	}
+}
+
+func TestLargeTextRequestIsForwardedAndSerializedWithinLimit(t *testing.T) {
+	prefix := strings.Repeat("a", 96*1024)
+	payload := prefix + "tail-marker-that-must-not-be-stored"
+	received := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received <- string(body)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	recorder := NewRecorder()
+	req, err := http.NewRequestWithContext(WithRecorder(context.Background(), recorder), http.MethodPost, srv.URL, strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := NewClient(5 * time.Second).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := <-received; got != payload {
+		t.Fatalf("server received %d bytes, want %d", len(got), len(payload))
+	}
+
+	out := recorder.Serialize()
+	if len(out) > 64*1024 {
+		t.Fatalf("serialized debug is %d bytes, want <= 65536", len(out))
+	}
+	if strings.Contains(out, "tail-marker-that-must-not-be-stored") {
+		t.Fatal("request tail was stored past the capture limit")
+	}
+	if !strings.Contains(out, "body truncated") {
+		t.Fatalf("truncation marker missing: %s", out)
+	}
+}
+
+func TestNewRecorderKeepsAtMostEightEntries(t *testing.T) {
+	recorder := NewRecorder()
+	for i := 0; i < 9; i++ {
+		recorder.append(Entry{Status: http.StatusBadRequest})
+	}
+	if got := len(recorder.Entries()); got != 8 {
+		t.Fatalf("kept entries = %d, want 8", got)
+	}
+	if got := recorder.Dropped(); got != 1 {
+		t.Fatalf("dropped entries = %d, want 1", got)
+	}
+}
+
+func TestSerializeNeverExceedsHardLimit(t *testing.T) {
+	recorder := NewRecorder()
+	for i := 0; i < 8; i++ {
+		recorder.append(Entry{Status: http.StatusBadRequest, CurlCommand: strings.Repeat("x", 32*1024)})
+	}
+	out := recorder.Serialize()
+	if len(out) > 64*1024 {
+		t.Fatalf("serialized debug is %d bytes, want <= 65536", len(out))
+	}
+	if !strings.Contains(out, "diagnostic truncated") {
+		t.Fatal("hard-cap truncation marker missing")
 	}
 }
