@@ -46,7 +46,7 @@ type MigrationGateConfig struct {
 	ProjectID            string
 	EnvironmentID        string
 	EnvironmentName      string
-	ServicePreviewURL    string
+	ServicePublicDomain  string
 	VolumeInstanceID     string
 	PostgresServiceID    string
 	ApplicationServiceID string
@@ -111,7 +111,7 @@ func RunMigrationsWithBackupGate(
 			"project_id", config.ProjectID,
 			"environment_id", config.EnvironmentID,
 			"environment_name", config.EnvironmentName,
-			"service_preview_url", config.ServicePreviewURL,
+			"service_public_domain", config.ServicePublicDomain,
 			"application_service_id", config.ApplicationServiceID,
 			"application_sha", config.ApplicationSHA,
 			"current_version", currentVersion,
@@ -152,8 +152,8 @@ func freshDisposablePreviewCanBypassBackup(
 	if len(match) != 2 {
 		return false, nil
 	}
-	expectedPreviewURL := fmt.Sprintf("https://preview-api-unipost-pr-%s.up.railway.app", match[1])
-	if strings.TrimSpace(config.ServicePreviewURL) != expectedPreviewURL {
+	expectedPublicDomain := fmt.Sprintf("preview-api-unipost-pr-%s.up.railway.app", match[1])
+	if strings.TrimSpace(config.ServicePublicDomain) != expectedPublicDomain {
 		return false, nil
 	}
 	for _, value := range []string{

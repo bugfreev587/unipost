@@ -209,7 +209,7 @@ No staging or production migration is considered authorized or complete without 
 
 The sole exception is a newly provisioned, disposable Railway pull-request environment. Its backup may be bypassed only when all of the following are proven while the migration session lock is held:
 
-- the environment name is exactly `unipost-pr-<number>` and its service Preview URL is exactly `https://preview-api-unipost-pr-<same-number>.up.railway.app`;
+- the environment name is exactly `unipost-pr-<number>` and Railway's `RAILWAY_PUBLIC_DOMAIN` is exactly `preview-api-unipost-pr-<same-number>.up.railway.app` (Railway provides this value as a hostname without a URL scheme);
 - the project ID, environment ID, application service ID, and exact 40-character lowercase application SHA are present;
 - the current Goose version is `0` and the current PostgreSQL schema contains zero base tables;
 - every pending irreversible migration reports zero affected rows.

@@ -43,7 +43,7 @@ func handleMigrationCommand(
 		ProjectID:            strings.TrimSpace(getenv("RAILWAY_PROJECT_ID")),
 		EnvironmentID:        strings.TrimSpace(getenv("RAILWAY_ENVIRONMENT_ID")),
 		EnvironmentName:      strings.TrimSpace(getenv("RAILWAY_ENVIRONMENT_NAME")),
-		ServicePreviewURL:    strings.TrimSpace(getenv("RAILWAY_SERVICE_PREVIEW_API_URL")),
+		ServicePublicDomain:  strings.TrimSpace(getenv("RAILWAY_PUBLIC_DOMAIN")),
 		VolumeInstanceID:     strings.TrimSpace(getenv("RAILWAY_POSTGRES_VOLUME_INSTANCE_ID")),
 		PostgresServiceID:    strings.TrimSpace(getenv("RAILWAY_POSTGRES_SERVICE_ID")),
 		ApplicationServiceID: strings.TrimSpace(getenv("RAILWAY_SERVICE_ID")),

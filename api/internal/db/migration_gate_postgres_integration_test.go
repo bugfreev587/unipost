@@ -286,7 +286,7 @@ func successfulGateClient(config MigrationGateConfig, affected []AffectedMigrati
 func freshPreviewGateConfig() MigrationGateConfig {
 	config := testMigrationGateConfig()
 	config.EnvironmentName = "unipost-pr-301"
-	config.ServicePreviewURL = "https://preview-api-unipost-pr-301.up.railway.app"
+	config.ServicePublicDomain = "preview-api-unipost-pr-301.up.railway.app"
 	return config
 }
 
@@ -331,7 +331,7 @@ func TestMigrationGatePostgresDisposablePreviewWithExistingTableStillRequiresBac
 func TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	config := freshPreviewGateConfig()
-	config.ServicePreviewURL = "https://preview-api-unipost-pr-302.up.railway.app"
+	config.ServicePublicDomain = "preview-api-unipost-pr-302.up.railway.app"
 
 	err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil)
 	if err == nil || !strings.Contains(err.Error(), "backup client is missing") {
