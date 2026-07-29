@@ -131,6 +131,26 @@ func TestOmitAllQueryValuesByDefault(t *testing.T) {
 	}
 }
 
+func TestRedactURLOmitsUserInfoAndFragment(t *testing.T) {
+	req, err := http.NewRequest(
+		http.MethodGet,
+		"https://provider-user:provider-password@example.test/path?mode=publish#fragment-secret",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := buildCurl(req, nil)
+	for _, secret := range []string{"provider-user", "provider-password", "publish", "fragment-secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("redacted URL leaked %q: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "https://example.test/path?mode=") {
+		t.Fatalf("redacted URL lost safe route context: %s", got)
+	}
+}
+
 func TestSerializeMultipleEntries(t *testing.T) {
 	rec := NewRecorder()
 	rec.append(Entry{CurlCommand: "curl -X POST 'http://a'", Status: 400, ResponseBody: "oops"})
@@ -448,7 +468,7 @@ func TestSerializeSanitizesTransportErrorsAndInvalidText(t *testing.T) {
 	recorder := NewRecorder()
 	recorder.append(Entry{
 		CurlCommand:    "curl -X POST 'https://example.test'\x00\xff",
-		TransportError: "dial failed: Authorization=Bearer transport-secret access_token=query-secret\x00\xff",
+		TransportError: `dial failed: Authorization=Bearer transport-secret access_token=query-secret {"access_token":"quoted-secret","client_secret": "quoted-client-secret"}` + "\x00\xff",
 		ResponseBody:   "response\x00\xff",
 	})
 	out := recorder.Serialize()
@@ -458,7 +478,7 @@ func TestSerializeSanitizesTransportErrorsAndInvalidText(t *testing.T) {
 	if strings.ContainsRune(out, '\x00') {
 		t.Fatal("serialized diagnostic contains a NUL byte")
 	}
-	for _, secret := range []string{"transport-secret", "query-secret"} {
+	for _, secret := range []string{"transport-secret", "query-secret", "quoted-secret", "quoted-client-secret"} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("transport error leaked %q: %s", secret, out)
 		}

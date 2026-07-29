@@ -468,7 +468,7 @@ func isSensitiveFieldKey(key string) bool {
 
 var (
 	authorizationValuePattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[^\s,;]+`)
-	credentialPairPattern     = regexp.MustCompile(`(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|authorization|password|cookie|signature|signed[_-]?request|appsecret[_-]?proof|token)\s*[:=]\s*[^\s&,;]+`)
+	credentialPairPattern     = regexp.MustCompile(`(?i)(?:\\?["'])?\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|authorization|password|cookie|signature|signed[_-]?request|appsecret[_-]?proof|token)\b(?:\\?["'])?\s*[:=]\s*(?:\\?["'])?[^\s\\"'&,;}]+(?:\\?["'])?`)
 	diagnosticURLPattern      = regexp.MustCompile(`https?://[^\s'"<>]+`)
 )
 
@@ -617,6 +617,9 @@ func redactURL(u *url.URL) string {
 		q.Set(key, "[REDACTED]")
 	}
 	clone := *u
+	clone.User = nil
 	clone.RawQuery = q.Encode()
+	clone.Fragment = ""
+	clone.RawFragment = ""
 	return clone.String()
 }
