@@ -468,7 +468,10 @@ func isSensitiveFieldKey(key string) bool {
 
 var (
 	authorizationValuePattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[^\s,;]+`)
+	cookieFieldPattern        = regexp.MustCompile(`(?i)\bcookie\b\s*[:=][^\r\n]*`)
 	credentialPairPattern     = regexp.MustCompile(`((?:\\?["'])?([A-Za-z0-9_.-]+)(?:\\?["'])?\s*[:=]\s*)(?:\\"(?:\\.|[^"\\])*\\"|\\'(?:\\.|[^'\\])*\\'|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s\\"'&,;}]+)`)
+	redactedTailPattern       = regexp.MustCompile(`\[REDACTED\](?:[&;][^\s,}\r\n]*)+`)
+	pairContinuationPattern   = regexp.MustCompile(`[&;][A-Za-z0-9_.-]+\s*[:=]`)
 	diagnosticURLPattern      = regexp.MustCompile(`(?i)https?://[^\s'"<>]+`)
 )
 
@@ -487,12 +490,20 @@ func sanitizeDiagnosticText(value string) string {
 		return redactURL(parsed)
 	})
 	value = authorizationValuePattern.ReplaceAllString(value, "$1 [REDACTED]")
-	return credentialPairPattern.ReplaceAllStringFunc(value, func(candidate string) string {
+	value = cookieFieldPattern.ReplaceAllString(value, "Cookie: [REDACTED]")
+	value = credentialPairPattern.ReplaceAllStringFunc(value, func(candidate string) string {
 		parts := credentialPairPattern.FindStringSubmatch(candidate)
 		if len(parts) < 3 || !isSensitiveFieldKey(parts[2]) {
 			return candidate
 		}
 		return parts[1] + "[REDACTED]"
+	})
+	return redactedTailPattern.ReplaceAllStringFunc(value, func(candidate string) string {
+		tail := strings.TrimPrefix(candidate, "[REDACTED]")
+		if boundary := pairContinuationPattern.FindStringIndex(tail); boundary != nil {
+			return "[REDACTED]" + tail[boundary[0]:]
+		}
+		return "[REDACTED]"
 	})
 }
 

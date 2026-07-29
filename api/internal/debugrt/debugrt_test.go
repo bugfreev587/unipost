@@ -504,3 +504,21 @@ func TestSerializeSanitizesTransportErrorsAndInvalidText(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeDiagnosticTextRedactsUnquotedDelimiterAndCookieValues(t *testing.T) {
+	got := sanitizeDiagnosticText("password=unquoted-secret&tail-secret;final-secret\nCookie: session=cookie-session-secret; csrf=cookie-csrf-secret\nsafe-context")
+	for _, secret := range []string{
+		"unquoted-secret",
+		"tail-secret",
+		"final-secret",
+		"cookie-session-secret",
+		"cookie-csrf-secret",
+	} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("diagnostic text leaked %q: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "safe-context") {
+		t.Fatalf("redaction removed unrelated following line: %s", got)
+	}
+}
