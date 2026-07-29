@@ -88,13 +88,9 @@ func (w *Writer) Enqueue(detail Detail) {
 	select {
 	case w.queue <- stored:
 	default:
-		dropped := w.dropped.Add(1)
-		slog.Warn("post_failure_debug_dropped",
-			"workspace_id", stored.WorkspaceID,
-			"social_post_result_id", stored.SocialPostResultID,
-			"queue_size", cap(w.queue),
-			"total_dropped", dropped,
-		)
+		// Do not call a remote logging handler from the publishing goroutine.
+		// The worker reports this counter on its own ticker.
+		w.dropped.Add(1)
 	}
 }
 
@@ -103,6 +99,9 @@ func (w *Writer) Start(ctx context.Context) {
 		return
 	}
 	slog.Info("post failure debug writer started", "queue_size", cap(w.queue))
+	reportTicker := time.NewTicker(30 * time.Second)
+	defer reportTicker.Stop()
+	var reportedDropped uint64
 	for {
 		select {
 		case <-ctx.Done():
@@ -111,6 +110,16 @@ func (w *Writer) Start(ctx context.Context) {
 			return
 		case detail := <-w.queue:
 			w.write(detail)
+		case <-reportTicker.C:
+			dropped := w.dropped.Load()
+			if dropped > reportedDropped {
+				slog.Warn("post_failure_debug_dropped",
+					"queue_size", cap(w.queue),
+					"new_drops", dropped-reportedDropped,
+					"total_dropped", dropped,
+				)
+				reportedDropped = dropped
+			}
 		}
 	}
 }
