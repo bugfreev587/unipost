@@ -57,6 +57,7 @@ export function YouTubeChannelIdentity({
   return (
     <div
       className={`${styles.identity}${compact ? ` ${styles.identityCompact}` : ""}`}
+      data-youtube-account-id={account.id}
       data-youtube-channel-identity
     >
       {showAvatar ? (

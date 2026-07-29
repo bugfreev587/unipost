@@ -55,6 +55,7 @@ test("YouTube channel identity composes avatar, name, and source without UniPost
   assert.match(source, /YOUTUBE_HOME_URL/);
   assert.match(source, /Disconnected YouTube channel/);
   assert.match(source, /data-youtube-channel-avatar/);
+  assert.match(source, /data-youtube-account-id=\{account\.id\}/);
   assert.doesNotMatch(source, /dbadge|UniPost status|health/i);
 });
 
@@ -108,8 +109,15 @@ test("authenticated regression exercises the synthetic YouTube identity contract
   const source = await readFile(authenticatedRegressionPath, "utf8");
 
   assert.match(source, /youtube-audit-fixture/);
-  assert.match(source, /data-youtube-channel-identity/);
+  assert.match(source, /youtube-initials-fixture/);
+  assert.match(source, /data-youtube-account-id/);
   assert.match(source, /data-youtube-source-link/);
   assert.match(source, /data-unipost-account-status/);
   assert.match(source, /390/);
+  assert.match(source, /target/);
+  assert.match(source, /boundingBox/);
+  assert.match(source, /scrollWidth/);
+  assert.match(source, /testInfo\.attach/);
+  assert.match(source, /Invalid YouTube result/);
+  assert.match(source, /youtube-invalid-result/);
 });
