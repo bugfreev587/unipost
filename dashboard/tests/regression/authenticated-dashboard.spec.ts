@@ -25,11 +25,11 @@ test("core dashboard routes load and preserve plan-gated navigation with a passw
       await signInSyntheticUser(page, config, identity);
       authState = await bootstrapSyntheticUser(page, config);
       const profileID = authState.profileID;
-      await installYouTubeAccountFixture(page, profileID);
+      const youtubeAccountFixture = await installYouTubeAccountFixture(page, profileID);
       await installYouTubePostFixture(page, profileID);
 
       await expectDashboardRoute(page, `/projects/${profileID}`);
-      await expectYouTubeAccountIdentity(page, profileID, testInfo);
+      await expectYouTubeAccountIdentity(page, profileID, testInfo, youtubeAccountFixture);
       await expectYouTubeResultLinkValidation(page, profileID);
       await expectDashboardRoute(page, `/projects/${profileID}/analytics`);
       await expectDashboardRoute(page, `/projects/${profileID}/settings`);
@@ -41,11 +41,34 @@ test("core dashboard routes load and preserve plan-gated navigation with a passw
 });
 
 async function installYouTubeAccountFixture(page: Page, profileID: string) {
+  let accountRequests = 0;
+
+  await page.route("**/v1/profiles", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: [{
+          id: profileID,
+          workspace_id: "youtube-audit-workspace",
+          name: "YouTube Audit Profile",
+          created_at: "2026-07-29T12:00:00.000Z",
+          updated_at: "2026-07-29T12:00:00.000Z",
+        }],
+      }),
+    });
+  });
+
   await page.route(`**/v1/profiles/${profileID}/accounts*`, async (route) => {
     if (route.request().method() !== "GET") {
       await route.continue();
       return;
     }
+    accountRequests += 1;
 
     await route.fulfill({
       status: 200,
@@ -104,6 +127,10 @@ async function installYouTubeAccountFixture(page: Page, profileID: string) {
       }),
     });
   });
+
+  return {
+    getAccountRequests: () => accountRequests,
+  };
 }
 
 function youtubePostFixture(profileID: string) {
@@ -166,8 +193,14 @@ async function installYouTubePostFixture(page: Page, profileID: string) {
   });
 }
 
-async function expectYouTubeAccountIdentity(page: Page, profileID: string, testInfo: TestInfo) {
+async function expectYouTubeAccountIdentity(
+  page: Page,
+  profileID: string,
+  testInfo: TestInfo,
+  fixture: { getAccountRequests: () => number },
+) {
   await expectDashboardRoute(page, `/projects/${profileID}/accounts`);
+  await expect.poll(fixture.getAccountRequests).toBeGreaterThan(0);
 
   const identity = page.locator('[data-youtube-account-id="youtube-audit-fixture"]');
   const avatar = identity.locator("[data-youtube-channel-avatar]");
