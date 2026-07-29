@@ -29,6 +29,7 @@ const mobilePublicRoutes = [
   {
     path: "/docs/guides/posts/retry-failed-posts",
     marker: /Decide whether UniPost will retry a failed destination automatically/i,
+    verifyFallbackFonts: true,
   },
 ];
 
@@ -45,8 +46,20 @@ test.describe("mobile public layout", () => {
         "Landing page is served only on a distinct landing host; the local CI server is the app host.",
       );
 
+      let blockedFontRequests = 0;
+      if (route.verifyFallbackFonts) {
+        await page.route(/\.(?:woff2?|ttf|otf)(?:\?.*)?$/, (requestRoute) => {
+          blockedFontRequests += 1;
+          return requestRoute.abort();
+        });
+      }
+
       await page.goto(route.path, { waitUntil: "domcontentloaded" });
       await expect(page.getByText(route.marker).first()).toBeVisible();
+
+      if (route.verifyFallbackFonts) {
+        expect(blockedFontRequests).toBeGreaterThan(0);
+      }
 
       const layout = await page.evaluate(() => {
         const root = document.documentElement;
