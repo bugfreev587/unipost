@@ -11,12 +11,15 @@ const publishingRestrictionScript =
   "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts";
 const postgresTestsByPackage = {
   "./internal/db": [
+    "TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup",
+    "TestMigrationGatePostgresDisposablePreviewWithExistingTableStillRequiresBackup",
+    "TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup",
     "TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127",
     "TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged",
     "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
     "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
     "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
-    "TestRequireCurrentSchemaRejects124AndAccepts127",
+    "TestRequireCurrentSchemaRejects124AndAccepts130",
     "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
     "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
     "TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown",

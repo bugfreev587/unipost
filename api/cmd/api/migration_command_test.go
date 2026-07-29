@@ -20,6 +20,8 @@ func TestHandleMigrationCommandBuildsEnvironmentScopedGate(t *testing.T) {
 		"RAILWAY_MIGRATION_BACKUP_TOKEN":      "project-token",
 		"RAILWAY_PROJECT_ID":                  "project-1",
 		"RAILWAY_ENVIRONMENT_ID":              "environment-1",
+		"RAILWAY_ENVIRONMENT_NAME":            "unipost-pr-301",
+		"RAILWAY_SERVICE_PREVIEW_API_URL":     "https://preview-api-unipost-pr-301.up.railway.app",
 		"RAILWAY_POSTGRES_VOLUME_INSTANCE_ID": "volume-instance-1",
 		"RAILWAY_POSTGRES_SERVICE_ID":         "postgres-service-1",
 		"RAILWAY_SERVICE_ID":                  "api-service-1",
@@ -51,7 +53,7 @@ func TestHandleMigrationCommandBuildsEnvironmentScopedGate(t *testing.T) {
 	if gotDatabaseURL != environment["DATABASE_URL"] || gotToken != environment["RAILWAY_MIGRATION_BACKUP_TOKEN"] {
 		t.Fatalf("database=%q token=%q", gotDatabaseURL, gotToken)
 	}
-	if gotConfig.ProjectID != "project-1" || gotConfig.EnvironmentID != "environment-1" || gotConfig.VolumeInstanceID != "volume-instance-1" || gotConfig.PostgresServiceID != "postgres-service-1" || gotConfig.ApplicationServiceID != "api-service-1" || gotConfig.ApplicationSHA != environment["RAILWAY_GIT_COMMIT_SHA"] {
+	if gotConfig.ProjectID != "project-1" || gotConfig.EnvironmentID != "environment-1" || gotConfig.EnvironmentName != "unipost-pr-301" || gotConfig.ServicePreviewURL != "https://preview-api-unipost-pr-301.up.railway.app" || gotConfig.VolumeInstanceID != "volume-instance-1" || gotConfig.PostgresServiceID != "postgres-service-1" || gotConfig.ApplicationServiceID != "api-service-1" || gotConfig.ApplicationSHA != environment["RAILWAY_GIT_COMMIT_SHA"] {
 		t.Fatalf("gate config = %#v", gotConfig)
 	}
 }

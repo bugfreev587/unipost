@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +45,8 @@ type AffectedMigration struct {
 type MigrationGateConfig struct {
 	ProjectID            string
 	EnvironmentID        string
+	EnvironmentName      string
+	ServicePreviewURL    string
 	VolumeInstanceID     string
 	PostgresServiceID    string
 	ApplicationServiceID string
@@ -99,10 +102,84 @@ func RunMigrationsWithBackupGate(
 		"current_version", currentVersion,
 		"affected_migrations", affected,
 	)
+	freshPreview, err := freshDisposablePreviewCanBypassBackup(ctx, connection, currentVersion, config, affected)
+	if err != nil {
+		return fmt.Errorf("inspect disposable Railway Preview before migration backup bypass: %w", err)
+	}
+	if freshPreview {
+		slog.WarnContext(ctx, "fresh disposable Railway Preview migration backup bypass authorized",
+			"project_id", config.ProjectID,
+			"environment_id", config.EnvironmentID,
+			"environment_name", config.EnvironmentName,
+			"service_preview_url", config.ServicePreviewURL,
+			"application_service_id", config.ApplicationServiceID,
+			"application_sha", config.ApplicationSHA,
+			"current_version", currentVersion,
+			"affected_migrations", affected,
+		)
+		if config.beforeMigrations != nil {
+			if err := config.beforeMigrations(ctx); err != nil {
+				return fmt.Errorf("before migration execution: %w", err)
+			}
+		}
+		return runMigrations(ctx, database, false)
+	}
 
 	return runAfterBackupGate(ctx, config, client, affected, func(context.Context) error {
 		return runMigrations(ctx, database, false)
 	})
+}
+
+var disposablePreviewEnvironmentPattern = regexp.MustCompile(`^unipost-pr-([1-9][0-9]*)$`)
+
+func freshDisposablePreviewCanBypassBackup(
+	ctx context.Context,
+	queryer migrationQueryer,
+	currentVersion int64,
+	config MigrationGateConfig,
+	affected []AffectedMigration,
+) (bool, error) {
+	if currentVersion != 0 || len(affected) == 0 {
+		return false, nil
+	}
+	for _, migration := range affected {
+		if migration.Rows != 0 {
+			return false, nil
+		}
+	}
+	environmentName := strings.TrimSpace(config.EnvironmentName)
+	match := disposablePreviewEnvironmentPattern.FindStringSubmatch(environmentName)
+	if len(match) != 2 {
+		return false, nil
+	}
+	expectedPreviewURL := fmt.Sprintf("https://preview-api-unipost-pr-%s.up.railway.app", match[1])
+	if strings.TrimSpace(config.ServicePreviewURL) != expectedPreviewURL {
+		return false, nil
+	}
+	for _, value := range []string{
+		config.ProjectID,
+		config.EnvironmentID,
+		config.ApplicationServiceID,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return false, nil
+		}
+	}
+	sha := strings.TrimSpace(config.ApplicationSHA)
+	decodedSHA, err := hex.DecodeString(sha)
+	if err != nil || len(decodedSHA) != 20 || sha != strings.ToLower(sha) {
+		return false, nil
+	}
+	var baseTables int64
+	if err := queryer.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.tables
+		WHERE table_schema = current_schema()
+		  AND table_type = 'BASE TABLE'
+	`).Scan(&baseTables); err != nil {
+		return false, fmt.Errorf("count current-schema base tables: %w", err)
+	}
+	return baseTables == 0, nil
 }
 
 type migrationQueryer interface {

@@ -205,7 +205,16 @@ For each persistent-environment migration, the completion report includes:
 - any orphan backup IDs from failed attempts;
 - migration and deployment check URLs.
 
-No staging or production migration is considered authorized or complete without its own evidence. A zero-row bypass must still report the pending versions and zero counts that justified it.
+No staging or production migration is considered authorized or complete without its own evidence. Pending irreversible migrations remain fail-closed even when their affected-row counts are zero in every persistent environment.
+
+The sole exception is a newly provisioned, disposable Railway pull-request environment. Its backup may be bypassed only when all of the following are proven while the migration session lock is held:
+
+- the environment name is exactly `unipost-pr-<number>` and its service Preview URL is exactly `https://preview-api-unipost-pr-<same-number>.up.railway.app`;
+- the project ID, environment ID, application service ID, and exact 40-character lowercase application SHA are present;
+- the current Goose version is `0` and the current PostgreSQL schema contains zero base tables;
+- every pending irreversible migration reports zero affected rows.
+
+The bypass logs all of that evidence before migrations run. A malformed or mismatched Preview identity, an inspection error, an existing table, a nonzero schema version, or any nonzero affected-row count falls back to the normal fail-closed backup gate. This exception never applies to development, staging, or production and does not weaken their token, volume, database-binding, backup-readiness, or lock requirements.
 
 ## Non-goals
 

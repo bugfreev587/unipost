@@ -283,6 +283,69 @@ func successfulGateClient(config MigrationGateConfig, affected []AffectedMigrati
 	}
 }
 
+func freshPreviewGateConfig() MigrationGateConfig {
+	config := testMigrationGateConfig()
+	config.EnvironmentName = "unipost-pr-301"
+	config.ServicePreviewURL = "https://preview-api-unipost-pr-301.up.railway.app"
+	return config
+}
+
+func TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	config := freshPreviewGateConfig()
+
+	if err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil); err != nil {
+		t.Fatalf("fresh disposable Preview migration gate: %v", err)
+	}
+	var version int64
+	if err := database.QueryRowContext(context.Background(), `
+		SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 130 {
+		t.Fatalf("fresh disposable Preview final version = %d, want 130", version)
+	}
+}
+
+func TestMigrationGatePostgresDisposablePreviewWithExistingTableStillRequiresBackup(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	if _, err := database.ExecContext(context.Background(), `CREATE TABLE existing_preview_data (id BIGINT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	config := freshPreviewGateConfig()
+
+	err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil)
+	if err == nil || !strings.Contains(err.Error(), "backup client is missing") {
+		t.Fatalf("dirty disposable Preview gate error = %v", err)
+	}
+	var exists bool
+	if err := database.QueryRowContext(context.Background(), `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("dirty disposable Preview must remain unmigrated")
+	}
+}
+
+func TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	config := freshPreviewGateConfig()
+	config.ServicePreviewURL = "https://preview-api-unipost-pr-302.up.railway.app"
+
+	err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil)
+	if err == nil || !strings.Contains(err.Error(), "backup client is missing") {
+		t.Fatalf("mismatched disposable Preview gate error = %v", err)
+	}
+	var exists bool
+	if err := database.QueryRowContext(context.Background(), `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("mismatched disposable Preview must remain unmigrated")
+	}
+}
+
 func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
