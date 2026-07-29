@@ -468,8 +468,8 @@ func isSensitiveFieldKey(key string) bool {
 
 var (
 	authorizationValuePattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[^\s,;]+`)
-	credentialPairPattern     = regexp.MustCompile(`(?i)(?:\\?["'])?\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|authorization|password|cookie|signature|signed[_-]?request|appsecret[_-]?proof|token)\b(?:\\?["'])?\s*[:=]\s*(?:\\?["'])?[^\s\\"'&,;}]+(?:\\?["'])?`)
-	diagnosticURLPattern      = regexp.MustCompile(`https?://[^\s'"<>]+`)
+	credentialPairPattern     = regexp.MustCompile(`((?:\\?["'])?([A-Za-z0-9_.-]+)(?:\\?["'])?\s*[:=]\s*)(?:\\?["'])?[^\s\\"'&,;}]+(?:\\?["'])?`)
+	diagnosticURLPattern      = regexp.MustCompile(`(?i)https?://[^\s'"<>]+`)
 )
 
 func normalizeDiagnosticText(value string) string {
@@ -487,7 +487,13 @@ func sanitizeDiagnosticText(value string) string {
 		return redactURL(parsed)
 	})
 	value = authorizationValuePattern.ReplaceAllString(value, "$1 [REDACTED]")
-	return credentialPairPattern.ReplaceAllString(value, "$1=[REDACTED]")
+	return credentialPairPattern.ReplaceAllStringFunc(value, func(candidate string) string {
+		parts := credentialPairPattern.FindStringSubmatch(candidate)
+		if len(parts) < 3 || !isSensitiveFieldKey(parts[2]) {
+			return candidate
+		}
+		return parts[1] + "[REDACTED]"
+	})
 }
 
 func sanitizeResponseBody(data []byte, contentType string) string {

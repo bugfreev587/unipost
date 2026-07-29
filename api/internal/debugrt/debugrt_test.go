@@ -468,7 +468,7 @@ func TestSerializeSanitizesTransportErrorsAndInvalidText(t *testing.T) {
 	recorder := NewRecorder()
 	recorder.append(Entry{
 		CurlCommand:    "curl -X POST 'https://example.test'\x00\xff",
-		TransportError: `dial failed: Authorization=Bearer transport-secret access_token=query-secret {"access_token":"quoted-secret","client_secret": "quoted-client-secret"}` + "\x00\xff",
+		TransportError: `dial failed: Authorization=Bearer transport-secret access_token=query-secret {"access_token":"quoted-secret","client_secret": "quoted-client-secret","id_token":"id-secret","session_token": "session-secret","webhook_secret":"webhook-secret"} escaped={\"id_token\":\"escaped-id-secret\"} HTTPS://provider-user:provider-password@example.test/path?token=url-secret#fragment-secret` + "\x00\xff",
 		ResponseBody:   "response\x00\xff",
 	})
 	out := recorder.Serialize()
@@ -478,7 +478,20 @@ func TestSerializeSanitizesTransportErrorsAndInvalidText(t *testing.T) {
 	if strings.ContainsRune(out, '\x00') {
 		t.Fatal("serialized diagnostic contains a NUL byte")
 	}
-	for _, secret := range []string{"transport-secret", "query-secret", "quoted-secret", "quoted-client-secret"} {
+	for _, secret := range []string{
+		"transport-secret",
+		"query-secret",
+		"quoted-secret",
+		"quoted-client-secret",
+		"id-secret",
+		"session-secret",
+		"webhook-secret",
+		"escaped-id-secret",
+		"provider-user",
+		"provider-password",
+		"url-secret",
+		"fragment-secret",
+	} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("transport error leaked %q: %s", secret, out)
 		}
