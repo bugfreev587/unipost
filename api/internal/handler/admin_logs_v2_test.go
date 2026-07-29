@@ -3,8 +3,10 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,14 +49,15 @@ func TestAdminLogsTypedNilV2ReaderSelectsLegacy(t *testing.T) {
 	}
 }
 
-func TestAdminLogsV2DefaultsTo24Hours100AndCapsAt200(t *testing.T) {
+func TestAdminLogsV2MatchesLegacySevenDayWindowAndLimitRules(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
 		target    string
 		wantLimit int
 	}{
 		{name: "defaults", target: "/v1/admin/logs", wantLimit: 100},
-		{name: "caps", target: "/v1/admin/logs?limit=201", wantLimit: 200},
+		{name: "accepts legacy maximum", target: "/v1/admin/logs?limit=500", wantLimit: 500},
+		{name: "resets above legacy maximum", target: "/v1/admin/logs?limit=501", wantLimit: 100},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			v2 := &fakeObservabilityLogReader{}
@@ -72,9 +75,49 @@ func TestAdminLogsV2DefaultsTo24Hours100AndCapsAt200(t *testing.T) {
 			if v2.adminFilters.To.Before(before) || v2.adminFilters.To.After(after) {
 				t.Fatalf("to = %v, want between %v and %v", v2.adminFilters.To, before, after)
 			}
-			wantFrom := v2.adminFilters.To.Add(-24 * time.Hour)
+			wantFrom := v2.adminFilters.To.AddDate(0, 0, -7)
 			if delta := v2.adminFilters.From.Sub(wantFrom); delta < -time.Second || delta > time.Second {
 				t.Fatalf("from = %v, want approximately %v", v2.adminFilters.From, wantFrom)
+			}
+		})
+	}
+}
+
+func TestAdminLogsV2DoesNotExposeReadFailures(t *testing.T) {
+	sentinel := errors.New("postgres password=secret")
+	tests := []struct {
+		name   string
+		invoke func(*AdminHandler, *httptest.ResponseRecorder)
+	}{
+		{
+			name: "list",
+			invoke: func(h *AdminHandler, w *httptest.ResponseRecorder) {
+				h.ListLogs(w, httptest.NewRequest(http.MethodGet, "/v1/admin/logs", nil))
+			},
+		},
+		{
+			name: "detail",
+			invoke: func(h *AdminHandler, w *httptest.ResponseRecorder) {
+				r := httptest.NewRequest(http.MethodGet, "/v1/admin/logs/integration:12", nil)
+				rctx := chi.NewRouteContext()
+				rctx.URLParams.Add("id", "integration:12")
+				h.GetLog(w, r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx)))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v2 := &fakeObservabilityLogReader{adminErr: sentinel, getAdminErr: sentinel}
+			h := NewAdminHandler(nil, nil, nil).SetObservabilityReads(fakeObservabilitySelector{enabled: true}, v2)
+			w := httptest.NewRecorder()
+
+			tt.invoke(h, w)
+
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500: %s", w.Code, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), sentinel.Error()) {
+				t.Fatalf("response exposed internal error: %s", w.Body.String())
 			}
 		})
 	}

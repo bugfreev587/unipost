@@ -294,9 +294,9 @@ List projections contain base fields only. They must not join, select, deseriali
 
 Defaults and limits:
 
-- Admin Logs default range: 24 hours;
+- Admin Logs default range: 7 days;
 - Admin Logs default page size: 100;
-- maximum page size: 200;
+- requested page sizes up to 500 are accepted; invalid or larger values reset to 100;
 - customer ranges remain bounded by plan retention;
 - list response target: less than 250 KB.
 
@@ -539,6 +539,18 @@ Flag contract:
 - compare dev and staging results against the old paths on the exact deployed SHA.
 
 The kill-switch is valid only while old and new raw writers both remain current. Each ON/OFF transition is audited through `feature_flag_changes` and emits an internal Better Stack event.
+
+Metrics responses carry read-model quality in a top-level `freshness` object (`data_state`, `percentiles_approximate`, and `missing_rollup_hours`); the shared `meta` object remains pagination-only. Admin API Metrics displays delayed and approximate states before any operator can activate v2.
+
+The canonical request-event WebSocket publisher remains an activation prerequisite. It must run through a bounded asynchronous queue so its 250ms delivery budget cannot throttle the recorder's persistence loop. Until that path is implemented and verified, v2 deliberately drops the duplicate legacy `api_request` envelope and `observability_reads_v2` remains activation-locked.
+
+#### Stage 2 query-plan and migration operations
+
+The 2026-07-29 read-only production baseline found `integration_logs` at approximately 5.8 GB and 1.6 million planner-estimated rows. For the same seven-day workspace seek, the metadata-only customer projection used the existing workspace/time index directly. The admin-enriched comparison added workspace/user joins and a per-row subscription subplan; its post-target planner cost was about 4.8% higher before row decoding. The v2 request-event relations are not present in production yet, so this is shape evidence rather than an end-to-end v2 latency claim.
+
+Customer Logs therefore use projection-specific SQL that omits workspace name, owner email, and plan lookup. Admin Logs retain those fields. Free-text search escapes `%`, `_`, and `\` as literal input. Leading-wildcard search remains intentionally bounded by time and page limits; do not add trigram indexes until production-like v2 plans show that search selectivity and write amplification justify them.
+
+Migration 131 (`idx_integration_logs_workspace_ts_id`) is a once-per-deployment concurrent rebuild. A failed concurrent create can leave an invalid same-name index, which the migration removes before rebuilding. After an interruption, inspect `pg_index.indisvalid` first. Do not blindly rerun a successful migration: its defensive pre-drop would remove the valid index before the concurrent replacement finishes.
 
 ### Stage 3: Stop duplicate writes
 

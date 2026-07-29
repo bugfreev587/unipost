@@ -145,6 +145,20 @@ func TestLogsWebSocketDoesNotEvaluateReadModeAtHandshake(t *testing.T) {
 	}
 }
 
+func TestLogsWebSocketModeDoesNotDependOnSelectorPresence(t *testing.T) {
+	harness := newInboxWebSocketTestHandler()
+	harness.handler.scopedInboxAuth = false
+	harness.handler.planChecker = nil
+	harness.handler.WithLogReadSelector(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/logs/ws?token="+testClerkToken, nil)
+	harness.handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if harness.logServes != 1 || harness.legacyServes != 0 {
+		t.Fatalf("log/legacy serves = %d/%d, want 1/0", harness.logServes, harness.legacyServes)
+	}
+}
+
 func TestAuthenticatedLogsWebSocketSwitchesOpenConnectionToLegacyWithoutReconnect(t *testing.T) {
 	harness := newInboxWebSocketTestHandler()
 	harness.handler.scopedInboxAuth = false

@@ -55,7 +55,7 @@ type Handler struct {
 	serveWebSocket           webSocketServer
 	serveLogWebSocket        logWebSocketServer
 	serveScopedWebSocket     scopedWebSocketServer
-	logReadSelector          logReadSelector
+	logWebSocket             bool
 }
 
 func NewHandler(hub *Hub, queries *db.Queries) *Handler {
@@ -73,7 +73,7 @@ func NewHandler(hub *Hub, queries *db.Queries) *Handler {
 }
 
 func (h *Handler) WithLogReadSelector(selector logReadSelector) *Handler {
-	h.logReadSelector = selector
+	h.logWebSocket = true
 	if h.Hub != nil {
 		h.Hub.WithLogReadSelector(selector)
 	}
@@ -206,7 +206,7 @@ func (h *Handler) acceptAndServe(w http.ResponseWriter, r *http.Request, workspa
 	}
 
 	slog.Info("ws: upgrading", "workspace_id", workspaceID)
-	if h.logReadSelector != nil {
+	if h.logWebSocket {
 		h.serveLogWebSocket(r.Context(), workspaceID, connection)
 		return
 	}

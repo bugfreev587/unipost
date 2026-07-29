@@ -101,6 +101,9 @@ func ProjectLogEnvelope(payload []byte, useV2 bool) ([]byte, bool) {
 			return payload, true
 		}
 		if envelope.Log["category"] == "api_request" {
+			// TODO(activation): keep dropping the duplicate legacy projection
+			// until the bounded asynchronous canonical request-event publisher
+			// is wired and verified before observability_reads_v2 activation.
 			return nil, false
 		}
 		envelope.Log["id"] = "integration:" + strconv.FormatInt(parsed, 10)

@@ -98,7 +98,7 @@ func NewPostgresLogStore(db postgresLogDB) *PostgresLogStore {
 	return &PostgresLogStore{db: db}
 }
 
-const requestLogProjectionSQL = `
+const requestLogAdminProjectionSQL = `
 SELECT
   e.id,
   e.workspace_id,
@@ -144,7 +144,45 @@ LEFT JOIN workspaces w ON w.id = e.workspace_id
 LEFT JOIN users u ON u.id = w.user_id
 `
 
-const integrationLogProjectionSQL = `
+const requestLogWorkspaceProjectionSQL = `
+SELECT
+  e.id,
+  e.workspace_id,
+  ''::TEXT,
+  ''::TEXT,
+  ''::TEXT,
+  e.occurred_at,
+  CASE WHEN e.status_code >= 500 THEN 'error' WHEN e.status_code >= 400 THEN 'warn' ELSE 'info' END,
+  CASE WHEN e.outcome = 'success' THEN 'success' ELSE 'error' END,
+  'api_request',
+  CASE
+    WHEN e.outcome = 'success' THEN 'api.request.succeeded'
+    WHEN e.outcome = 'validation_error' THEN 'api.request.validation_failed'
+    WHEN e.outcome = 'rate_limited' THEN 'api.request.rate_limited'
+    ELSE 'api.request.failed'
+  END,
+  'api',
+  e.method || ' ' || e.route_pattern || ' returned ' || e.status_code::TEXT || '.',
+  COALESCE(e.request_id, ''),
+  COALESCE(e.trace_id, ''),
+  '',
+  e.api_key_id,
+  COALESCE(e.profile_id, ''),
+  COALESCE(e.social_account_id, ''),
+  COALESCE(e.post_id, ''),
+  '',
+  '',
+  e.route_pattern,
+  e.method,
+  e.status_code,
+  e.duration_ms,
+  COALESCE(e.error_code, ''),
+  '{}'::JSONB,
+  e.has_error_detail
+FROM api_request_events e
+`
+
+const integrationLogAdminProjectionSQL = `
 SELECT
   l.id,
   l.workspace_id,
@@ -185,9 +223,42 @@ LEFT JOIN workspaces w ON w.id = l.workspace_id
 LEFT JOIN users u ON u.id = w.user_id
 `
 
-const requestLogListSQL = requestLogProjectionSQL + `
+const integrationLogWorkspaceProjectionSQL = `
+SELECT
+  l.id,
+  l.workspace_id,
+  ''::TEXT,
+  ''::TEXT,
+  ''::TEXT,
+  l.ts,
+  l.level,
+  l.status,
+  l.category,
+  l.action,
+  l.source,
+  l.message,
+  COALESCE(l.request_id, ''),
+  COALESCE(l.trace_id, ''),
+  COALESCE(l.actor_user_id, ''),
+  COALESCE(l.actor_api_key_id, ''),
+  COALESCE(l.profile_id, ''),
+  COALESCE(l.social_account_id, ''),
+  COALESCE(l.post_id, ''),
+  COALESCE(l.platform_post_id, ''),
+  COALESCE(l.platform, ''),
+  COALESCE(l.endpoint, ''),
+  COALESCE(l.method, ''),
+  l.http_status_code,
+  l.remote_status_code,
+  l.duration_ms,
+  COALESCE(l.error_code, ''),
+  l.metadata
+FROM integration_logs l
+`
+
+const requestLogAdminListSQL = requestLogAdminProjectionSQL + `
 WHERE ($1::TEXT = '' OR e.workspace_id = $1)
-  AND ($2::TEXT = '' OR u.email ILIKE '%' || $2 || '%')
+  AND ($2::TEXT = '' OR u.email ILIKE $2 ESCAPE '\')
   AND ($3::TEXT = '' OR $3 = 'api_request')
   AND ($4::TEXT = '' OR CASE
     WHEN e.outcome = 'success' THEN 'api.request.succeeded'
@@ -206,34 +277,78 @@ WHERE ($1::TEXT = '' OR e.workspace_id = $1)
   AND ($13::TEXT = '' OR e.error_code = $13)
   AND (
     $14::TEXT = ''
-    OR e.route_pattern ILIKE '%' || $14 || '%'
+    OR e.route_pattern ILIKE $15 ESCAPE '\'
     OR CASE
       WHEN e.outcome = 'success' THEN 'api.request.succeeded'
       WHEN e.outcome = 'validation_error' THEN 'api.request.validation_failed'
       WHEN e.outcome = 'rate_limited' THEN 'api.request.rate_limited'
       ELSE 'api.request.failed'
-    END ILIKE '%' || $14 || '%'
-    OR e.request_id ILIKE '%' || $14 || '%'
-    OR e.post_id ILIKE '%' || $14 || '%'
-    OR e.error_code ILIKE '%' || $14 || '%'
-	OR u.email ILIKE '%' || $14 || '%'
+    END ILIKE $15 ESCAPE '\'
+    OR e.request_id ILIKE $15 ESCAPE '\'
+    OR e.post_id ILIKE $15 ESCAPE '\'
+    OR e.error_code ILIKE $15 ESCAPE '\'
+    OR u.email ILIKE $15 ESCAPE '\'
   )
-  AND ($15::TEXT = '' OR e.method = $15)
-  AND ($16::TEXT = '' OR e.route_pattern = $16)
-  AND e.occurred_at >= $17
-  AND e.occurred_at <= $18
+  AND ($16::TEXT = '' OR e.method = $16)
+  AND ($17::TEXT = '' OR e.route_pattern = $17)
+  AND e.occurred_at >= $18
+  AND e.occurred_at <= $19
   AND (
-    $19::TIMESTAMPTZ IS NULL
-    OR e.occurred_at < $19
-    OR (e.occurred_at = $19 AND $20::TEXT = 'request' AND e.id < $21::TEXT)
+    $20::TIMESTAMPTZ IS NULL
+    OR e.occurred_at < $20
+    OR (e.occurred_at = $20 AND $21::TEXT = 'request' AND e.id < $22::TEXT)
   )
 ORDER BY e.occurred_at DESC, e.id DESC
-LIMIT $22`
+LIMIT $23`
 
-const integrationLogListSQL = integrationLogProjectionSQL + `
+const requestLogWorkspaceListSQL = requestLogWorkspaceProjectionSQL + `
+WHERE e.workspace_id = $1
+  AND $2::TEXT = ''
+  AND ($3::TEXT = '' OR $3 = 'api_request')
+  AND ($4::TEXT = '' OR CASE
+    WHEN e.outcome = 'success' THEN 'api.request.succeeded'
+    WHEN e.outcome = 'validation_error' THEN 'api.request.validation_failed'
+    WHEN e.outcome = 'rate_limited' THEN 'api.request.rate_limited'
+    ELSE 'api.request.failed'
+  END = $4)
+  AND ($5::TEXT = '' OR $5 = 'api')
+  AND ($6::TEXT = '' OR CASE WHEN e.status_code >= 500 THEN 'error' WHEN e.status_code >= 400 THEN 'warn' ELSE 'info' END = $6)
+  AND ($7::TEXT = '' OR CASE WHEN e.outcome = 'success' THEN 'success' ELSE 'error' END = $7)
+  AND $8::TEXT = ''
+  AND ($9::TEXT = '' OR e.profile_id = $9)
+  AND ($10::TEXT = '' OR e.social_account_id = $10)
+  AND ($11::TEXT = '' OR e.post_id = $11)
+  AND ($12::TEXT = '' OR e.request_id = $12)
+  AND ($13::TEXT = '' OR e.error_code = $13)
+  AND (
+    $14::TEXT = ''
+    OR e.route_pattern ILIKE $15 ESCAPE '\'
+    OR CASE
+      WHEN e.outcome = 'success' THEN 'api.request.succeeded'
+      WHEN e.outcome = 'validation_error' THEN 'api.request.validation_failed'
+      WHEN e.outcome = 'rate_limited' THEN 'api.request.rate_limited'
+      ELSE 'api.request.failed'
+    END ILIKE $15 ESCAPE '\'
+    OR e.request_id ILIKE $15 ESCAPE '\'
+    OR e.post_id ILIKE $15 ESCAPE '\'
+    OR e.error_code ILIKE $15 ESCAPE '\'
+  )
+  AND ($16::TEXT = '' OR e.method = $16)
+  AND ($17::TEXT = '' OR e.route_pattern = $17)
+  AND e.occurred_at >= $18
+  AND e.occurred_at <= $19
+  AND (
+    $20::TIMESTAMPTZ IS NULL
+    OR e.occurred_at < $20
+    OR (e.occurred_at = $20 AND $21::TEXT = 'request' AND e.id < $22::TEXT)
+  )
+ORDER BY e.occurred_at DESC, e.id DESC
+LIMIT $23`
+
+const integrationLogAdminListSQL = integrationLogAdminProjectionSQL + `
 WHERE l.category <> 'api_request'
   AND ($1::TEXT = '' OR l.workspace_id = $1)
-  AND ($2::TEXT = '' OR u.email ILIKE '%' || $2 || '%')
+  AND ($2::TEXT = '' OR u.email ILIKE $2 ESCAPE '\')
   AND ($3::TEXT = '' OR l.category = $3)
   AND ($4::TEXT = '' OR l.action = $4)
   AND ($5::TEXT = '' OR l.source = $5)
@@ -247,32 +362,75 @@ WHERE l.category <> 'api_request'
   AND ($13::TEXT = '' OR l.error_code = $13)
   AND (
     $14::TEXT = ''
-    OR l.message ILIKE '%' || $14 || '%'
-    OR l.action ILIKE '%' || $14 || '%'
-    OR l.request_id ILIKE '%' || $14 || '%'
-    OR l.post_id ILIKE '%' || $14 || '%'
-    OR l.error_code ILIKE '%' || $14 || '%'
+    OR l.message ILIKE $15 ESCAPE '\'
+    OR l.action ILIKE $15 ESCAPE '\'
+    OR l.request_id ILIKE $15 ESCAPE '\'
+    OR l.post_id ILIKE $15 ESCAPE '\'
+    OR l.error_code ILIKE $15 ESCAPE '\'
     OR l.metadata->>'connect_session_id' = $14
     OR l.metadata->>'external_user_id' = $14
-	OR u.email ILIKE '%' || $14 || '%'
+    OR u.email ILIKE $15 ESCAPE '\'
   )
-  AND ($15::TEXT = '' OR l.method = $15)
-  AND ($16::TEXT = '' OR l.endpoint = $16)
-  AND l.ts >= $17
-  AND l.ts <= $18
+  AND ($16::TEXT = '' OR l.method = $16)
+  AND ($17::TEXT = '' OR l.endpoint = $17)
+  AND l.ts >= $18
+  AND l.ts <= $19
   AND (
-    $19::TIMESTAMPTZ IS NULL
-    OR l.ts < $19
+    $20::TIMESTAMPTZ IS NULL
+    OR l.ts < $20
     OR (
-      l.ts = $19
+      l.ts = $20
       AND (
-        $20::TEXT = 'request'
-        OR ($20::TEXT = 'integration' AND l.id < $21::BIGINT)
+        $21::TEXT = 'request'
+        OR ($21::TEXT = 'integration' AND l.id < $22::BIGINT)
       )
     )
   )
 ORDER BY l.ts DESC, l.id DESC
-LIMIT $22`
+LIMIT $23`
+
+const integrationLogWorkspaceListSQL = integrationLogWorkspaceProjectionSQL + `
+WHERE l.category <> 'api_request'
+  AND l.workspace_id = $1
+  AND $2::TEXT = ''
+  AND ($3::TEXT = '' OR l.category = $3)
+  AND ($4::TEXT = '' OR l.action = $4)
+  AND ($5::TEXT = '' OR l.source = $5)
+  AND ($6::TEXT = '' OR l.level = $6)
+  AND ($7::TEXT = '' OR l.status = $7)
+  AND ($8::TEXT = '' OR l.platform = $8)
+  AND ($9::TEXT = '' OR l.profile_id = $9)
+  AND ($10::TEXT = '' OR l.social_account_id = $10)
+  AND ($11::TEXT = '' OR l.post_id = $11)
+  AND ($12::TEXT = '' OR l.request_id = $12)
+  AND ($13::TEXT = '' OR l.error_code = $13)
+  AND (
+    $14::TEXT = ''
+    OR l.message ILIKE $15 ESCAPE '\'
+    OR l.action ILIKE $15 ESCAPE '\'
+    OR l.request_id ILIKE $15 ESCAPE '\'
+    OR l.post_id ILIKE $15 ESCAPE '\'
+    OR l.error_code ILIKE $15 ESCAPE '\'
+    OR l.metadata->>'connect_session_id' = $14
+    OR l.metadata->>'external_user_id' = $14
+  )
+  AND ($16::TEXT = '' OR l.method = $16)
+  AND ($17::TEXT = '' OR l.endpoint = $17)
+  AND l.ts >= $18
+  AND l.ts <= $19
+  AND (
+    $20::TIMESTAMPTZ IS NULL
+    OR l.ts < $20
+    OR (
+      l.ts = $20
+      AND (
+        $21::TEXT = 'request'
+        OR ($21::TEXT = 'integration' AND l.id < $22::BIGINT)
+      )
+    )
+  )
+ORDER BY l.ts DESC, l.id DESC
+LIMIT $23`
 
 func (s *PostgresLogStore) ListWorkspace(ctx context.Context, workspaceID string, filters LogFilters, after *LogCursor, limit int) (LogPage, error) {
 	if strings.TrimSpace(workspaceID) == "" {
@@ -280,14 +438,14 @@ func (s *PostgresLogStore) ListWorkspace(ctx context.Context, workspaceID string
 	}
 	filters.WorkspaceID = workspaceID
 	filters.OwnerEmail = ""
-	return s.list(ctx, filters, after, limit)
+	return s.list(ctx, filters, after, limit, requestLogWorkspaceListSQL, integrationLogWorkspaceListSQL)
 }
 
 func (s *PostgresLogStore) ListAdmin(ctx context.Context, filters LogFilters, after *LogCursor, limit int) (LogPage, error) {
-	return s.list(ctx, filters, after, limit)
+	return s.list(ctx, filters, after, limit, requestLogAdminListSQL, integrationLogAdminListSQL)
 }
 
-func (s *PostgresLogStore) list(ctx context.Context, filters LogFilters, after *LogCursor, limit int) (LogPage, error) {
+func (s *PostgresLogStore) list(ctx context.Context, filters LogFilters, after *LogCursor, limit int, requestQuery, integrationQuery string) (LogPage, error) {
 	if s == nil || s.db == nil {
 		return LogPage{}, errors.New("observability log store is not configured")
 	}
@@ -307,12 +465,12 @@ func (s *PostgresLogStore) list(ctx context.Context, filters LogFilters, after *
 	}
 
 	requestArgs := logListArgs(filters, after, limit+1, LogSourceRequest)
-	requests, err := s.queryRequests(ctx, requestLogListSQL, requestArgs...)
+	requests, err := s.queryRequests(ctx, requestQuery, requestArgs...)
 	if err != nil {
 		return LogPage{}, err
 	}
 	integrationArgs := logListArgs(filters, after, limit+1, LogSourceIntegration)
-	integrations, err := s.queryIntegrations(ctx, integrationLogListSQL, integrationArgs...)
+	integrations, err := s.queryIntegrations(ctx, integrationQuery, integrationArgs...)
 	if err != nil {
 		return LogPage{}, err
 	}
@@ -339,7 +497,7 @@ func logListArgs(filters LogFilters, after *LogCursor, candidateLimit int, query
 	}
 	return []any{
 		strings.TrimSpace(filters.WorkspaceID),
-		strings.TrimSpace(filters.OwnerEmail),
+		likeContainsPattern(filters.OwnerEmail),
 		strings.TrimSpace(filters.Category),
 		strings.TrimSpace(filters.Action),
 		strings.TrimSpace(filters.Source),
@@ -352,6 +510,7 @@ func logListArgs(filters LogFilters, after *LogCursor, candidateLimit int, query
 		strings.TrimSpace(filters.RequestID),
 		strings.TrimSpace(filters.ErrorCode),
 		strings.TrimSpace(filters.Query),
+		likeContainsPattern(filters.Query),
 		strings.TrimSpace(filters.Method),
 		strings.TrimSpace(filters.Endpoint),
 		filters.From.UTC(),
@@ -361,6 +520,19 @@ func logListArgs(filters LogFilters, after *LogCursor, candidateLimit int, query
 		cursorID,
 		candidateLimit,
 	}
+}
+
+func likeContainsPattern(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	escaped := strings.NewReplacer(
+		`\`, `\\`,
+		`%`, `\%`,
+		`_`, `\_`,
+	).Replace(value)
+	return "%" + escaped + "%"
 }
 
 func (s *PostgresLogStore) queryRequests(ctx context.Context, query string, args ...any) ([]LogProjection, error) {
@@ -437,20 +609,20 @@ func scanIntegrationProjection(row rowScanner) (LogProjection, error) {
 	return item, nil
 }
 
-const requestLogWorkspaceBaseSQL = requestLogProjectionSQL + `
+const requestLogWorkspaceBaseSQL = requestLogWorkspaceProjectionSQL + `
 WHERE e.occurred_at = $1 AND e.id = $2 AND e.workspace_id = $3
 LIMIT 1`
 
-const requestLogAdminBaseSQL = requestLogProjectionSQL + `
+const requestLogAdminBaseSQL = requestLogAdminProjectionSQL + `
 WHERE e.occurred_at = $1 AND e.id = $2
 ORDER BY e.workspace_id
 LIMIT 1`
 
-const integrationLogWorkspaceBaseSQL = integrationLogProjectionSQL + `
+const integrationLogWorkspaceBaseSQL = integrationLogWorkspaceProjectionSQL + `
 WHERE l.id = $1 AND l.workspace_id = $2 AND l.category <> 'api_request'
 LIMIT 1`
 
-const integrationLogAdminBaseSQL = integrationLogProjectionSQL + `
+const integrationLogAdminBaseSQL = integrationLogAdminProjectionSQL + `
 WHERE l.id = $1 AND l.category <> 'api_request'
 LIMIT 1`
 
@@ -604,6 +776,10 @@ func (s *PostgresLogStore) loadIntegrationDetail(ctx context.Context, base LogPr
 }
 
 func requestIDTimestamp(id string) (time.Time, error) {
+	// Request-event lookup depends on the fixed-width Unix-microsecond prefix
+	// created by requestevents.newEventID in internal/requestevents/middleware.go.
+	// Keep both functions and the composite (occurred_at, id) key contract in
+	// sync if the event identity format ever changes.
 	prefix, _, ok := strings.Cut(id, "_")
 	if !ok || len(prefix) != 20 {
 		return time.Time{}, errors.New("request event ID has no timestamp prefix")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,40 @@ func TestPostgresMetricsStoreTypedNilDatabaseFailsClosed(t *testing.T) {
 	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
 	if _, _, err := store.Overall(context.Background(), MetricsQuery{From: now.Add(-time.Hour), To: now}); err == nil {
 		t.Fatal("typed-nil metrics database was accepted")
+	}
+}
+
+func TestWorkspacesPreparesOneMetricsSourcePlanForBothProjections(t *testing.T) {
+	source, err := os.ReadFile("metrics.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (s *PostgresMetricsStore) Workspaces")
+	end := strings.Index(text[start:], "\nfunc freshnessForReturnedProvenance")
+	if start < 0 || end < 0 {
+		t.Fatal("could not isolate Workspaces implementation")
+	}
+	body := text[start : start+end]
+	if got := strings.Count(body, "prepareMetricsSourcePlan("); got != 1 {
+		t.Fatalf("Workspaces source-plan preparations = %d, want 1", got)
+	}
+	if got := strings.Count(body, "s.loadAtWithPlan("); got != 2 {
+		t.Fatalf("Workspaces prepared-plan loads = %d, want 2", got)
+	}
+	if strings.Contains(body, "s.loadAt(") {
+		t.Fatal("Workspaces must not prepare a source plan indirectly for each projection")
+	}
+}
+
+func TestMetricsCollectionsPreserveLegacyNullForEmptyResults(t *testing.T) {
+	rows := legacyCompatibleMetricsRows(make([]MetricsSummaryRow, 0))
+	if rows != nil {
+		t.Fatalf("empty metrics rows = %#v, want nil for legacy JSON null compatibility", rows)
+	}
+	nonempty := []MetricsSummaryRow{{Path: "/v1/posts"}}
+	if got := legacyCompatibleMetricsRows(nonempty); len(got) != 1 || got[0].Path != "/v1/posts" {
+		t.Fatalf("non-empty metrics rows changed: %#v", got)
 	}
 }
 

@@ -58,6 +58,12 @@ export interface WebhookCreateResponse extends WebhookSubscription {
   secret: string;
 }
 
+export interface MetricsFreshness {
+  data_state: "exact" | "approximate" | "delayed";
+  percentiles_approximate: boolean;
+  missing_rollup_hours?: number;
+}
+
 export interface ApiResponse<T> {
   data: T;
   meta?: {
@@ -66,6 +72,7 @@ export interface ApiResponse<T> {
     has_more?: boolean;
     next_cursor?: string;
   };
+  freshness?: MetricsFreshness;
   request_id?: string;
 }
 
