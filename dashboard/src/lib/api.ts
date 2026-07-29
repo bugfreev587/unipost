@@ -1798,6 +1798,7 @@ export interface XCreditsAllowance {
 }
 
 export type UniPostFeatureFlagKey = "x_dms_v1" | "x_credits_billing_v1";
+export type AdminFeatureFlagKey = UniPostFeatureFlagKey | "observability_reads_v2";
 
 export interface WorkspaceFeatureFlags {
   environment: string;
@@ -1811,10 +1812,12 @@ export interface PublicFeatureFlags {
 }
 
 export interface AdminFeatureFlag {
-  key: UniPostFeatureFlagKey;
+  key: AdminFeatureFlagKey;
   label: string;
   description: string;
   owner_area: string;
+  internal: boolean;
+  activation_ready: boolean;
   enabled: boolean;
   updated_by: string;
   updated_at: string;
@@ -1993,7 +1996,7 @@ export async function listAdminFeatureFlags(
 
 export async function updateAdminFeatureFlag(
   token: string,
-  key: UniPostFeatureFlagKey,
+  key: AdminFeatureFlagKey,
   enabled: boolean,
 ): Promise<ApiResponse<AdminFeatureFlag>> {
   return request(`/v1/admin/feature-flags/${encodeURIComponent(key)}`, token, {

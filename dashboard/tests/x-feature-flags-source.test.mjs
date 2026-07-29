@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("admin feature flags page is super-admin-only and exposes both rollout switches", () => {
+test("admin feature flags page distinguishes customer and internal controls", () => {
   const nav = read("src/app/admin/_components/admin-ui.tsx");
   const page = read("src/app/admin/feature-flags/page.tsx");
 
@@ -14,6 +14,12 @@ test("admin feature flags page is super-admin-only and exposes both rollout swit
   assert.match(page, /requireSuperAdmin/);
   assert.match(page, /x_dms_v1/);
   assert.match(page, /x_credits_billing_v1/);
+	assert.match(page, /observability_reads_v2/);
+	assert.match(page, /flag\.internal/);
+	assert.match(page, /flag\.activation_ready/);
+	assert.match(page, /read switch stays locked until read migration and exact-SHA acceptance/i);
+	assert.match(page, /enableBlocked/);
+	assert.match(page, /No Super Admin workspace bypass applies/i);
   assert.match(page, /available to regular users/i);
   assert.match(page, /Super Admin-owned workspaces/i);
   assert.doesNotMatch(page, /window\.confirm/);

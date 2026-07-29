@@ -87,8 +87,35 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("read final Goose version: %v", err)
 	}
-	if version != 129 {
-		t.Fatalf("final Goose version = %d, want 129", version)
+	if version != 130 {
+		t.Fatalf("final Goose version = %d, want 130", version)
+	}
+	var observabilityReadsEnabled bool
+	if err := database.QueryRow(`
+		SELECT enabled FROM feature_flags WHERE key = 'observability_reads_v2'
+	`).Scan(&observabilityReadsEnabled); err != nil {
+		t.Fatalf("read seeded observability flag: %v", err)
+	}
+	if observabilityReadsEnabled {
+		t.Fatal("observability_reads_v2 must seed OFF")
+	}
+	if _, err := database.Exec(`
+		UPDATE feature_flags
+		SET enabled = TRUE, updated_by = 'migration-contract-test'
+		WHERE key = 'observability_reads_v2'
+	`); err != nil {
+		t.Fatalf("enable observability flag for restart preservation check: %v", err)
+	}
+	if err := RunMigrations(databaseURL); err != nil {
+		t.Fatalf("rerun migrations against current schema: %v", err)
+	}
+	if err := database.QueryRow(`
+		SELECT enabled FROM feature_flags WHERE key = 'observability_reads_v2'
+	`).Scan(&observabilityReadsEnabled); err != nil {
+		t.Fatalf("read observability flag after migration rerun: %v", err)
+	}
+	if !observabilityReadsEnabled {
+		t.Fatal("migration rerun must not overwrite an existing observability flag value")
 	}
 
 	verifyInboxTenantIsolationAgainstPostgres(t, databaseURL)
@@ -125,8 +152,8 @@ func TestLatestEmbeddedMigrationVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 129 {
-		t.Fatalf("latest embedded migration version = %d, want 129", version)
+	if version != 130 {
+		t.Fatalf("latest embedded migration version = %d, want 130", version)
 	}
 }
 

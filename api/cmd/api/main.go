@@ -52,6 +52,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/railwaybackup"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
+	"github.com/xiaoboyu/unipost-api/internal/requestevents"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/trials"
@@ -237,6 +238,10 @@ func main() {
 		postfailuredebug.NewPostgresStore(pool),
 		postfailuredebug.Config{},
 	)
+	requestEventRecorder := requestevents.NewRecorder(
+		requestevents.NewPostgresStore(pool),
+		requestevents.Config{},
+	)
 
 	// Build the Stripe billing manager now that the DB is ready. The
 	// SUPER_ADMINS list may contain email addresses, which the manager
@@ -291,6 +296,13 @@ func main() {
 		// The diagnostic writer has its own lifecycle. Customer requests and
 		// delivery workers are quiesced before Stop closes queue admission.
 		go postFailureDebugWriter.Start(ctx)
+	}
+	if processMode == processModeAPI {
+		// The canonical recorder is a dark dual-write path. Existing Metrics and
+		// integration-log writers remain active until read parity is accepted.
+		// Its lifecycle outlives worker cancellation so in-flight HTTP requests
+		// finish before queue admission closes during graceful shutdown.
+		go requestEventRecorder.Start(ctx)
 	}
 
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
@@ -1017,6 +1029,8 @@ func main() {
 			Get("/v1/admin/feature-flags", featureFlagsHandler.ListAdmin)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Feature flags are restricted to super admins")).
 			Patch("/v1/admin/feature-flags/{key}", featureFlagsHandler.UpdateAdmin)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Request-event telemetry is restricted to super admins")).
+			Get("/v1/admin/observability/request-events", requestevents.StatsHandler(requestEventRecorder))
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
 			Get("/v1/admin/publishing-restrictions", publishingRestrictionHandler.AdminList)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
@@ -1079,6 +1093,7 @@ func main() {
 		r.Use(auth.DualAuthMiddleware(queries))
 		r.Use(integrationlogs.Middleware(integrationLogger))
 		r.Use(apiMetricsRecorder.Middleware)
+		r.Use(requestevents.Middleware(requestEventRecorder))
 
 		// Workspace info.
 		r.Get("/v1/workspace", workspaceHandler.Get)
@@ -1383,6 +1398,7 @@ func main() {
 		slog.Error("server forced to shutdown", "error", shutdownErr)
 	}
 	waitForPostFailureDebugShutdown(shutdownCtx, postFailureDebugWriter)
+	waitForRequestEventRecorderShutdown(shutdownCtx, requestEventRecorder)
 	if shutdownErr != nil {
 		os.Exit(1)
 	}
@@ -1402,6 +1418,25 @@ func waitForPostFailureDebugShutdown(ctx context.Context, writer *postfailuredeb
 			"abandoned", stats.Abandoned,
 			"dropped", stats.Dropped,
 			"failures", stats.Failures,
+		)
+	}
+}
+
+func waitForRequestEventRecorderShutdown(ctx context.Context, recorder *requestevents.Recorder) {
+	if recorder == nil {
+		return
+	}
+	recorder.Stop()
+	if err := recorder.Wait(ctx); err != nil {
+		stats := recorder.Stats()
+		slog.Warn("request event recorder shutdown timed out",
+			"error", err,
+			"normal_queue_depth", stats.NormalQueueDepth,
+			"failure_queue_depth", stats.FailureQueueDepth,
+			"success_dropped", stats.SuccessDropped,
+			"success_write_failures", stats.SuccessWriteFailures,
+			"failure_write_failures", stats.FailureWriteFailures,
+			"abandoned", stats.Abandoned,
 		)
 	}
 }

@@ -24,6 +24,7 @@ func (s *PostgresStore) List(ctx context.Context) ([]Flag, error) {
 		ORDER BY CASE key
 			WHEN 'x_dms_v1' THEN 1
 			WHEN 'x_credits_billing_v1' THEN 2
+			WHEN 'observability_reads_v2' THEN 3
 			ELSE 99
 		END
 	`)
