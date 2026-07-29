@@ -80,6 +80,21 @@ func TestSocialConnectionsMigrationNeverMergesManagedOwners(t *testing.T) {
 	}
 }
 
+func TestSocialConnectionsMigrationQuarantinesConflictBindings(t *testing.T) {
+	sql := compactSocialConnectionSQL(readSocialConnectionsMigration(t))
+
+	for _, want := range []string{
+		"update social_accounts sa set status = 'reconnect_required'",
+		"disconnected_at = coalesce(sa.disconnected_at, now())",
+		"from social_connection_migration_conflicts conflict",
+		"sa.id = any(conflict.source_account_ids)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("conflict quarantine missing %q", want)
+		}
+	}
+}
+
 func TestSocialConnectionsMigrationKeepsLegacyFallback(t *testing.T) {
 	sql := compactSocialConnectionSQL(readSocialConnectionsMigration(t))
 
@@ -184,7 +199,8 @@ func TestSocialConnectionsMigrationBackfillSeparatesUnsafeOwnership(t *testing.T
 	}
 	defer tx.Rollback()
 	requireEmptyPublicSchemaForTest(t, ctx, tx)
-	bootstrapMigrationBaselineIfEmptyForTest(t, ctx, tx, 120)
+	applyMigrationRangeForTest(t, ctx, tx, 1, 119)
+	applyMigrationRangeForTest(t, ctx, tx, 121, 127)
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO users (id, email) VALUES
@@ -258,6 +274,19 @@ func TestSocialConnectionsMigrationBackfillSeparatesUnsafeOwnership(t *testing.T
 	}
 	if unsafeBoundCount != 0 {
 		t.Fatalf("cross-managed-owner rows bound to %d connections, want zero", unsafeBoundCount)
+	}
+	var publishableConflictRows int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM social_accounts sa
+		JOIN social_connection_migration_conflicts conflict
+		  ON sa.id = ANY(conflict.source_account_ids)
+		WHERE sa.status = 'active' OR sa.disconnected_at IS NULL
+	`).Scan(&publishableConflictRows); err != nil {
+		t.Fatal(err)
+	}
+	if publishableConflictRows != 0 {
+		t.Fatalf("publishable migration conflict rows = %d, want zero", publishableConflictRows)
 	}
 
 	var crossOwnerConflicts int

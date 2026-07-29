@@ -66,25 +66,6 @@ RETURNING id, workspace_id, platform, provider_identity, access_token,
   last_refreshed_at, x_app_mode, connected_at, disconnected_at, created_at,
   updated_at;
 
--- name: ReactivateSiblingSocialAccountBindings :many
--- A verified reconnect restores every still-bound Profile projection for the
--- physical connection. The requested Profile is handled by the idempotent
--- create/reactivate query below so its public binding ID remains stable.
-UPDATE social_accounts
-SET status = 'active',
-    disconnected_at = NULL,
-    binding_version = binding_version + 1,
-    last_refreshed_at = NOW()
-WHERE connection_id = @connection_id
-  AND profile_id <> @target_profile_id
-  AND binding_status = 'active'
-  AND (status <> 'active' OR disconnected_at IS NOT NULL)
-RETURNING id, profile_id, platform, access_token, refresh_token,
-  token_expires_at, external_account_id, account_name, account_avatar_url,
-  connected_at, disconnected_at, metadata, scope, status, connection_type,
-  connect_session_id, external_user_id, external_user_email, last_refreshed_at,
-  x_app_mode, connection_id, binding_version, binding_status;
-
 -- name: DisconnectSocialConnection :one
 UPDATE social_connections
 SET status = 'disconnected',

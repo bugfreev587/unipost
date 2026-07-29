@@ -481,6 +481,38 @@ func TestUpdateScheduledAndQuotaHoldContentRejectsFullyRestrictedTargetsWithoutM
 	}
 }
 
+func TestUpdateDraftRejectsSiblingBindingsForOnePhysicalConnectionWithoutMutation(t *testing.T) {
+	existing := db.SocialPost{
+		ID: "post_1", WorkspaceID: "ws_1", Status: "draft",
+		CreatedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}, Source: "api",
+	}
+	dbtx := &scheduledEditTestDB{post: existing, sharedConnection: true}
+	queries := db.New(dbtx)
+	h := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPatch, "/v1/posts/post_1", strings.NewReader(`{
+		"platform_posts":[
+			{"account_id":"acct_1","caption":"development"},
+			{"account_id":"acct_2","caption":"staging"}
+		]
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = req.WithContext(withoutPostMediaRetentionSync(req.Context()))
+	req = withChiParam(req, "id", "post_1")
+	rr := httptest.NewRecorder()
+
+	h.UpdateDraft(rr, req)
+
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"code":"DUPLICATE_SOCIAL_CONNECTION"`) {
+		t.Fatalf("response missing duplicate connection code: %s", rr.Body.String())
+	}
+	if dbtx.updateContentCalls != 0 {
+		t.Fatalf("draft content mutations = %d, want zero", dbtx.updateContentCalls)
+	}
+}
+
 func TestUpdateScheduledAtOnlyRejectsFullyRestrictedExistingTargetsWithoutMutation(t *testing.T) {
 	oldTime := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
 	newTime := oldTime.Add(24 * time.Hour)
@@ -613,6 +645,7 @@ type scheduledEditTestDB struct {
 	post               db.SocialPost
 	rescheduleCalls    int
 	updateContentCalls int
+	sharedConnection   bool
 }
 
 func (f *scheduledEditTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -622,24 +655,35 @@ func (f *scheduledEditTestDB) Exec(context.Context, string, ...interface{}) (pgc
 func (f *scheduledEditTestDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
 	switch {
 	case strings.Contains(query, "-- name: ListSocialAccountsByWorkspace"):
+		firstProfileID := "prof_1"
+		secondProfileID := "prof_1"
+		firstConnectionID := pgtype.Text{}
+		secondConnectionID := pgtype.Text{}
+		if f.sharedConnection {
+			secondProfileID = "prof_2"
+			firstConnectionID = pgtype.Text{String: "connection-shared", Valid: true}
+			secondConnectionID = pgtype.Text{String: "connection-shared", Valid: true}
+		}
 		return &scheduledQuotaRows{values: [][]any{
 			socialAccountValues(db.SocialAccount{
 				ID:                "acct_1",
-				ProfileID:         "prof_1",
+				ProfileID:         firstProfileID,
 				Platform:          "linkedin",
 				AccessToken:       "token",
 				ExternalAccountID: "linkedin-page",
 				ConnectedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
 				Status:            "connected",
+				ConnectionID:      firstConnectionID,
 			}),
 			socialAccountValues(db.SocialAccount{
 				ID:                "acct_2",
-				ProfileID:         "prof_1",
+				ProfileID:         secondProfileID,
 				Platform:          "tiktok",
 				AccessToken:       "token",
 				ExternalAccountID: "tiktok-page",
 				ConnectedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
 				Status:            "connected",
+				ConnectionID:      secondConnectionID,
 			}),
 		}}, nil
 	case strings.Contains(query, "-- name: GetDistinctProfileIDsForAccounts"):

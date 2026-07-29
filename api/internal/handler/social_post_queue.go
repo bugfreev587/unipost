@@ -604,7 +604,22 @@ func (h *SocialPostHandler) enqueueClaimedScheduledPost(ctx context.Context, pos
 		accountMap[pp.AccountID] = platform.ValidateAccount{
 			Platform:     acc.Platform,
 			Disconnected: socialAccountDisconnectedForPublish(acc, ok),
+			ConnectionID: acc.ConnectionID.String,
+			ProfileID:    acc.ProfileID,
 		}
+	}
+	if conflict, ok := firstDuplicateSocialConnectionConflict(parsed, accountMap); ok {
+		terminalErr := fmt.Errorf("DUPLICATE_SOCIAL_CONNECTION: %s: %v", duplicateSocialConnectionMessage, conflict.AccountIDs)
+		if err := h.failScheduledPostForDuplicateConnection(ctx, post, parsed, accountMap, terminalErr.Error()); err != nil {
+			return outcome, err
+		}
+		post.Status = "failed"
+		post.PublishedAt = pgtype.Timestamptz{}
+		outcome.terminalErr = terminalErr
+		outcome.retentionPost = post
+		outcome.retentionStatus = post.Status
+		outcome.syncOrdinaryRetention = postMediaRetentionSyncSkipped(ctx)
+		return outcome, nil
 	}
 	blockedTargets, policyErr := h.evaluatePublishingRestrictions(ctx, post.WorkspaceID, parsed, accountMap)
 	if policyErr != nil {
@@ -790,6 +805,54 @@ func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post 
 			ID:      post.ID,
 			Column2: strings.Join(summaries, "; "),
 		})
+	}
+	return nil
+}
+
+func (h *SocialPostHandler) failScheduledPostForDuplicateConnection(
+	ctx context.Context,
+	post db.SocialPost,
+	parsed []platform.PlatformPostInput,
+	accountMap map[string]platform.ValidateAccount,
+	message string,
+) error {
+	summaries := make([]string, 0, len(parsed))
+	for _, pp := range parsed {
+		res, err := h.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
+			PostID: post.ID, SocialAccountID: pp.AccountID, Caption: pp.Caption, Status: "failed",
+			ExternalID: pgtype.Text{}, ErrorMessage: pgtype.Text{String: message, Valid: true},
+			PublishedAt: pgtype.Timestamptz{}, Url: pgtype.Text{}, DebugCurl: pgtype.Text{}, FbMediaType: pgtype.Text{},
+		})
+		if err != nil {
+			return err
+		}
+		failure := postfailures.BuildParams(
+			post.ID, res.ID, post.WorkspaceID, pp.AccountID, accountMap[pp.AccountID].Platform,
+			"validation", message, message,
+		)
+		failure.ErrorCode = "duplicate_social_connection"
+		failure.IsRetriable = false
+		failure.ErrorSource = pgtype.Text{String: postfailures.ErrorSourceUnipost, Valid: true}
+		failure.ErrorTemporality = pgtype.Text{String: postfailures.ErrorTemporalityPermanent, Valid: true}
+		if _, err := h.queries.CreatePostFailure(ctx, failure); err != nil {
+			return err
+		}
+		if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
+			return err
+		}
+		summaries = append(summaries, fmt.Sprintf("[%s] %s", pp.AccountID, message))
+	}
+	if err := h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
+		ID: post.ID, Status: "failed", PublishedAt: pgtype.Timestamptz{},
+	}); err != nil {
+		return err
+	}
+	if len(summaries) > 0 {
+		if err := h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
+			ID: post.ID, Column2: strings.Join(summaries, "; "),
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

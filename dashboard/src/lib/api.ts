@@ -870,11 +870,15 @@ export async function disconnectSocialAccount(
 export async function bindSocialAccount(
   token: string,
   accountId: string,
-  profileId: string
+  profileId: string,
+  externalUserId?: string
 ): Promise<ApiResponse<SocialAccount>> {
   return request(`/v1/accounts/${accountId}/bindings`, token, {
     method: "POST",
-    body: JSON.stringify({ profile_id: profileId }),
+    body: JSON.stringify({
+      profile_id: profileId,
+      ...(externalUserId ? { external_user_id: externalUserId } : {}),
+    }),
   });
 }
 

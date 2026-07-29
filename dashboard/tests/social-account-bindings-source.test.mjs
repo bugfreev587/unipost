@@ -17,7 +17,8 @@ test("dashboard API exposes public binding metadata and binding mutations", asyn
   assert.match(api, /sibling_account_ids\?: string\[\]/);
   assert.match(api, /export async function bindSocialAccount/);
   assert.match(api, /`\/v1\/accounts\/\$\{accountId\}\/bindings`/);
-  assert.match(api, /body: JSON\.stringify\(\{ profile_id: profileId \}\)/);
+  assert.match(api, /profile_id: profileId/);
+  assert.match(api, /external_user_id: externalUserId/);
   assert.match(api, /export async function unbindSocialAccount/);
   assert.match(api, /`\/v1\/accounts\/\$\{accountId\}\/binding`/);
 });
@@ -49,7 +50,8 @@ test("composer prevents selecting sibling bindings for one physical account", as
   assert.match(grid, /getAccountIdentityKey/);
   assert.match(grid, /selectedSiblingId/);
   assert.match(grid, /Already selected from another Profile/);
-  assert.match(grid, /disabled=\{!!selectedSiblingId\}/);
+  assert.match(grid, /const isDisabled = disabled \|\| !!selectedSiblingId/);
+  assert.match(grid, /disabled=\{isDisabled\}/);
   assert.match(form, /selectedIdentityKeys/);
   assert.match(labels, /account\.sibling_account_ids/);
   assert.match(labels, /::siblings::/);

@@ -595,14 +595,33 @@ WHERE j.id = claimable.id
 RETURNING j.*;
 
 -- name: MarkPostDeliveryJobPlatformStarted :one
-UPDATE post_delivery_jobs
+UPDATE post_delivery_jobs job
 SET platform_started_at = COALESCE(platform_started_at, NOW()),
     updated_at = NOW()
-WHERE id = sqlc.arg('id')
-  AND state IN ('running', 'retrying')
-  AND lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
-  AND last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
-RETURNING *;
+WHERE job.id = sqlc.arg('id')
+  AND job.state IN ('running', 'retrying')
+  AND job.lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
+  AND job.last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
+  AND EXISTS (
+    SELECT 1
+    FROM post_delivery_jobs snapshot
+    JOIN social_accounts sa ON sa.id = snapshot.social_account_id
+    WHERE snapshot.id = job.id
+      AND sa.disconnected_at IS NULL
+      AND sa.binding_status = 'active'
+      AND (
+        (
+          snapshot.connection_id IS NULL
+          AND snapshot.binding_version IS NULL
+          AND sa.connection_id IS NULL
+        )
+        OR (
+          sa.connection_id = snapshot.connection_id
+          AND sa.binding_version = snapshot.binding_version
+        )
+      )
+  )
+RETURNING job.*;
 
 -- name: MarkPostDeliveryJobSucceeded :one
 UPDATE post_delivery_jobs

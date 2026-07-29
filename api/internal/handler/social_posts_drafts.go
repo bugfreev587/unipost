@@ -893,6 +893,10 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	parsed.resolveLegacyPlatformOptions(accountMap)
+	if conflict, ok := firstDuplicateSocialConnectionConflict(parsed.Posts, accountMap); ok {
+		writeDuplicateSocialConnectionError(w, conflict)
+		return
+	}
 
 	var metaJSON []byte
 	if existing.Status == "scheduled" || existing.Status == "quota_hold" {

@@ -29,7 +29,7 @@ func TestSocialAccountBindingCreatesTargetProfileBindingWithoutExposingConnectio
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/account-a/bindings", strings.NewReader(`{
 		"profile_id":"profile-b",
-		"external_user_id":"caller-forged-owner"
+		"external_user_id":"managed-a"
 	}`))
 	ctx := auth.SetWorkspaceID(req.Context(), "workspace-a")
 	route := chi.NewRouteContext()
@@ -44,8 +44,8 @@ func TestSocialAccountBindingCreatesTargetProfileBindingWithoutExposingConnectio
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	if store.workspaceID != "workspace-a" || store.sourceAccountID != "account-a" ||
-		store.targetProfileID != "profile-b" {
-		t.Fatalf("BindExisting args = workspace=%q source=%q target=%q", store.workspaceID, store.sourceAccountID, store.targetProfileID)
+		store.targetProfileID != "profile-b" || store.externalUserID != "managed-a" {
+		t.Fatalf("BindExisting args = workspace=%q source=%q target=%q external_user=%q", store.workspaceID, store.sourceAccountID, store.targetProfileID, store.externalUserID)
 	}
 	var envelope struct {
 		Data struct {
@@ -166,6 +166,7 @@ type fakeSocialConnectionStore struct {
 	workspaceID       string
 	sourceAccountID   string
 	targetProfileID   string
+	externalUserID    string
 	unbindWorkspaceID string
 	unbindAccountID   string
 	disconnectCalls   int
@@ -175,10 +176,11 @@ func (*fakeSocialConnectionStore) SaveVerified(context.Context, socialconnection
 	return db.SocialAccount{}, nil
 }
 
-func (f *fakeSocialConnectionStore) BindExisting(_ context.Context, workspaceID, sourceAccountID, targetProfileID string) (db.SocialAccount, error) {
+func (f *fakeSocialConnectionStore) BindExisting(_ context.Context, workspaceID, sourceAccountID, targetProfileID, externalUserID string) (db.SocialAccount, error) {
 	f.workspaceID = workspaceID
 	f.sourceAccountID = sourceAccountID
 	f.targetProfileID = targetProfileID
+	f.externalUserID = externalUserID
 	return f.bound, f.err
 }
 

@@ -60,7 +60,7 @@ const (
 
 type Store interface {
 	SaveVerified(context.Context, SaveMode, CredentialInput) (db.SocialAccount, error)
-	BindExisting(context.Context, string, string, string) (db.SocialAccount, error)
+	BindExisting(context.Context, string, string, string, string) (db.SocialAccount, error)
 	Unbind(context.Context, string, string) error
 	Disconnect(context.Context, string, string) ([]db.SocialAccount, error)
 }
@@ -70,7 +70,6 @@ type connectionQueries interface {
 	ListActiveAccountsByWorkspaceProviderIdentity(context.Context, db.ListActiveAccountsByWorkspaceProviderIdentityParams) ([]db.SocialAccount, error)
 	CreateSocialConnection(context.Context, db.CreateSocialConnectionParams) (db.SocialConnection, error)
 	RefreshSocialConnection(context.Context, db.RefreshSocialConnectionParams) (db.SocialConnection, error)
-	ReactivateSiblingSocialAccountBindings(context.Context, db.ReactivateSiblingSocialAccountBindingsParams) ([]db.SocialAccount, error)
 	CreateOrReactivateSocialAccountBinding(context.Context, db.CreateOrReactivateSocialAccountBindingParams) (db.SocialAccount, error)
 	GetResolvedSocialAccountByIDAndWorkspace(context.Context, db.GetResolvedSocialAccountByIDAndWorkspaceParams) (db.GetResolvedSocialAccountByIDAndWorkspaceRow, error)
 	GetSocialConnectionForUpdate(context.Context, db.GetSocialConnectionForUpdateParams) (db.SocialConnection, error)
@@ -162,11 +161,6 @@ func (s *PostgresStore) SaveVerified(ctx context.Context, mode SaveMode, input C
 		if connection.ID == "" {
 			connection.ID = stableConnectionID
 		}
-		if _, err := queries.ReactivateSiblingSocialAccountBindings(ctx, db.ReactivateSiblingSocialAccountBindingsParams{
-			ConnectionID: textValue(connection.ID), TargetProfileID: input.ProfileID,
-		}); err != nil {
-			return db.SocialAccount{}, fmt.Errorf("reactivate sibling social account bindings: %w", err)
-		}
 	}
 
 	account, err := queries.CreateOrReactivateSocialAccountBinding(ctx, bindingParams(connection.ID, input))
@@ -184,10 +178,12 @@ func (s *PostgresStore) BindExisting(
 	workspaceID string,
 	sourceAccountID string,
 	targetProfileID string,
+	selectedExternalUserID string,
 ) (db.SocialAccount, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	sourceAccountID = strings.TrimSpace(sourceAccountID)
 	targetProfileID = strings.TrimSpace(targetProfileID)
+	selectedExternalUserID = strings.TrimSpace(selectedExternalUserID)
 	if workspaceID == "" || sourceAccountID == "" || targetProfileID == "" {
 		return db.SocialAccount{}, ErrInvalidCredentialInput
 	}
@@ -226,6 +222,14 @@ func (s *PostgresStore) BindExisting(
 	}
 	if connection.Status != "active" || connection.DisconnectedAt.Valid {
 		return db.SocialAccount{}, ErrReconnectRequired
+	}
+	if connection.ConnectionType == "managed" {
+		if !connection.ExternalUserID.Valid || strings.TrimSpace(connection.ExternalUserID.String) == "" ||
+			selectedExternalUserID != strings.TrimSpace(connection.ExternalUserID.String) {
+			return db.SocialAccount{}, ErrOwnershipConflict
+		}
+	} else if selectedExternalUserID != "" {
+		return db.SocialAccount{}, ErrOwnershipConflict
 	}
 	if err := requireProfileInWorkspace(ctx, queries, targetProfileID, workspaceID); err != nil {
 		return db.SocialAccount{}, err

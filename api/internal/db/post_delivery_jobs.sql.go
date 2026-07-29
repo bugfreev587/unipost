@@ -1705,14 +1705,33 @@ func (q *Queries) MarkPostDeliveryJobFailed(ctx context.Context, arg MarkPostDel
 }
 
 const markPostDeliveryJobPlatformStarted = `-- name: MarkPostDeliveryJobPlatformStarted :one
-UPDATE post_delivery_jobs
+UPDATE post_delivery_jobs job
 SET platform_started_at = COALESCE(platform_started_at, NOW()),
     updated_at = NOW()
-WHERE id = $1
-  AND state IN ('running', 'retrying')
-  AND lease_owner IS NOT DISTINCT FROM $2
-  AND last_attempt_at IS NOT DISTINCT FROM $3::timestamptz
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version
+WHERE job.id = $1
+  AND job.state IN ('running', 'retrying')
+  AND job.lease_owner IS NOT DISTINCT FROM $2
+  AND job.last_attempt_at IS NOT DISTINCT FROM $3::timestamptz
+  AND EXISTS (
+    SELECT 1
+    FROM post_delivery_jobs snapshot
+    JOIN social_accounts sa ON sa.id = snapshot.social_account_id
+    WHERE snapshot.id = job.id
+      AND sa.disconnected_at IS NULL
+      AND sa.binding_status = 'active'
+      AND (
+        (
+          snapshot.connection_id IS NULL
+          AND snapshot.binding_version IS NULL
+          AND sa.connection_id IS NULL
+        )
+        OR (
+          sa.connection_id = snapshot.connection_id
+          AND sa.binding_version = snapshot.binding_version
+        )
+      )
+  )
+RETURNING job.id, job.post_id, job.social_post_result_id, job.workspace_id, job.social_account_id, job.platform, job.post_input_index, job.kind, job.state, job.attempts, job.max_attempts, job.failure_stage, job.error_code, job.platform_error_code, job.last_error, job.next_run_at, job.last_attempt_at, job.created_at, job.updated_at, job.finished_at, job.dismissed_at, job.lease_expires_at, job.lease_owner, job.first_claimed_at, job.platform_started_at, job.connection_id, job.binding_version
 `
 
 type MarkPostDeliveryJobPlatformStartedParams struct {

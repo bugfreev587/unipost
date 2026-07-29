@@ -64,6 +64,133 @@ func TestSchedulerDelegatesClaimAndEnqueueToOneHandlerTransaction(t *testing.T) 
 	}
 }
 
+func TestScheduledEnqueueRevalidatesPhysicalConnectionUniqueness(t *testing.T) {
+	source, err := os.ReadFile("social_post_queue.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (h *SocialPostHandler) enqueueClaimedScheduledPost")
+	end := strings.Index(text[start:], "func scheduledExecutionAdditionalQuotaUnits")
+	if start < 0 || end < 0 {
+		t.Fatal("enqueueClaimedScheduledPost boundaries not found")
+	}
+	fn := text[start : start+end]
+	for _, want := range []string{
+		"ConnectionID: acc.ConnectionID.String",
+		"ProfileID:    acc.ProfileID",
+		"firstDuplicateSocialConnectionConflict(parsed, accountMap)",
+	} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("scheduled duplicate preflight missing %q", want)
+		}
+	}
+	duplicateAt := strings.Index(fn, "firstDuplicateSocialConnectionConflict(parsed, accountMap)")
+	policyAt := strings.Index(fn, "evaluatePublishingRestrictions")
+	if duplicateAt < 0 || policyAt < 0 || duplicateAt > policyAt {
+		t.Fatalf("duplicate/policy order = %d/%d, want duplicate preflight first", duplicateAt, policyAt)
+	}
+}
+
+func TestScheduledDuplicatePhysicalConnectionCommitsTerminalFailure(t *testing.T) {
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{
+		{AccountID: "account-dev", Caption: "development"},
+		{AccountID: "account-staging", Caption: "staging"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtx := &duplicateScheduledConnectionDB{accounts: map[string]db.SocialAccount{
+		"account-dev": {
+			ID: "account-dev", ProfileID: "profile-dev", Platform: "twitter", Status: "active",
+			ConnectionID: pgtype.Text{String: "connection-shared", Valid: true}, BindingVersion: 1, BindingStatus: "active",
+		},
+		"account-staging": {
+			ID: "account-staging", ProfileID: "profile-staging", Platform: "twitter", Status: "active",
+			ConnectionID: pgtype.Text{String: "connection-shared", Valid: true}, BindingVersion: 1, BindingStatus: "active",
+		},
+	}}
+	h := &SocialPostHandler{queries: db.New(dbtx)}
+	post := db.SocialPost{ID: "post-duplicate", WorkspaceID: "workspace-a", Status: "publishing", Metadata: metadata}
+
+	outcome, err := h.enqueueClaimedScheduledPost(withoutPostMediaRetentionSync(context.Background()), post)
+
+	if err != nil {
+		t.Fatalf("enqueueClaimedScheduledPost error = %v, want committed terminal outcome", err)
+	}
+	if outcome.terminalErr == nil || !strings.Contains(outcome.terminalErr.Error(), "DUPLICATE_SOCIAL_CONNECTION") {
+		t.Fatalf("terminal error = %v, want duplicate connection code", outcome.terminalErr)
+	}
+	if dbtx.postStatus != "failed" || dbtx.resultCount != 2 || dbtx.failureCount != 2 || dbtx.deliveryJobCount != 0 {
+		t.Fatalf("terminal state = status:%q results:%d failures:%d jobs:%d", dbtx.postStatus, dbtx.resultCount, dbtx.failureCount, dbtx.deliveryJobCount)
+	}
+	if !strings.Contains(dbtx.errorSummary, "DUPLICATE_SOCIAL_CONNECTION") {
+		t.Fatalf("error summary = %q, want duplicate connection code", dbtx.errorSummary)
+	}
+}
+
+type duplicateScheduledConnectionDB struct {
+	accounts         map[string]db.SocialAccount
+	postStatus       string
+	resultCount      int
+	failureCount     int
+	deliveryJobCount int
+	errorSummary     string
+}
+
+func (f *duplicateScheduledConnectionDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(query, "-- name: UpdateSocialPostStatus"):
+		f.postStatus = args[1].(string)
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"):
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	case strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"):
+		f.errorSummary = args[1].(string)
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	default:
+		return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
+	}
+}
+
+func (f *duplicateScheduledConnectionDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *duplicateScheduledConnectionDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetResolvedSocialAccountByIDAndWorkspace"):
+		account, ok := f.accounts[args[0].(string)]
+		if !ok {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		return scanRow{values: inboxTenantIsolationResolvedSocialAccountValues(account)}
+	case strings.Contains(query, "-- name: CreateSocialPostResult"):
+		f.resultCount++
+		result := db.SocialPostResult{
+			ID: fmt.Sprintf("result-%d", f.resultCount), PostID: args[0].(string),
+			SocialAccountID: args[1].(string), Caption: args[2].(string), Status: args[3].(string),
+			ErrorMessage: args[5].(pgtype.Text),
+		}
+		return socialPostResultScanRow(result)
+	case strings.Contains(query, "-- name: CreatePostFailure"):
+		f.failureCount++
+		failure := db.CreatePostFailureParams{
+			PostID: args[0].(string), SocialPostResultID: args[1].(pgtype.Text), WorkspaceID: args[2].(string),
+			SocialAccountID: args[3].(pgtype.Text), Platform: args[4].(string), FailureStage: args[5].(string),
+			ErrorCode: args[6].(string), PlatformErrorCode: args[7].(pgtype.Text), Message: args[8].(string),
+			RawError: args[9].(pgtype.Text), IsRetriable: args[10].(bool), ErrorSource: args[11].(pgtype.Text),
+			ErrorTemporality: args[12].(pgtype.Text), ProviderError: args[13].([]byte),
+		}
+		return policySnapshotPostFailureRow(failure)
+	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
+		f.deliveryJobCount++
+		return scanRow{err: errors.New("duplicate scheduled target must not create delivery job")}
+	default:
+		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
+	}
+}
+
 func TestDraftClaimAndRestrictedEnqueueShareOneTransaction(t *testing.T) {
 	source, err := os.ReadFile("social_posts_drafts.go")
 	if err != nil {

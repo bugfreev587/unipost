@@ -129,7 +129,8 @@ func (h *SocialAccountHandler) Bind(w http.ResponseWriter, r *http.Request) {
 		accountID = strings.TrimSpace(chi.URLParam(r, "accountID"))
 	}
 	var body struct {
-		ProfileID string `json:"profile_id"`
+		ProfileID      string `json:"profile_id"`
+		ExternalUserID string `json:"external_user_id"`
 	}
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -156,7 +157,7 @@ func (h *SocialAccountHandler) Bind(w http.ResponseWriter, r *http.Request) {
 	}
 
 	account, err := h.connections.BindExisting(
-		r.Context(), workspaceID, accountID, targetProfileID,
+		r.Context(), workspaceID, accountID, targetProfileID, strings.TrimSpace(body.ExternalUserID),
 	)
 	if err != nil {
 		switch {

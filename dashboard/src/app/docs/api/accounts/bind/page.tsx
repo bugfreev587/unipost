@@ -13,6 +13,7 @@ const PATH_FIELDS: ApiFieldItem[] = [
 
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "profile_id", type: "string", description: "Target Profile that should reuse the verified physical connection." },
+  { name: "external_user_id", type: "string", meta: "Required for managed connections", description: "Selected managed user. It must match the connection's immutable managed-user owner." },
 ];
 
 const RESPONSE_FIELDS: ApiFieldItem[] = [
@@ -34,7 +35,7 @@ const SNIPPETS = [{
   code: `curl -X POST "https://api.unipost.dev/v1/accounts/sa_twitter_development/bindings" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"profile_id":"pr_staging"}'`,
+  -d '{"profile_id":"pr_staging","external_user_id":"customer_123"}'`,
 }];
 
 const RESPONSE_SNIPPETS = [{

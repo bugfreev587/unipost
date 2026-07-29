@@ -289,7 +289,8 @@ export default function AccountsPage() {
     setAccountsError(null);
     const token = await getToken();
     if (!token) throw new Error("Authentication required");
-    await bindSocialAccount(token, accountId, targetProfileId);
+    const account = accounts.find((candidate) => candidate.id === accountId);
+    await bindSocialAccount(token, accountId, targetProfileId, account?.external_user_id);
     await loadAccounts();
   }
 

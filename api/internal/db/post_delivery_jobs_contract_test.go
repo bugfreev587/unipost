@@ -169,6 +169,31 @@ func TestPostDeliveryJobPhysicalConnectionClaimContract(t *testing.T) {
 	}
 }
 
+func TestPlatformStartAtomicallyValidatesBindingSnapshot(t *testing.T) {
+	source, err := os.ReadFile("queries/post_delivery_jobs.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(source)
+	start := strings.Index(sql, "-- name: MarkPostDeliveryJobPlatformStarted")
+	end := strings.Index(sql[start:], "-- name: MarkPostDeliveryJobSucceeded")
+	if start < 0 || end < 0 {
+		t.Fatal("MarkPostDeliveryJobPlatformStarted boundaries not found")
+	}
+	query := sql[start : start+end]
+	for _, want := range []string{
+		"EXISTS (",
+		"JOIN social_accounts sa ON sa.id = snapshot.social_account_id",
+		"sa.binding_status = 'active'",
+		"sa.connection_id = snapshot.connection_id",
+		"sa.binding_version = snapshot.binding_version",
+	} {
+		if !strings.Contains(query, want) {
+			t.Errorf("atomic platform-start guard missing %q", want)
+		}
+	}
+}
+
 func TestDailyPublishReservationUsesPhysicalConnectionAtomically(t *testing.T) {
 	source, err := os.ReadFile("queries/social_post_results.sql")
 	if err != nil {

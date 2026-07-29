@@ -303,6 +303,17 @@ SELECT
 FROM unsafe
 WHERE reason IS NOT NULL;
 
+-- Fail closed for every row whose physical identity could not be promoted
+-- safely. These rows keep their legacy credentials for operator-assisted
+-- re-verification, but they must not remain publishable while connection_id is
+-- NULL: otherwise each public account ID would look like an independent
+-- physical account to validation and quota code.
+UPDATE social_accounts sa
+SET status = 'reconnect_required',
+    disconnected_at = COALESCE(sa.disconnected_at, NOW())
+FROM social_connection_migration_conflicts conflict
+WHERE sa.id = ANY(conflict.source_account_ids);
+
 -- Create one connection only for groups that passed every ownership, routing,
 -- and stable-binding check. Credential precedence is deterministic: active,
 -- latest verified refresh, latest connection, then public account ID.
