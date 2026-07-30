@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -89,6 +90,343 @@ func (a *TwitterAdapter) apiURL(path string) string {
 		base = "https://api.x.com"
 	}
 	return base + path
+}
+
+type TwitterAccountReadError struct {
+	StatusCode     int
+	Retryable      bool
+	RetryAfter     time.Duration
+	OutcomeUnknown bool
+	Class          string
+}
+
+func (e *TwitterAccountReadError) Error() string {
+	if e.StatusCode > 0 {
+		return fmt.Sprintf("X account read returned HTTP %d", e.StatusCode)
+	}
+	if e.Class == "invalid_response" {
+		return "X account read returned an invalid response"
+	}
+	return "X account read outcome is unknown"
+}
+
+type TwitterProfileMetrics struct {
+	Followers int64 `json:"followers"`
+	Following int64 `json:"following"`
+	Posts     int64 `json:"posts"`
+	Listed    int64 `json:"listed"`
+}
+
+type TwitterAccountProfile struct {
+	ExternalAccountID string                `json:"external_account_id"`
+	Username          string                `json:"username"`
+	DisplayName       string                `json:"display_name"`
+	Description       string                `json:"description"`
+	ProfileImageURL   string                `json:"profile_image_url"`
+	Location          string                `json:"location,omitempty"`
+	WebsiteURL        string                `json:"website_url,omitempty"`
+	AccountCreatedAt  time.Time             `json:"account_created_at"`
+	Verified          bool                  `json:"verified"`
+	PublicMetrics     TwitterProfileMetrics `json:"public_metrics"`
+}
+
+type TwitterPostMedia struct {
+	Type string `json:"type"`
+}
+
+type TwitterPostMetrics struct {
+	Likes       int64 `json:"likes"`
+	Replies     int64 `json:"replies"`
+	Reposts     int64 `json:"reposts"`
+	Quotes      int64 `json:"quotes"`
+	Impressions int64 `json:"impressions"`
+}
+
+type TwitterAuthoredPost struct {
+	ExternalPostID        string             `json:"external_post_id"`
+	Text                  string             `json:"text"`
+	CreatedAt             time.Time          `json:"created_at"`
+	Language              string             `json:"language,omitempty"`
+	ConversationID        string             `json:"conversation_id"`
+	ContentType           string             `json:"content_type"`
+	ReplyToExternalPostID string             `json:"reply_to_external_post_id,omitempty"`
+	IsReply               bool               `json:"is_reply"`
+	IsSelfReply           bool               `json:"is_self_reply"`
+	IsRepost              bool               `json:"is_repost"`
+	IsQuote               bool               `json:"is_quote"`
+	Media                 []TwitterPostMedia `json:"media,omitempty"`
+	PublicMetrics         TwitterPostMetrics `json:"public_metrics"`
+}
+
+type TwitterAuthoredPostsRequest struct {
+	Limit                  int
+	PaginationToken        string
+	StartTime              *time.Time
+	EndTime                *time.Time
+	ExcludeReposts         bool
+	ExcludeRepliesToOthers bool
+}
+
+type TwitterAuthoredPostsPage struct {
+	Posts        []TwitterAuthoredPost
+	ScannedCount int
+	RawCount     int
+	NextToken    string
+}
+
+func (a *TwitterAdapter) ReadAccountProfile(
+	ctx context.Context,
+	accessToken string,
+	userID string,
+) (TwitterAccountProfile, error) {
+	if strings.TrimSpace(userID) == "" {
+		return TwitterAccountProfile{}, errors.New("X profile lookup requires user id")
+	}
+	query := url.Values{
+		"user.fields": {"id,username,name,description,profile_image_url,location,url,created_at,verified,public_metrics"},
+	}
+	var response struct {
+		Data struct {
+			ID              string `json:"id"`
+			Username        string `json:"username"`
+			Name            string `json:"name"`
+			Description     string `json:"description"`
+			ProfileImageURL string `json:"profile_image_url"`
+			Location        string `json:"location"`
+			URL             string `json:"url"`
+			CreatedAt       string `json:"created_at"`
+			Verified        bool   `json:"verified"`
+			PublicMetrics   struct {
+				Followers int64 `json:"followers_count"`
+				Following int64 `json:"following_count"`
+				Posts     int64 `json:"tweet_count"`
+				Listed    int64 `json:"listed_count"`
+			} `json:"public_metrics"`
+		} `json:"data"`
+	}
+	if err := a.doTwitterAccountReadJSON(
+		ctx, a.apiURL("/2/users/"+url.PathEscape(userID)+"?"+query.Encode()), accessToken, &response,
+	); err != nil {
+		return TwitterAccountProfile{}, err
+	}
+	createdAt, err := time.Parse(time.RFC3339, response.Data.CreatedAt)
+	if err != nil || response.Data.ID == "" || response.Data.Username == "" || response.Data.Name == "" {
+		return TwitterAccountProfile{}, &TwitterAccountReadError{Class: "invalid_response"}
+	}
+	return TwitterAccountProfile{
+		ExternalAccountID: response.Data.ID,
+		Username:          response.Data.Username,
+		DisplayName:       response.Data.Name,
+		Description:       response.Data.Description,
+		ProfileImageURL:   response.Data.ProfileImageURL,
+		Location:          response.Data.Location,
+		WebsiteURL:        response.Data.URL,
+		AccountCreatedAt:  createdAt.UTC(),
+		Verified:          response.Data.Verified,
+		PublicMetrics: TwitterProfileMetrics{
+			Followers: response.Data.PublicMetrics.Followers,
+			Following: response.Data.PublicMetrics.Following,
+			Posts:     response.Data.PublicMetrics.Posts,
+			Listed:    response.Data.PublicMetrics.Listed,
+		},
+	}, nil
+}
+
+func (a *TwitterAdapter) ReadAuthoredPosts(
+	ctx context.Context,
+	accessToken string,
+	userID string,
+	request TwitterAuthoredPostsRequest,
+) (TwitterAuthoredPostsPage, error) {
+	if strings.TrimSpace(userID) == "" {
+		return TwitterAuthoredPostsPage{}, errors.New("X authored posts lookup requires user id")
+	}
+	if request.Limit < 5 {
+		request.Limit = 5
+	}
+	if request.Limit > 100 {
+		request.Limit = 100
+	}
+	query := url.Values{
+		"max_results":  {strconv.Itoa(request.Limit)},
+		"tweet.fields": {"id,text,author_id,created_at,lang,conversation_id,in_reply_to_user_id,referenced_tweets,attachments,public_metrics"},
+		"expansions":   {"attachments.media_keys"},
+		"media.fields": {"media_key,type"},
+	}
+	if request.PaginationToken != "" {
+		query.Set("pagination_token", request.PaginationToken)
+	}
+	if request.StartTime != nil {
+		query.Set("start_time", request.StartTime.UTC().Format(time.RFC3339))
+	}
+	if request.EndTime != nil {
+		query.Set("end_time", request.EndTime.UTC().Format(time.RFC3339))
+	}
+	type reference struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	var response struct {
+		Data []struct {
+			ID              string      `json:"id"`
+			Text            string      `json:"text"`
+			AuthorID        string      `json:"author_id"`
+			CreatedAt       string      `json:"created_at"`
+			Lang            string      `json:"lang"`
+			ConversationID  string      `json:"conversation_id"`
+			InReplyToUserID string      `json:"in_reply_to_user_id"`
+			References      []reference `json:"referenced_tweets"`
+			Attachments     struct {
+				MediaKeys []string `json:"media_keys"`
+			} `json:"attachments"`
+			PublicMetrics struct {
+				Likes       int64 `json:"like_count"`
+				Replies     int64 `json:"reply_count"`
+				Reposts     int64 `json:"retweet_count"`
+				Quotes      int64 `json:"quote_count"`
+				Impressions int64 `json:"impression_count"`
+			} `json:"public_metrics"`
+		} `json:"data"`
+		Includes struct {
+			Media []struct {
+				Key  string `json:"media_key"`
+				Type string `json:"type"`
+			} `json:"media"`
+		} `json:"includes"`
+		Meta struct {
+			NextToken string `json:"next_token"`
+		} `json:"meta"`
+	}
+	if err := a.doTwitterAccountReadJSON(
+		ctx, a.apiURL("/2/users/"+url.PathEscape(userID)+"/tweets?"+query.Encode()), accessToken, &response,
+	); err != nil {
+		return TwitterAuthoredPostsPage{}, err
+	}
+	page := TwitterAuthoredPostsPage{RawCount: len(response.Data), NextToken: response.Meta.NextToken}
+	if len(response.Data) > request.Limit {
+		slog.Warn("X authored-post response exceeded requested limit",
+			"requested_limit", request.Limit,
+			"returned_resources", len(response.Data),
+		)
+		response.Data = response.Data[:request.Limit]
+	}
+	page.ScannedCount = len(response.Data)
+	mediaByKey := make(map[string]string, len(response.Includes.Media))
+	for _, media := range response.Includes.Media {
+		mediaType := media.Type
+		if mediaType == "photo" {
+			mediaType = "image"
+		} else if mediaType == "animated_gif" {
+			mediaType = "gif"
+		}
+		mediaByKey[media.Key] = mediaType
+	}
+	seen := make(map[string]struct{}, len(response.Data))
+	for _, source := range response.Data {
+		createdAt, parseErr := time.Parse(time.RFC3339, source.CreatedAt)
+		if parseErr != nil || source.ID == "" || source.ConversationID == "" {
+			continue
+		}
+		if _, duplicate := seen[source.ID]; duplicate {
+			continue
+		}
+		seen[source.ID] = struct{}{}
+		post := TwitterAuthoredPost{
+			ExternalPostID: source.ID, Text: source.Text, CreatedAt: createdAt.UTC(),
+			Language: source.Lang, ConversationID: source.ConversationID,
+			ContentType: "original_post",
+			PublicMetrics: TwitterPostMetrics{
+				Likes: source.PublicMetrics.Likes, Replies: source.PublicMetrics.Replies,
+				Reposts: source.PublicMetrics.Reposts, Quotes: source.PublicMetrics.Quotes,
+				Impressions: source.PublicMetrics.Impressions,
+			},
+		}
+		for _, ref := range source.References {
+			switch ref.Type {
+			case "replied_to":
+				post.IsReply = true
+				post.ReplyToExternalPostID = ref.ID
+			case "quoted":
+				post.IsQuote = true
+			case "retweeted":
+				post.IsRepost = true
+			}
+		}
+		switch {
+		case post.IsRepost:
+			post.ContentType = "repost"
+		case post.IsReply:
+			post.ContentType = "reply"
+		case post.IsQuote:
+			post.ContentType = "quote"
+		}
+		post.IsSelfReply = post.IsReply && source.InReplyToUserID == userID
+		if request.ExcludeReposts && post.IsRepost {
+			continue
+		}
+		if request.ExcludeRepliesToOthers && post.IsReply && !post.IsSelfReply {
+			continue
+		}
+		for _, key := range source.Attachments.MediaKeys {
+			if mediaType := mediaByKey[key]; mediaType != "" {
+				post.Media = append(post.Media, TwitterPostMedia{Type: mediaType})
+			}
+		}
+		page.Posts = append(page.Posts, post)
+	}
+	return page, nil
+}
+
+func (a *TwitterAdapter) doTwitterAccountReadJSON(
+	ctx context.Context,
+	endpoint string,
+	accessToken string,
+	responseBody any,
+) error {
+	requestCtx, cancel := context.WithTimeout(ctx, twitterFetchSourceTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return &TwitterAccountReadError{Retryable: true, OutcomeUnknown: true, Class: "transport"}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		retryable := resp.StatusCode == http.StatusRequestTimeout ||
+			resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		return &TwitterAccountReadError{
+			StatusCode: resp.StatusCode, Retryable: retryable,
+			RetryAfter: parseTwitterRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+			Class:      "http",
+		}
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
+	if err != nil {
+		return &TwitterAccountReadError{Retryable: true, OutcomeUnknown: true, Class: "transport"}
+	}
+	if len(raw) > 2<<20 {
+		return &TwitterAccountReadError{Class: "invalid_response"}
+	}
+	if err := json.Unmarshal(raw, responseBody); err != nil {
+		unknown := strings.Contains(strings.ToLower(err.Error()), "unexpected end")
+		return &TwitterAccountReadError{Retryable: unknown, OutcomeUnknown: unknown, Class: "invalid_response"}
+	}
+	return nil
+}
+
+func parseTwitterRetryAfter(value string, now time.Time) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if retryAt, err := http.ParseTime(value); err == nil && retryAt.After(now) {
+		return retryAt.Sub(now)
+	}
+	return 0
 }
 
 func (a *TwitterAdapter) FetchInboxMentions(

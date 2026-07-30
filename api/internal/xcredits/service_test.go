@@ -382,18 +382,41 @@ func TestPostgresReserveUsesRowSerializationWithoutSerializableFailures(t *testi
 	}
 }
 
+func TestSnapshotAggregatesFinalizedAndPendingFinancialStates(t *testing.T) {
+	source, err := os.ReadFile("postgres.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"MonthlyFinalized",
+		"MonthlyPending",
+		"MonthlyEffective",
+		"FROM x_usage_events",
+		"FROM x_read_exposures",
+		"accounting_enabled",
+		"finalize_pending",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("snapshot aggregation missing %q", want)
+		}
+	}
+}
+
 type fakeExposureStore struct {
 	*fakeStore
 	markedID      string
 	reconcileCall bool
 	reconcileStat ExposureReleaseReconcileStats
+	lastExposure  StoreExposureReservationRequest
 }
 
 func (s *fakeExposureStore) ReserveExposure(
-	context.Context,
-	StoreExposureReservationRequest,
+	_ context.Context,
+	req StoreExposureReservationRequest,
 ) (ExposureReservation, error) {
-	return ExposureReservation{}, nil
+	s.lastExposure = req
+	return ExposureReservation{ID: "exposure_1", ReservedResources: req.RequestedResources}, nil
 }
 func (s *fakeExposureStore) MarkExposureReadStarted(context.Context, string) error { return nil }
 func (s *fakeExposureStore) MarkExposureFinalizePending(
@@ -450,5 +473,53 @@ func TestExposureReleasePendingIsPersistedAndReconciled(t *testing.T) {
 	if store.markedID != "reservation-1" || !store.reconcileCall ||
 		stats.Released != 1 {
 		t.Fatalf("store/stats = %+v %+v", store, stats)
+	}
+}
+
+func TestAccountReadExposureUsesStrictAdmissionWithoutInboundDailyCap(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeExposureStore{fakeStore: newFakeStore("basic", now, now.AddDate(0, 1, 0))}
+	service := NewService(store)
+
+	_, err := service.ReserveExposure(context.Background(), ExposureReservationRequest{
+		WorkspaceID: "ws_1", SocialAccountID: "sa_1", ExternalUserID: "managed_1",
+		AppMode: "unipost_managed_app", OperationKey: "post.read",
+		Purpose: ExposurePurposeAccountPostHistory, IdempotencyKey: "hashed-key",
+		RequestedResources: 25, MinimumResources: 25, UnitsPerResource: 5, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.lastExposure
+	if got.Purpose != ExposurePurposeAccountPostHistory || got.SafetyPolicy != ExposureSafetyRequestLimits {
+		t.Fatalf("request=%+v, want account-read purpose and request-limit safety", got)
+	}
+	if got.ReconciliationDeadline.Sub(now) != 24*time.Hour {
+		t.Fatalf("deadline=%s, want 24h", got.ReconciliationDeadline)
+	}
+	if got.InboundDailyLimit != 0 {
+		t.Fatalf("request=%+v, account reads must not consume Inbox daily cap", got)
+	}
+}
+
+func TestInboxExposureKeepsLegacySafetyAndDeadlineDefaults(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeExposureStore{fakeStore: newFakeStore("basic", now, now.AddDate(0, 1, 0))}
+	service := NewService(store)
+
+	_, err := service.ReserveExposure(context.Background(), ExposureReservationRequest{
+		WorkspaceID: "ws_1", SocialAccountID: "sa_1", AppMode: "unipost_managed_app",
+		OperationKey: "post.read", IdempotencyKey: "backfill_1",
+		RequestedResources: 5, MinimumResources: 1, UnitsPerResource: 5, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := store.lastExposure
+	if got.Purpose != ExposurePurposeInboxBackfill || got.SafetyPolicy != ExposureSafetyInboundDailyCap {
+		t.Fatalf("request=%+v, want legacy Inbox defaults", got)
+	}
+	if got.ReconciliationDeadline.Sub(now) != 30*time.Minute || got.InboundDailyLimit == 0 {
+		t.Fatalf("request=%+v, want 30m deadline and inbound cap", got)
 	}
 }

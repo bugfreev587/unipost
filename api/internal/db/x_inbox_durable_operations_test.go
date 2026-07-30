@@ -46,6 +46,45 @@ func TestXInboxDurableOperationsMigrationIsRollingSafeAndExecutable(t *testing.T
 	}
 }
 
+func TestXAccountReadsMigrationGeneralizesExposureAndAddsReceipts(t *testing.T) {
+	source, err := os.ReadFile("migrations/135_x_account_reads.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"ALTER TABLE x_inbox_backfill_exposure_reservations",
+		"CREATE VIEW x_read_exposures AS",
+		"FROM x_inbox_backfill_exposure_reservations",
+		"purpose",
+		"external_user_id",
+		"safety_policy",
+		"reconciliation_deadline",
+		"CREATE TABLE x_read_receipts",
+		"operation_id",
+		"idempotency_key_hash",
+		"request_fingerprint",
+		"encrypted_request",
+		"response_json",
+		"execution_lease_expires_at",
+		"expires_at",
+		"UNIQUE (workspace_id, idempotency_key_hash)",
+		"REFERENCES x_inbox_backfill_exposure_reservations(id)",
+		"ON DELETE CASCADE",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("X account reads migration missing %q", want)
+		}
+	}
+	if strings.Contains(sql, "ALTER TABLE x_inbox_backfill_exposure_reservations RENAME") {
+		t.Fatal("X account reads migration renames the live Inbox table and is not rolling-deploy compatible")
+	}
+	down := strings.SplitN(sql, "-- +goose Down", 2)
+	if len(down) != 2 || strings.Contains(down[1], "ALTER TABLE x_read_exposures") {
+		t.Fatal("X account reads rollback alters the dropped compatibility view instead of the physical table")
+	}
+}
+
 func TestXInboxOutboundCompletionUsesConflictLookupAndAtomicSettlement(t *testing.T) {
 	source, err := os.ReadFile("../handler/inbox_x_outbound.go")
 	if err != nil {

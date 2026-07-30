@@ -112,6 +112,33 @@ func seedMigration124State(t *testing.T, database *sql.DB) {
 		CREATE TABLE workspaces (
 			id TEXT PRIMARY KEY
 		);
+		CREATE TABLE social_accounts (
+			id TEXT PRIMARY KEY
+		);
+		CREATE TABLE x_inbox_backfill_exposure_reservations (
+			id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+			workspace_id            TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			social_account_id       TEXT NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
+			operation_key           TEXT NOT NULL,
+			idempotency_key         TEXT NOT NULL,
+			requested_resources     INTEGER NOT NULL CHECK (requested_resources > 0),
+			reserved_units          BIGINT NOT NULL,
+			actual_units            BIGINT,
+			period_start            TIMESTAMPTZ NOT NULL,
+			period_end              TIMESTAMPTZ NOT NULL,
+			utc_date                DATE NOT NULL,
+			status                  TEXT NOT NULL DEFAULT 'reserved',
+			reconciliation_deadline TIMESTAMPTZ,
+			reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			last_error              TEXT,
+			accounting_enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			CONSTRAINT x_inbox_backfill_exposure_reservations_reserved_units_check
+				CHECK (reserved_units > 0),
+			UNIQUE (workspace_id, idempotency_key)
+		);
 		CREATE TABLE feature_flags (
 			key TEXT PRIMARY KEY CHECK (key IN ('x_dms_v1', 'x_credits_billing_v1')),
 			enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -180,6 +207,33 @@ func seedMigration123State(t *testing.T, database *sql.DB) {
 		);
 		CREATE TABLE workspaces (
 			id TEXT PRIMARY KEY
+		);
+		CREATE TABLE social_accounts (
+			id TEXT PRIMARY KEY
+		);
+		CREATE TABLE x_inbox_backfill_exposure_reservations (
+			id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+			workspace_id            TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			social_account_id       TEXT NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
+			operation_key           TEXT NOT NULL,
+			idempotency_key         TEXT NOT NULL,
+			requested_resources     INTEGER NOT NULL CHECK (requested_resources > 0),
+			reserved_units          BIGINT NOT NULL,
+			actual_units            BIGINT,
+			period_start            TIMESTAMPTZ NOT NULL,
+			period_end              TIMESTAMPTZ NOT NULL,
+			utc_date                DATE NOT NULL,
+			status                  TEXT NOT NULL DEFAULT 'reserved',
+			reconciliation_deadline TIMESTAMPTZ,
+			reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			last_error              TEXT,
+			accounting_enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			CONSTRAINT x_inbox_backfill_exposure_reservations_reserved_units_check
+				CHECK (reserved_units > 0),
+			UNIQUE (workspace_id, idempotency_key)
 		);
 		CREATE TABLE feature_flags (
 			key TEXT PRIMARY KEY CHECK (key IN ('x_dms_v1', 'x_credits_billing_v1')),
@@ -305,8 +359,8 @@ func TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup(t *testing.T)
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 134 {
-		t.Fatalf("fresh disposable Preview final version = %d, want 134", version)
+	if version != 135 {
+		t.Fatalf("fresh disposable Preview final version = %d, want 135", version)
 	}
 }
 
@@ -377,9 +431,9 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&retryable, &ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 134 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 135 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"version=%d retryable=%v owner_user_ids=%v, want version=134 retryable=false canonical owner backfill",
+			"version=%d retryable=%v owner_user_ids=%v, want version=135 retryable=false canonical owner backfill",
 			version, retryable, ownerUserIDs,
 		)
 	}
@@ -408,8 +462,8 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 134 {
-		t.Fatalf("zero-row pending irreversible migration final version = %d, want 134", version)
+	if version != 135 {
+		t.Fatalf("zero-row pending irreversible migration final version = %d, want 135", version)
 	}
 }
 
@@ -747,9 +801,9 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 134 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 135 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=134 retention_reason=active_post retryable=false canonical owner backfill",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=135 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
 			retentionReason,
 			retryable,
@@ -852,8 +906,8 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 134 {
-		t.Fatalf("final migration version = %d, want 134", version)
+	if version != 135 {
+		t.Fatalf("final migration version = %d, want 135", version)
 	}
 }
 
@@ -911,17 +965,17 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 134 {
-		t.Fatalf("replacement runner final migration version = %d, want 134", version)
+	if version != 135 {
+		t.Fatalf("replacement runner final migration version = %d, want 135", version)
 	}
 }
 
-func TestRequireCurrentSchemaRejects124AndAccepts134(t *testing.T) {
+func TestRequireCurrentSchemaRejects124AndAccepts135(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 
 	err := RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 134") {
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 135") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 
@@ -944,14 +998,14 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO goose_db_version (version_id, is_applied) VALUES (135, TRUE);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (136, TRUE);
 	`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	err = RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 134") || !strings.Contains(err.Error(), "rollback is unsafe") {
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 135") || !strings.Contains(err.Error(), "rollback is unsafe") {
 		t.Fatalf("schema-ahead guard error = %v", err)
 	}
 }

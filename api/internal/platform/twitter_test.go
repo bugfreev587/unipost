@@ -211,6 +211,109 @@ func TestTwitterInboxFetchMentionsUsesOfficialUserMentionsEndpoint(t *testing.T)
 	}
 }
 
+func TestTwitterAccountProfileReadNormalizesRequiredAndOptionalFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/2/users/user-1" || r.Header.Get("Authorization") != "Bearer user-token" {
+			t.Fatalf("request=%s authorization=%q", r.URL.String(), r.Header.Get("Authorization"))
+		}
+		if !strings.Contains(r.URL.Query().Get("user.fields"), "public_metrics") {
+			t.Fatalf("query=%s", r.URL.RawQuery)
+		}
+		_, _ = io.WriteString(w, `{"data":{"id":"user-1","username":"victoria","name":"Victoria","description":"Founder","profile_image_url":"https://example.test/a.png","location":"San Francisco","url":"https://victoria.test","created_at":"2020-01-01T00:00:00Z","verified":true,"public_metrics":{"followers_count":1200,"following_count":350,"tweet_count":4200,"listed_count":12}}}`)
+	}))
+	defer server.Close()
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+
+	profile, err := adapter.ReadAccountProfile(context.Background(), "user-token", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.ExternalAccountID != "user-1" || profile.Username != "victoria" ||
+		profile.DisplayName != "Victoria" || profile.Description != "Founder" ||
+		profile.PublicMetrics.Followers != 1200 || profile.PublicMetrics.Posts != 4200 || !profile.Verified {
+		t.Fatalf("profile=%+v", profile)
+	}
+}
+
+func TestTwitterAuthoredPostsNormalizesRelationshipsFiltersAndPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/2/users/user-1/tweets" || r.URL.Query().Get("max_results") != "5" ||
+			r.URL.Query().Get("pagination_token") != "upstream-page" {
+			t.Fatalf("request=%s", r.URL.String())
+		}
+		_, _ = io.WriteString(w, `{
+			"data":[
+				{"id":"original","text":"own text","author_id":"user-1","created_at":"2026-07-20T10:00:00Z","lang":"en","conversation_id":"original","attachments":{"media_keys":["m1"]},"public_metrics":{"like_count":2,"reply_count":3,"retweet_count":4,"quote_count":5,"impression_count":6}},
+				{"id":"self-reply","text":"part two","author_id":"user-1","created_at":"2026-07-20T10:01:00Z","conversation_id":"original","in_reply_to_user_id":"user-1","referenced_tweets":[{"type":"replied_to","id":"original"}]},
+				{"id":"other-reply","text":"reply","author_id":"user-1","created_at":"2026-07-20T10:02:00Z","conversation_id":"thread-x","in_reply_to_user_id":"other","referenced_tweets":[{"type":"replied_to","id":"parent"}]},
+				{"id":"repost","text":"RT text","author_id":"user-1","created_at":"2026-07-20T10:03:00Z","conversation_id":"repost","referenced_tweets":[{"type":"retweeted","id":"source"}]},
+				{"id":"quote","text":"my commentary","author_id":"user-1","created_at":"2026-07-20T10:04:00Z","conversation_id":"quote","referenced_tweets":[{"type":"quoted","id":"quoted"}]}
+			],
+			"includes":{"media":[{"media_key":"m1","type":"photo"}]},
+			"meta":{"result_count":5,"next_token":"next-upstream"}
+		}`)
+	}))
+	defer server.Close()
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+
+	page, err := adapter.ReadAuthoredPosts(context.Background(), "user-token", "user-1", TwitterAuthoredPostsRequest{
+		Limit: 5, PaginationToken: "upstream-page", ExcludeReposts: true, ExcludeRepliesToOthers: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.ScannedCount != 5 || page.RawCount != 5 || page.NextToken != "next-upstream" || len(page.Posts) != 3 {
+		t.Fatalf("page=%+v", page)
+	}
+	if page.Posts[0].ContentType != "original_post" || len(page.Posts[0].Media) != 1 ||
+		page.Posts[1].ContentType != "reply" || !page.Posts[1].IsSelfReply ||
+		page.Posts[2].ContentType != "quote" || page.Posts[2].Text != "my commentary" {
+		t.Fatalf("posts=%+v", page.Posts)
+	}
+}
+
+func TestTwitterAuthoredPostsUsesDeterministicRelationshipPrecedence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"data":[{"id":"mixed","text":"mixed","author_id":"user-1","created_at":"2026-07-20T10:00:00Z","conversation_id":"mixed","referenced_tweets":[
+				{"type":"retweeted","id":"source"},{"type":"replied_to","id":"parent"},{"type":"quoted","id":"quoted"}
+			]}],
+			"meta":{"result_count":1}
+		}`)
+	}))
+	defer server.Close()
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+
+	page, err := adapter.ReadAuthoredPosts(context.Background(), "user-token", "user-1", TwitterAuthoredPostsRequest{Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Posts) != 1 || page.Posts[0].ContentType != "repost" ||
+		!page.Posts[0].IsRepost || !page.Posts[0].IsReply || !page.Posts[0].IsQuote {
+		t.Fatalf("posts=%+v", page.Posts)
+	}
+}
+
+func TestTwitterAccountReadErrorsAreTypedAndSanitized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "90")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `secret provider body`)
+	}))
+	defer server.Close()
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+
+	_, err := adapter.ReadAccountProfile(context.Background(), "user-token", "user-1")
+	var readErr *TwitterAccountReadError
+	if !errors.As(err, &readErr) || readErr.StatusCode != http.StatusTooManyRequests ||
+		readErr.RetryAfter != 90*time.Second || readErr.OutcomeUnknown {
+		t.Fatalf("error=%#v", err)
+	}
+	if strings.Contains(err.Error(), "secret provider body") {
+		t.Fatalf("provider body leaked: %v", err)
+	}
+}
+
 func TestTwitterInboxFetchDMEventsUsesOfficialThirtyDayLookup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/2/dm_events" {

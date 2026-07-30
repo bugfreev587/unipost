@@ -602,7 +602,7 @@ WITH usage_current AS (
     COUNT(*) FILTER (WHERE status = 'release_pending')::BIGINT AS release_pending,
     COUNT(*) FILTER (WHERE status = 'needs_reconciliation')::BIGINT AS needs_reconciliation,
     COUNT(*) FILTER (WHERE updated_at < $3 OR reconciliation_deadline < $1)::BIGINT AS stale
-  FROM x_inbox_backfill_exposure_reservations
+  FROM x_read_exposures
   WHERE status NOT IN ('finalized', 'released')
 ), latency_metrics AS (
   SELECT
