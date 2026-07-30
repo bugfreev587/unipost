@@ -322,13 +322,27 @@ func (a *TwitterAdapter) ReadAuthoredPosts(
 		mediaByKey[media.Key] = mediaType
 	}
 	seen := make(map[string]struct{}, len(response.Data))
-	for _, source := range response.Data {
+	for index, source := range response.Data {
 		createdAt, parseErr := time.Parse(time.RFC3339, source.CreatedAt)
-		if parseErr != nil || source.ID == "" || source.ConversationID == "" {
-			continue
+		invalidReason := ""
+		switch {
+		case parseErr != nil:
+			invalidReason = "invalid_created_at"
+		case source.ID == "":
+			invalidReason = "missing_id"
+		case source.ConversationID == "":
+			invalidReason = "missing_conversation_id"
+		}
+		if invalidReason != "" {
+			slog.Warn("X authored-post response contained malformed required fields",
+				"post_index", index,
+				"reason", invalidReason,
+			)
+			return TwitterAuthoredPostsPage{}, &TwitterAccountReadError{Class: "invalid_response"}
 		}
 		if _, duplicate := seen[source.ID]; duplicate {
-			continue
+			slog.Warn("X authored-post response contained a duplicate post ID", "post_index", index)
+			return TwitterAuthoredPostsPage{}, &TwitterAccountReadError{Class: "invalid_response"}
 		}
 		seen[source.ID] = struct{}{}
 		post := TwitterAuthoredPost{

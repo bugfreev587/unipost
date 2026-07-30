@@ -162,8 +162,10 @@ func (h *XAccountReadsHandler) authorize(
 	return account, externalUserID, idempotencyKey, true
 }
 
-func (h *XAccountReadsHandler) ResolveAccountReadToken(ctx context.Context, accountID string) (string, error) {
-	account, err := h.queries.GetSocialAccount(ctx, accountID)
+func (h *XAccountReadsHandler) ResolveAccountReadToken(ctx context.Context, workspaceID, accountID string) (string, error) {
+	account, err := h.queries.GetSocialAccountByIDAndWorkspace(ctx, db.GetSocialAccountByIDAndWorkspaceParams{
+		ID: accountID, WorkspaceID: workspaceID,
+	})
 	if err != nil {
 		return "", err
 	}

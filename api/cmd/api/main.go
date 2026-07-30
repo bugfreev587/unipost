@@ -781,7 +781,7 @@ func main() {
 		}
 		xAccountReadPreviousCursorKeys = append(xAccountReadPreviousCursorKeys, []byte(key))
 	}
-	xAccountReadService := xaccountreads.NewServiceWithSecrets(
+	xAccountReadService, err := xaccountreads.NewServiceWithSecrets(
 		xAccountReadStore,
 		xCreditsService,
 		platform.NewTwitterAdapter(),
@@ -790,6 +790,10 @@ func main() {
 		[]byte(xAccountReadCursorKey),
 		xAccountReadPreviousCursorKeys...,
 	)
+	if err != nil {
+		slog.Error("failed to initialize X account-read cursor codec", "error", err)
+		os.Exit(1)
+	}
 	xAccountReadsHandler := handler.NewXAccountReadsHandler(
 		queries, encryptor, xAccountReadService, xTokenRefresher,
 	)

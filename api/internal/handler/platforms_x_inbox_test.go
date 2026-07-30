@@ -200,11 +200,13 @@ func invokeXAccountCapabilitiesWithFlags(
 }
 
 type xCapabilityTestDB struct {
-	planID       string
-	appMode      string
-	scopes       []string
-	externalUser string
-	refreshToken string
+	planID           string
+	appMode          string
+	scopes           []string
+	externalUser     string
+	refreshToken     string
+	allowedWorkspace string
+	lastQueryArgs    []any
 }
 
 func (f *xCapabilityTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -215,9 +217,13 @@ func (f *xCapabilityTestDB) Query(context.Context, string, ...interface{}) (pgx.
 	return nil, pgx.ErrNoRows
 }
 
-func (f *xCapabilityTestDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+func (f *xCapabilityTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
 	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+		f.lastQueryArgs = append([]any(nil), args...)
+		if f.allowedWorkspace != "" && (len(args) < 2 || args[1] != f.allowedWorkspace) {
+			return scanRow{err: pgx.ErrNoRows}
+		}
 		return xCapabilityAccountRow{scopes: f.scopes, appMode: f.appMode, externalUser: f.externalUser, refreshToken: f.refreshToken}
 	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}

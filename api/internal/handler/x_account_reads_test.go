@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -85,6 +86,25 @@ func TestXAccountProfileReadReturnsDocumentedEnvelope(t *testing.T) {
 	}
 	if service.profileRequest.AccessToken != "" {
 		t.Fatalf("handler resolved access token before service admission")
+	}
+}
+
+func TestXAccountReadTokenResolutionIsWorkspaceScoped(t *testing.T) {
+	store := &xCapabilityTestDB{
+		appMode: "unipost_managed_app", externalUser: "managed_1", refreshToken: "refresh",
+		scopes: []string{"users.read", "tweet.read", "offline.access"}, allowedWorkspace: "ws_owner",
+	}
+	handler := NewXAccountReadsHandler(db.New(store), fakeXAccountReadCipher{}, &fakeXAccountReadService{}, nil)
+
+	if _, err := handler.ResolveAccountReadToken(context.Background(), "ws_attacker", "sa_1"); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("cross-workspace token resolution error = %v, want not found", err)
+	}
+	token, err := handler.ResolveAccountReadToken(context.Background(), "ws_owner", "sa_1")
+	if err != nil || token != "access-token" {
+		t.Fatalf("owner token = %q, error = %v", token, err)
+	}
+	if len(store.lastQueryArgs) != 2 || store.lastQueryArgs[0] != "sa_1" || store.lastQueryArgs[1] != "ws_owner" {
+		t.Fatalf("scoped query args = %#v", store.lastQueryArgs)
 	}
 }
 
