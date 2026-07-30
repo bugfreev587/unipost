@@ -69,6 +69,8 @@ func TestXAccountReadsMigrationGeneralizesExposureAndAddsReceipts(t *testing.T) 
 		"UNIQUE (workspace_id, idempotency_key_hash)",
 		"REFERENCES x_read_exposures(id)",
 		"ON DELETE CASCADE",
+		"RENAME TO x_inbox_exposure_reconciliation_current_idx",
+		"RENAME TO x_inbox_exposure_reconciliation_deadline_idx",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("X account reads migration missing %q", want)

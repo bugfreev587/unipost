@@ -29,12 +29,14 @@ var (
 )
 
 type OperationError struct {
-	Code               string
-	RetryAfter         time.Duration
-	Cause              error
-	EstimatedCredits   int64
-	AvailableCredits   int64
-	MaxAffordableLimit int
+	Code                 string
+	RetryAfter           time.Duration
+	Cause                error
+	EstimatedCredits     int64
+	AvailableCredits     int64
+	MaxAffordableLimit   int
+	RetryCursor          string
+	RetryCursorExpiresAt time.Time
 }
 
 func (e *OperationError) Error() string {

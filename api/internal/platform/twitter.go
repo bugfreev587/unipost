@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -303,6 +304,10 @@ func (a *TwitterAdapter) ReadAuthoredPosts(
 	}
 	page := TwitterAuthoredPostsPage{RawCount: len(response.Data), NextToken: response.Meta.NextToken}
 	if len(response.Data) > request.Limit {
+		slog.Warn("X authored-post response exceeded requested limit",
+			"requested_limit", request.Limit,
+			"returned_resources", len(response.Data),
+		)
 		response.Data = response.Data[:request.Limit]
 	}
 	page.ScannedCount = len(response.Data)

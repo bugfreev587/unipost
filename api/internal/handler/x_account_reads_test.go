@@ -107,3 +107,18 @@ func TestXAccountReadMapsInsufficientCreditsTo402(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestXAccountReadReturnsRefreshedRetryCursorForLongRateLimit(t *testing.T) {
+	expiresAt := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	service := &fakeXAccountReadService{err: &xaccountreads.OperationError{
+		Code: xaccountreads.CodeRateLimited, RetryAfter: 2 * time.Hour,
+		RetryCursor: "refreshed-cursor", RetryCursorExpiresAt: expiresAt,
+	}}
+	store := &xCapabilityTestDB{planID: "basic", appMode: "unipost_managed_app", externalUser: "managed_1", refreshToken: "refresh", scopes: []string{"users.read", "tweet.read", "offline.access"}}
+	rec := invokeXAccountRead(t, store, service, http.MethodGet, "/v1/accounts/sa_1/posts?external_user_id=managed_1&limit=5&cursor=old", (*XAccountReadsHandler).Posts)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "7200" ||
+		!strings.Contains(rec.Body.String(), `"retry_cursor":"refreshed-cursor"`) ||
+		!strings.Contains(rec.Body.String(), `"retry_cursor_expires_at":"2026-08-05T12:00:00Z"`) {
+		t.Fatalf("status=%d headers=%v body=%s", rec.Code, rec.Header(), rec.Body.String())
+	}
+}

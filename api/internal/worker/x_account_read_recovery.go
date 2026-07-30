@@ -43,12 +43,13 @@ func (w *XAccountReadRecoveryWorker) runOnce(ctx context.Context) {
 		slog.Error("X account-read recovery failed", "error", err)
 		return
 	}
-	if stats.Scanned > 0 {
+	if stats.Scanned > 0 || stats.Cleaned > 0 {
 		slog.Info("X account-read recovery complete",
 			"scanned", stats.Scanned,
 			"succeeded", stats.Succeeded,
 			"released", stats.Released,
 			"deferred", stats.Deferred,
+			"cleaned", stats.Cleaned,
 		)
 	}
 }

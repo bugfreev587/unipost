@@ -14,11 +14,18 @@ import (
 )
 
 type fakeReceiptStore struct {
-	receipt Receipt
+	receipt        Receipt
+	expiredToClean int
+	cleaned        int
+}
+
+func (s *fakeReceiptStore) DeleteExpiredReceipts(context.Context, int, time.Time) (int, error) {
+	s.cleaned += s.expiredToClean
+	return s.expiredToClean, nil
 }
 
 func (s *fakeReceiptStore) ClaimRecoverable(context.Context, int, string, time.Time) ([]Receipt, error) {
-	if s.receipt.Status == ReceiptOutcomeUnknown || s.receipt.Status == ReceiptSettlementPending {
+	if s.receipt.Status == ReceiptExecuting || s.receipt.Status == ReceiptOutcomeUnknown || s.receipt.Status == ReceiptSettlementPending {
 		return []Receipt{s.receipt}, nil
 	}
 	return nil, nil
@@ -228,6 +235,35 @@ func TestOperationalRateLimitStopsBeforeXCall(t *testing.T) {
 	}
 }
 
+func TestReadPostsRefreshesCursorWhenRetryDelayOutlivesIt(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{}
+	credits := &fakeCredits{}
+	provider := &fakeProvider{err: &platform.TwitterAccountReadError{
+		StatusCode: 429, Retryable: true, RetryAfter: 2 * time.Hour,
+	}}
+	service := newTestService(store, credits, provider)
+	scope := CursorScope{WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1"}
+	cursor, _, err := service.cursors.Encode(scope, "provider-page-2", now.Add(-cursorLifetime+time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.ReadPosts(context.Background(), PostsRequest{
+		WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1", ExternalAccountID: "x-user",
+		AppMode: "unipost_managed_app", AccessToken: "token", IdempotencyKey: "page-2", Limit: 5,
+		Cursor: cursor, Now: now,
+	})
+	var operationErr *OperationError
+	if !errors.As(err, &operationErr) || operationErr.RetryCursor == "" || operationErr.RetryCursorExpiresAt.IsZero() {
+		t.Fatalf("err=%+v", err)
+	}
+	token, _, err := service.cursors.Decode(operationErr.RetryCursor, scope, now.Add(2*time.Hour))
+	if err != nil || token != "provider-page-2" {
+		t.Fatalf("token=%q err=%v", token, err)
+	}
+}
+
 func TestRecoveryRetriesAmbiguousReadAndMakesResponseReplayable(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	store := &fakeReceiptStore{}
@@ -250,6 +286,29 @@ func TestRecoveryRetriesAmbiguousReadAndMakesResponseReplayable(t *testing.T) {
 	}
 }
 
+func TestRecoveryTakesOverInterruptedExecutingReadAfterLease(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{receipt: Receipt{
+		OperationID: "xro_1", WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1",
+		ExposureID: "exposure-1", Endpoint: "profile", Status: ReceiptExecuting,
+		EncryptedRequest: "encrypted:{\"external_account_id\":\"x-user\"}", RequestedResources: 1,
+		ReservedUnits: 10, AccountingEnabled: true, CatalogVersion: xcredits.CatalogVersion,
+		AppMode: "unipost_managed_app", ExpiresAt: now.Add(23 * time.Hour),
+	}}
+	provider := &fakeProvider{profile: platform.TwitterAccountProfile{
+		ExternalAccountID: "x-user", Username: "v", DisplayName: "V", AccountCreatedAt: now,
+	}}
+	service := newTestService(store, &fakeCredits{}, provider).SetTokenResolver(fakeTokenResolver{token: "token"})
+
+	stats, err := service.Reconcile(context.Background(), 10, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Succeeded != 1 || store.receipt.Status != ReceiptSucceeded || provider.calls != 1 {
+		t.Fatalf("stats=%+v receipt=%+v calls=%d", stats, store.receipt, provider.calls)
+	}
+}
+
 func TestRecoveryReleasesExpiredUnknownOutcomeWithoutBackCharge(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	store := &fakeReceiptStore{receipt: Receipt{
@@ -266,5 +325,19 @@ func TestRecoveryReleasesExpiredUnknownOutcomeWithoutBackCharge(t *testing.T) {
 	}
 	if stats.Released != 1 || credits.released != 1 || credits.finalized != 0 || store.receipt.Status != ReceiptFailed {
 		t.Fatalf("stats=%+v credits=%+v receipt=%+v", stats, credits, store.receipt)
+	}
+}
+
+func TestRecoveryDeletesExpiredTerminalReceiptsAfterReplayWindow(t *testing.T) {
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{expiredToClean: 2}
+	service := newTestService(store, &fakeCredits{}, &fakeProvider{}).SetTokenResolver(fakeTokenResolver{token: "token"})
+
+	stats, err := service.Reconcile(context.Background(), 10, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Cleaned != 2 || store.cleaned != 2 {
+		t.Fatalf("stats=%+v cleaned=%d", stats, store.cleaned)
 	}
 }

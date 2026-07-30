@@ -16,6 +16,8 @@ type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
+const accountReadExecutionLease = 2 * time.Minute
+
 func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 	return &PostgresStore{pool: pool}
 }
@@ -92,12 +94,13 @@ func (s *PostgresStore) AdmissionMutation(input NewReceipt) xcredits.ExposureMut
 				operation_id, workspace_id, social_account_id, external_user_id,
 				exposure_id, endpoint, idempotency_key_hash, request_fingerprint,
 				encrypted_request, requested_resources, operation_key, status,
-				next_attempt_at, expires_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::BYTEA, $10, $11, $12, $13, $14)
+				next_attempt_at, expires_at, execution_owner, execution_lease_expires_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::BYTEA, $10, $11, $12, $13, $14, $15, $16)
 		`, receipt.OperationID, receipt.WorkspaceID, receipt.AccountID, receipt.ExternalUserID,
 			receipt.ExposureID, receipt.Endpoint, receipt.IdempotencyKeyHash,
 			receipt.RequestFingerprint, []byte(receipt.EncryptedRequest), receipt.RequestedResources,
 			receipt.OperationKey, receipt.Status, receipt.NextAttemptAt, receipt.ExpiresAt,
+			"request-"+receipt.OperationID, receipt.NextAttemptAt.Add(accountReadExecutionLease),
 		)
 		return err
 	}
@@ -200,7 +203,7 @@ func (s *PostgresStore) ClaimRecoverable(
 		WITH candidates AS (
 			SELECT operation_id
 			FROM x_read_receipts
-			WHERE status IN ('outcome_unknown', 'settlement_pending')
+			WHERE status IN ('executing', 'outcome_unknown', 'settlement_pending')
 			  AND (next_attempt_at <= $3 OR expires_at <= $3)
 			  AND (execution_lease_expires_at IS NULL OR execution_lease_expires_at <= $3)
 			ORDER BY expires_at, next_attempt_at
@@ -256,4 +259,32 @@ func (s *PostgresStore) ClaimRecoverable(
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *PostgresStore) DeleteExpiredReceipts(
+	ctx context.Context,
+	limit int,
+	now time.Time,
+) (int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	tag, err := s.pool.Exec(ctx, `
+		WITH expired AS (
+			SELECT operation_id
+			FROM x_read_receipts
+			WHERE expires_at <= $2
+			  AND status IN ('succeeded', 'failed')
+			ORDER BY expires_at, operation_id
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		)
+		DELETE FROM x_read_receipts r
+		USING expired e
+		WHERE r.operation_id = e.operation_id
+	`, limit, now.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }

@@ -17,6 +17,7 @@ type ReconcileStats struct {
 	Succeeded int
 	Released  int
 	Deferred  int
+	Cleaned   int
 }
 
 func (s *Service) Reconcile(ctx context.Context, limit int, now time.Time) (ReconcileStats, error) {
@@ -33,11 +34,15 @@ func (s *Service) Reconcile(ctx context.Context, limit int, now time.Time) (Reco
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	cleaned, err := store.DeleteExpiredReceipts(ctx, limit, now)
+	if err != nil {
+		return ReconcileStats{}, err
+	}
 	receipts, err := store.ClaimRecoverable(ctx, limit, "x-read-recovery-"+uuid.NewString(), now)
 	if err != nil {
 		return ReconcileStats{}, err
 	}
-	stats := ReconcileStats{Scanned: len(receipts)}
+	stats := ReconcileStats{Scanned: len(receipts), Cleaned: cleaned}
 	for _, receipt := range receipts {
 		if !receipt.ExpiresAt.After(now) {
 			if err := s.credits.ReleaseExposure(ctx, receipt.ExposureID); err != nil {

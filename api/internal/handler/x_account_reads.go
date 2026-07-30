@@ -232,6 +232,12 @@ func (h *XAccountReadsHandler) writeReadError(w http.ResponseWriter, err error) 
 			w.Header().Set("Retry-After", strconv.Itoa(int(operationErr.RetryAfter.Seconds())))
 		}
 		details := ErrorDetails{IsRetriable: &retriable}
+		if operationErr.RetryCursor != "" {
+			details.Details = map[string]any{
+				"retry_cursor":            operationErr.RetryCursor,
+				"retry_cursor_expires_at": operationErr.RetryCursorExpiresAt.UTC().Format(time.RFC3339),
+			}
+		}
 		switch operationErr.Code {
 		case xaccountreads.CodeInsufficientCredits:
 			details.Details = map[string]any{

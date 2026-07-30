@@ -98,8 +98,8 @@ ALTER TABLE x_read_exposures
 ALTER INDEX IF EXISTS x_read_exposures_pending_idx
   RENAME TO x_inbox_backfill_exposure_pending_idx;
 ALTER INDEX IF EXISTS x_read_exposures_status_updated_idx
-  RENAME TO x_inbox_backfill_exposure_status_updated_idx;
+  RENAME TO x_inbox_exposure_reconciliation_current_idx;
 ALTER INDEX IF EXISTS x_read_exposures_deadline_idx
-  RENAME TO x_inbox_backfill_exposure_deadline_idx;
+  RENAME TO x_inbox_exposure_reconciliation_deadline_idx;
 
 ALTER TABLE x_read_exposures RENAME TO x_inbox_backfill_exposure_reservations;

@@ -73,7 +73,7 @@ func TestCapabilitiesJSONShape(t *testing.T) {
 // example response, so a drift would lie to readers.
 func TestCapabilitiesSchemaVersion(t *testing.T) {
 	if CapabilitiesSchemaVersion != "1.8" {
-		t.Errorf("CapabilitiesSchemaVersion must be 1.7, got %s", CapabilitiesSchemaVersion)
+		t.Errorf("CapabilitiesSchemaVersion must be 1.8, got %s", CapabilitiesSchemaVersion)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -50,6 +51,7 @@ type TokenResolver interface {
 
 type RecoveryStore interface {
 	ClaimRecoverable(context.Context, int, string, time.Time) ([]Receipt, error)
+	DeleteExpiredReceipts(context.Context, int, time.Time) (int, error)
 }
 
 type Service struct {
@@ -176,6 +178,12 @@ func (s *Service) begin(ctx context.Context, input admissionInput) (admission, e
 			}
 		}
 		if errors.Is(err, ErrAccountReadRateLimited) {
+			slog.Warn("X account read rate limited",
+				"workspace_id", input.WorkspaceID,
+				"account_id", input.AccountID,
+				"endpoint", input.Endpoint,
+				"source", "unipost_admission",
+			)
 			return admission{}, &OperationError{Code: CodeRateLimited, RetryAfter: time.Minute, Cause: err}
 		}
 		return admission{}, err
@@ -186,6 +194,12 @@ func (s *Service) begin(ctx context.Context, input admissionInput) (admission, e
 
 func existingAdmission(receipt Receipt, fingerprint string) (admission, error) {
 	if receipt.RequestFingerprint != fingerprint {
+		slog.Warn("X account read idempotency conflict",
+			"operation_id", receipt.OperationID,
+			"workspace_id", receipt.WorkspaceID,
+			"account_id", receipt.AccountID,
+			"endpoint", receipt.Endpoint,
+		)
 		return admission{}, &OperationError{Code: CodeIdempotencyConflict}
 	}
 	switch receipt.Status {
@@ -229,6 +243,7 @@ func (s *Service) ReadProfile(ctx context.Context, req ProfileRequest) (ProfileR
 			return ProfileResult{}, err
 		}
 		result.Meta.Replayed = true
+		logReadCompleted(admitted, 1, 1, result.Meta.Credits, true)
 		return result, nil
 	}
 	if err := s.credits.MarkExposureReadStarted(ctx, admitted.reservation.ID); err != nil {
@@ -245,6 +260,7 @@ func (s *Service) ReadProfile(ctx context.Context, req ProfileRequest) (ProfileR
 	if err := s.complete(ctx, admitted, xcredits.OperationWeight("user.read"), &result.Meta.Credits, result, req.Now); err != nil {
 		return ProfileResult{}, err
 	}
+	logReadCompleted(admitted, 1, 1, result.Meta.Credits, false)
 	return result, nil
 }
 
@@ -258,9 +274,10 @@ func (s *Service) ReadPosts(ctx context.Context, req PostsRequest) (PostsResult,
 		ExcludeReposts: req.ExcludeReposts, ExcludeRepliesToOthers: req.ExcludeRepliesToOthers,
 	}
 	upstreamCursor := ""
+	cursorExpiresAt := time.Time{}
 	if req.Cursor != "" {
 		var err error
-		upstreamCursor, _, err = s.cursors.Decode(req.Cursor, scope, req.Now)
+		upstreamCursor, cursorExpiresAt, err = s.cursors.Decode(req.Cursor, scope, req.Now)
 		if err != nil {
 			return PostsResult{}, err
 		}
@@ -295,6 +312,7 @@ func (s *Service) ReadPosts(ctx context.Context, req PostsRequest) (PostsResult,
 			return PostsResult{}, err
 		}
 		result.Meta.Replayed = true
+		logReadCompleted(admitted, result.Meta.ScannedCount, result.Meta.ReturnedCount, result.Meta.Credits, true)
 		return result, nil
 	}
 	if err := s.credits.MarkExposureReadStarted(ctx, admitted.reservation.ID); err != nil {
@@ -305,7 +323,16 @@ func (s *Service) ReadPosts(ctx context.Context, req PostsRequest) (PostsResult,
 		ExcludeReposts: req.ExcludeReposts, ExcludeRepliesToOthers: req.ExcludeRepliesToOthers,
 	})
 	if err != nil {
-		return PostsResult{}, s.failRead(ctx, admitted, err, req.Now)
+		readErr := s.failRead(ctx, admitted, err, req.Now)
+		var operationErr *OperationError
+		if req.Cursor != "" && errors.As(readErr, &operationErr) && operationErr.RetryAfter > 0 &&
+			!cursorExpiresAt.After(req.Now.Add(operationErr.RetryAfter)) {
+			if retryCursor, expiresAt, refreshErr := s.cursors.Refresh(req.Cursor, scope, req.Now); refreshErr == nil {
+				operationErr.RetryCursor = retryCursor
+				operationErr.RetryCursorExpiresAt = expiresAt
+			}
+		}
+		return PostsResult{}, readErr
 	}
 	data := make([]PostData, 0, len(page.Posts))
 	for _, post := range page.Posts {
@@ -327,6 +354,7 @@ func (s *Service) ReadPosts(ctx context.Context, req PostsRequest) (PostsResult,
 	if err := s.complete(ctx, admitted, actualUnits, &result.Meta.Credits, result, req.Now); err != nil {
 		return PostsResult{}, err
 	}
+	logReadCompleted(admitted, result.Meta.ScannedCount, result.Meta.ReturnedCount, result.Meta.Credits, false)
 	return result, nil
 }
 
@@ -375,7 +403,33 @@ func (s *Service) failRead(ctx context.Context, admitted admission, readErr erro
 	if providerErr != nil {
 		retryAfter = providerErr.RetryAfter
 	}
+	if code == CodeRateLimited {
+		slog.Warn("X account read rate limited",
+			"operation_id", admitted.receipt.OperationID,
+			"workspace_id", admitted.receipt.WorkspaceID,
+			"account_id", admitted.receipt.AccountID,
+			"endpoint", admitted.receipt.Endpoint,
+			"source", "x_provider",
+			"retry_after_seconds", int64(retryAfter.Seconds()),
+		)
+	}
 	return &OperationError{Code: code, RetryAfter: retryAfter, Cause: readErr}
+}
+
+func logReadCompleted(admitted admission, scanned, returned int, credits CreditsReceipt, replayed bool) {
+	slog.Info("X account read completed",
+		"operation_id", admitted.receipt.OperationID,
+		"workspace_id", admitted.receipt.WorkspaceID,
+		"account_id", admitted.receipt.AccountID,
+		"endpoint", admitted.receipt.Endpoint,
+		"scanned_count", scanned,
+		"returned_count", returned,
+		"estimated_credits", credits.Estimated,
+		"charged_credits", credits.Charged,
+		"released_credits", credits.Released,
+		"accounting_enabled", credits.AccountingEnabled,
+		"replayed", replayed,
+	)
 }
 
 func creditsReceipt(admitted admission, operation, appMode string, charged int64) CreditsReceipt {

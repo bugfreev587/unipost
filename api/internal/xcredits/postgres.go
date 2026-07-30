@@ -944,7 +944,10 @@ func (s *PostgresStore) ListEvents(ctx context.Context, req ListEventsRequest) (
 			WHERE e.workspace_id = $1
 			UNION ALL
 			SELECT
-				COALESCE(r.operation_id, 'xre_' || x.id),
+				CASE
+					WHEN x.purpose IN ('account_profile', 'account_post_history') THEN x.idempotency_key
+					ELSE 'xre_' || x.id
+				END,
 				x.social_account_id,
 				COALESCE(x.external_user_id, ''),
 				x.operation_key,
