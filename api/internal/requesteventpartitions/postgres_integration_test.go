@@ -289,3 +289,109 @@ func TestPostgresStoreEnsureRollsBackPartialPair(t *testing.T) {
 		t.Fatalf("event child survived rolled-back pair creation: %q", *eventRelation)
 	}
 }
+
+func containsReason(reasons []string, want string) bool {
+	for _, reason := range reasons {
+		if reason == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPostgresStoreInspectReportsReadyCoverageAndSizes(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	store := NewPostgresStore(pool)
+	now := time.Date(2027, 2, 1, 12, 0, 0, 0, time.UTC)
+	weeks, err := PlanWeeks(now, MaintenanceWeeksAhead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ensure(context.Background(), weeks); err != nil {
+		t.Fatal(err)
+	}
+
+	inspection, err := store.Inspect(context.Background(), now, MinimumCoverageDays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspection.Ready || len(inspection.Reasons) != 0 {
+		t.Fatalf("inspection readiness = %v reasons=%v, want ready", inspection.Ready, inspection.Reasons)
+	}
+	if inspection.PartitionPairs != int64(len(weeks)) {
+		t.Fatalf("partition pairs = %d, want %d", inspection.PartitionPairs, len(weeks))
+	}
+	if !inspection.LatestExplicitEnd.Equal(weeks[len(weeks)-1].End) {
+		t.Fatalf("latest explicit end = %v, want %v", inspection.LatestExplicitEnd, weeks[len(weeks)-1].End)
+	}
+	if inspection.CoverageDays < MinimumCoverageDays {
+		t.Fatalf("coverage days = %d, want at least %d", inspection.CoverageDays, MinimumCoverageDays)
+	}
+	if inspection.EventTotalBytes <= 0 || inspection.DetailTotalBytes <= 0 {
+		t.Fatalf("partition bytes = events:%d details:%d, want positive", inspection.EventTotalBytes, inspection.DetailTotalBytes)
+	}
+}
+
+func TestPostgresStoreInspectFailsReadinessForDefaultRows(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	store := NewPostgresStore(pool)
+	week := futureWeek(t, 1)
+	insertDefaultEvent(t, pool, week, true)
+
+	inspection, err := store.Inspect(context.Background(), week.Start, MinimumCoverageDays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Ready {
+		t.Fatal("inspection with default rows must not be ready")
+	}
+	if inspection.EventDefaultRows != 1 || inspection.DetailDefaultRows != 1 {
+		t.Fatalf("default rows = events:%d details:%d, want 1 and 1", inspection.EventDefaultRows, inspection.DetailDefaultRows)
+	}
+	if !containsReason(inspection.Reasons, ReasonEventDefaultRows) ||
+		!containsReason(inspection.Reasons, ReasonDetailDefaultRows) {
+		t.Fatalf("reasons = %v, want both default occupancy reasons", inspection.Reasons)
+	}
+}
+
+func TestPostgresStoreInspectFailsReadinessForLowHorizon(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	store := NewPostgresStore(pool)
+	now := time.Date(2027, 2, 1, 12, 0, 0, 0, time.UTC)
+	weeks, err := PlanWeeks(now, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ensure(context.Background(), weeks); err != nil {
+		t.Fatal(err)
+	}
+
+	inspection, err := store.Inspect(context.Background(), now, MinimumCoverageDays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Ready || !containsReason(inspection.Reasons, ReasonCoverageLow) {
+		t.Fatalf("ready=%v reasons=%v, want low coverage", inspection.Ready, inspection.Reasons)
+	}
+}
+
+func TestPostgresStoreInspectFailsReadinessForMetadataMismatch(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	store := NewPostgresStore(pool)
+	week := futureWeek(t, 1)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO api_request_partition_manifest (
+			week_start, week_end, event_partition, detail_partition
+		) VALUES ($1, $2, $3, $4)
+	`, week.Start, week.End, week.EventTable, week.DetailTable); err != nil {
+		t.Fatal(err)
+	}
+
+	inspection, err := store.Inspect(context.Background(), week.Start, MinimumCoverageDays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Ready || !containsReason(inspection.Reasons, ReasonPartitionMismatch) {
+		t.Fatalf("ready=%v reasons=%v, want metadata mismatch", inspection.Ready, inspection.Reasons)
+	}
+}
