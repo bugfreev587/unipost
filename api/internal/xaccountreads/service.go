@@ -50,7 +50,7 @@ type Cipher interface {
 }
 
 type TokenResolver interface {
-	ResolveAccountReadToken(context.Context, string) (string, error)
+	ResolveAccountReadToken(context.Context, string, string) (string, error)
 }
 
 type RecoveryStore interface {
@@ -68,7 +68,7 @@ type Service struct {
 	tokens   TokenResolver
 }
 
-func NewService(store Store, credits CreditsService, provider Provider, cipher Cipher, secret []byte, previousSecrets ...[]byte) *Service {
+func NewService(store Store, credits CreditsService, provider Provider, cipher Cipher, secret []byte, previousSecrets ...[]byte) (*Service, error) {
 	return NewServiceWithSecrets(store, credits, provider, cipher, secret, secret, previousSecrets...)
 }
 
@@ -80,10 +80,13 @@ func NewServiceWithSecrets(
 	idempotencySecret []byte,
 	cursorSecret []byte,
 	previousCursorSecrets ...[]byte,
-) *Service {
-	cursors, _ := NewCursorCodec(cursorSecret, previousCursorSecrets...)
+) (*Service, error) {
+	cursors, err := NewCursorCodec(cursorSecret, previousCursorSecrets...)
+	if err != nil {
+		return nil, err
+	}
 	key := sha256.Sum256(append([]byte("unipost:x-account-read:idempotency:"), idempotencySecret...))
-	return &Service{store: store, credits: credits, provider: provider, cipher: cipher, hashKey: key[:], cursors: cursors}
+	return &Service{store: store, credits: credits, provider: provider, cipher: cipher, hashKey: key[:], cursors: cursors}, nil
 }
 
 func (s *Service) SetTokenResolver(resolver TokenResolver) *Service {
@@ -404,7 +407,11 @@ func (s *Service) resolveAccessToken(ctx context.Context, admitted admission, pr
 	if s.tokens == nil {
 		return "", s.failBeforeProvider(ctx, admitted, errors.New("X account-read token resolver is not configured"), now)
 	}
-	token, err := s.tokens.ResolveAccountReadToken(ctx, admitted.receipt.AccountID)
+	token, err := s.tokens.ResolveAccountReadToken(
+		ctx,
+		admitted.receipt.WorkspaceID,
+		admitted.receipt.AccountID,
+	)
 	if err != nil || token == "" {
 		if err == nil {
 			err = errors.New("X account-read token resolver returned an empty token")

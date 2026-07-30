@@ -445,6 +445,7 @@ func (s *PostgresStore) ReconcilePendingExposures(
 		SELECT id, status, COALESCE(actual_units, reserved_units)
 		FROM x_read_exposures
 		WHERE status IN ('reserved', 'read_started', 'finalize_pending', 'release_pending')
+		  AND purpose = 'inbox_backfill'
 		  AND next_attempt_at <= $1
 		ORDER BY created_at
 		LIMIT $2

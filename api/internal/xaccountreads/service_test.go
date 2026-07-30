@@ -180,18 +180,40 @@ func (passthroughCipher) Decrypt(value string) (string, error) {
 }
 
 type fakeTokenResolver struct {
-	token string
-	err   error
-	calls int
+	token       string
+	err         error
+	calls       int
+	workspaceID string
+	accountID   string
 }
 
-func (f *fakeTokenResolver) ResolveAccountReadToken(context.Context, string) (string, error) {
+func (f *fakeTokenResolver) ResolveAccountReadToken(_ context.Context, workspaceID, accountID string) (string, error) {
 	f.calls++
+	f.workspaceID = workspaceID
+	f.accountID = accountID
 	return f.token, f.err
 }
 
 func newTestService(store *fakeReceiptStore, credits *fakeCredits, provider *fakeProvider) *Service {
-	return NewService(store, credits, provider, passthroughCipher{}, []byte("0123456789abcdef0123456789abcdef"))
+	service, err := NewService(store, credits, provider, passthroughCipher{}, []byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		panic(err)
+	}
+	return service
+}
+
+func TestServiceConstructionRejectsInvalidCursorSecret(t *testing.T) {
+	service, err := NewServiceWithSecrets(
+		&fakeReceiptStore{},
+		&fakeCredits{},
+		&fakeProvider{},
+		passthroughCipher{},
+		[]byte("stable-idempotency-0123456789abcdef"),
+		[]byte("short"),
+	)
+	if err == nil || service != nil {
+		t.Fatalf("service = %#v, error = %v; want cursor configuration failure", service, err)
+	}
 }
 
 func TestCursorKeyRotationDoesNotChangeIdempotencyHash(t *testing.T) {
@@ -199,15 +221,21 @@ func TestCursorKeyRotationDoesNotChangeIdempotencyHash(t *testing.T) {
 	credits := &fakeCredits{}
 	provider := &fakeProvider{}
 	stableIdempotencySecret := []byte("stable-idempotency-0123456789abcdef")
-	oldService := NewServiceWithSecrets(
+	oldService, err := NewServiceWithSecrets(
 		store, credits, provider, passthroughCipher{}, stableIdempotencySecret,
 		[]byte("old-cursor-key-0123456789abcdef"),
 	)
-	rotatedService := NewServiceWithSecrets(
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotatedService, err := NewServiceWithSecrets(
 		store, credits, provider, passthroughCipher{}, stableIdempotencySecret,
 		[]byte("new-cursor-key-0123456789abcdef"),
 		[]byte("old-cursor-key-0123456789abcdef"),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if oldService.keyHash("customer-key") != rotatedService.keyHash("customer-key") {
 		t.Fatal("cursor rotation changed the idempotency receipt lookup hash")
 	}
@@ -302,6 +330,26 @@ func TestAmbiguousReadRemainsReservedAndReturnsSettlementPending(t *testing.T) {
 	}
 }
 
+func TestInvalidPostPageReleasesReservationWithoutSettlement(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{}
+	credits := &fakeCredits{}
+	provider := &fakeProvider{err: &platform.TwitterAccountReadError{Class: "invalid_response"}}
+	service := newTestService(store, credits, provider)
+
+	_, err := service.ReadPosts(context.Background(), PostsRequest{
+		WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1", ExternalAccountID: "x-user",
+		AppMode: "unipost_managed_app", AccessToken: "token", IdempotencyKey: "page", Limit: 5, Now: now,
+	})
+	var operationErr *OperationError
+	if !errors.As(err, &operationErr) || operationErr.Code != CodeXUpstream {
+		t.Fatalf("error = %#v, want X_UPSTREAM_ERROR", err)
+	}
+	if credits.released != 1 || credits.finalized != 0 || store.receipt.Status != ReceiptFailed {
+		t.Fatalf("credits=%+v receipt=%+v", credits, store.receipt)
+	}
+}
+
 func TestInsufficientCreditsStopsBeforeXCall(t *testing.T) {
 	store := &fakeReceiptStore{}
 	credits := &fakeCredits{reserveErr: xcredits.ErrMonthlyLimitExceeded}
@@ -315,6 +363,27 @@ func TestInsufficientCreditsStopsBeforeXCall(t *testing.T) {
 	var operationErr *OperationError
 	if !errors.As(err, &operationErr) || operationErr.Code != CodeInsufficientCredits || provider.calls != 0 || resolver.calls != 0 {
 		t.Fatalf("err=%v provider_calls=%d token_calls=%d", err, provider.calls, resolver.calls)
+	}
+}
+
+func TestLiveReadScopesTokenResolutionToReceiptWorkspace(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{}
+	provider := &fakeProvider{profile: platform.TwitterAccountProfile{
+		ExternalAccountID: "x-user", Username: "v", DisplayName: "V", AccountCreatedAt: now,
+	}}
+	resolver := &fakeTokenResolver{token: "fresh-token"}
+	service := newTestService(store, &fakeCredits{}, provider).SetTokenResolver(resolver)
+
+	_, err := service.ReadProfile(context.Background(), ProfileRequest{
+		WorkspaceID: "ws_owner", AccountID: "sa_1", ExternalUserID: "managed_1", ExternalAccountID: "x-user",
+		AppMode: "unipost_managed_app", IdempotencyKey: "profile", Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolver.workspaceID != "ws_owner" || resolver.accountID != "sa_1" {
+		t.Fatalf("token scope = (%q, %q)", resolver.workspaceID, resolver.accountID)
 	}
 }
 
@@ -484,7 +553,8 @@ func TestRecoveryRetriesAmbiguousReadAndMakesResponseReplayable(t *testing.T) {
 	store := &fakeReceiptStore{}
 	credits := &fakeCredits{}
 	provider := &fakeProvider{err: &platform.TwitterAccountReadError{Retryable: true, OutcomeUnknown: true}}
-	service := newTestService(store, credits, provider).SetTokenResolver(&fakeTokenResolver{token: "fresh-token"})
+	resolver := &fakeTokenResolver{token: "fresh-token"}
+	service := newTestService(store, credits, provider).SetTokenResolver(resolver)
 	req := ProfileRequest{WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1", ExternalAccountID: "x-user", AppMode: "unipost_managed_app", AccessToken: "token", IdempotencyKey: "profile", Now: now}
 	if _, err := service.ReadProfile(context.Background(), req); err == nil {
 		t.Fatal("expected pending read")
@@ -498,6 +568,9 @@ func TestRecoveryRetriesAmbiguousReadAndMakesResponseReplayable(t *testing.T) {
 	}
 	if stats.Succeeded != 1 || store.receipt.Status != ReceiptSucceeded || provider.calls != 2 {
 		t.Fatalf("stats=%+v receipt=%+v calls=%d", stats, store.receipt, provider.calls)
+	}
+	if resolver.workspaceID != "ws_1" || resolver.accountID != "sa_1" {
+		t.Fatalf("recovery token scope = (%q, %q)", resolver.workspaceID, resolver.accountID)
 	}
 }
 

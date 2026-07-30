@@ -294,6 +294,74 @@ func TestTwitterAuthoredPostsUsesDeterministicRelationshipPrecedence(t *testing.
 	}
 }
 
+func TestTwitterAuthoredPostsRejectsMalformedRequiredFields(t *testing.T) {
+	tests := []struct {
+		name string
+		post string
+	}{
+		{
+			name: "invalid created_at",
+			post: `{"id":"post-1","created_at":"not-a-time","conversation_id":"thread-1"}`,
+		},
+		{
+			name: "missing id",
+			post: `{"created_at":"2026-07-20T10:00:00Z","conversation_id":"thread-1"}`,
+		},
+		{
+			name: "missing conversation_id",
+			post: `{"id":"post-1","created_at":"2026-07-20T10:00:00Z"}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"data":[`+test.post+`],"meta":{"next_token":"must-not-advance"}}`)
+			}))
+			defer server.Close()
+			adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+
+			page, err := adapter.ReadAuthoredPosts(
+				context.Background(), "user-token", "user-1", TwitterAuthoredPostsRequest{Limit: 5},
+			)
+			var readErr *TwitterAccountReadError
+			if !errors.As(err, &readErr) || readErr.Class != "invalid_response" {
+				t.Fatalf("error = %#v, want sanitized invalid_response", err)
+			}
+			if page.NextToken != "" || page.ScannedCount != 0 || len(page.Posts) != 0 {
+				t.Fatalf("malformed page must not advance or return data: %+v", page)
+			}
+			if strings.Contains(err.Error(), test.post) {
+				t.Fatalf("provider payload leaked in error: %v", err)
+			}
+		})
+	}
+}
+
+func TestTwitterAuthoredPostsRejectsDuplicateIDs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"data":[
+				{"id":"duplicate","created_at":"2026-07-20T10:00:00Z","conversation_id":"thread-1"},
+				{"id":"duplicate","created_at":"2026-07-20T10:01:00Z","conversation_id":"thread-1"}
+			],
+			"meta":{"next_token":"must-not-advance"}
+		}`)
+	}))
+	defer server.Close()
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+
+	page, err := adapter.ReadAuthoredPosts(
+		context.Background(), "user-token", "user-1", TwitterAuthoredPostsRequest{Limit: 5},
+	)
+	var readErr *TwitterAccountReadError
+	if !errors.As(err, &readErr) || readErr.Class != "invalid_response" {
+		t.Fatalf("error = %#v, want sanitized invalid_response", err)
+	}
+	if page.NextToken != "" || page.ScannedCount != 0 || len(page.Posts) != 0 {
+		t.Fatalf("duplicate page must not advance or return data: %+v", page)
+	}
+}
+
 func TestTwitterAccountReadErrorsAreTypedAndSanitized(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "90")

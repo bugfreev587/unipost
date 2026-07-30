@@ -88,7 +88,7 @@ func (s *Service) retryUnknown(ctx context.Context, receipt Receipt, now time.Ti
 		_ = s.store.MarkOutcomeUnknown(ctx, receipt.OperationID, nextRecoveryAttempt(receipt.AttemptCount, now))
 		return &OperationError{Code: CodeReadSettlementPending, Cause: err}
 	}
-	accessToken, err := s.tokens.ResolveAccountReadToken(ctx, receipt.AccountID)
+	accessToken, err := s.tokens.ResolveAccountReadToken(ctx, receipt.WorkspaceID, receipt.AccountID)
 	if err != nil {
 		_ = s.store.MarkOutcomeUnknown(ctx, receipt.OperationID, nextRecoveryAttempt(receipt.AttemptCount, now))
 		return &OperationError{Code: CodeReadSettlementPending, Cause: err}
