@@ -63,6 +63,7 @@ const postgresTestsByPackage = {
     "TestCancelDeliveryJobTerminalResultAndPostCommitRetention",
     "TestRestrictedFinalizationPublishesParentTerminalEventExactlyOnce",
     "TestScheduledQuotaSnapshotPostgresCountsOnlyAdmissionAllowedTargets",
+    "TestXReadExposureRecoveryPurposeAndConcurrentSettlementPostgres",
     "TestClaimScheduledPostDoesNotDoubleCountOwnQuotaReservation",
     "TestUpdateScheduledPostEnforcesFreeQuotaDeltaAtomically",
     "TestConcurrentFreeScheduledCreatesSerializeQuotaAdmission",
