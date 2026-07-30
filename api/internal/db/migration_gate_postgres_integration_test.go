@@ -305,8 +305,8 @@ func TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup(t *testing.T)
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 132 {
-		t.Fatalf("fresh disposable Preview final version = %d, want 132", version)
+	if version != 133 {
+		t.Fatalf("fresh disposable Preview final version = %d, want 133", version)
 	}
 }
 
@@ -377,9 +377,9 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&retryable, &ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 132 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 133 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"version=%d retryable=%v owner_user_ids=%v, want version=132 retryable=false canonical owner backfill",
+			"version=%d retryable=%v owner_user_ids=%v, want version=133 retryable=false canonical owner backfill",
 			version, retryable, ownerUserIDs,
 		)
 	}
@@ -408,8 +408,8 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 132 {
-		t.Fatalf("zero-row pending irreversible migration final version = %d, want 132", version)
+	if version != 133 {
+		t.Fatalf("zero-row pending irreversible migration final version = %d, want 133", version)
 	}
 }
 
@@ -747,9 +747,9 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 132 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 133 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=132 retention_reason=active_post retryable=false canonical owner backfill",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=133 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
 			retentionReason,
 			retryable,
@@ -852,8 +852,8 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 132 {
-		t.Fatalf("final migration version = %d, want 132", version)
+	if version != 133 {
+		t.Fatalf("final migration version = %d, want 133", version)
 	}
 }
 
@@ -911,17 +911,17 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 132 {
-		t.Fatalf("replacement runner final migration version = %d, want 132", version)
+	if version != 133 {
+		t.Fatalf("replacement runner final migration version = %d, want 133", version)
 	}
 }
 
-func TestRequireCurrentSchemaRejects124AndAccepts132(t *testing.T) {
+func TestRequireCurrentSchemaRejects124AndAccepts133(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 
 	err := RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 132") {
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 133") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 
@@ -944,14 +944,128 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO goose_db_version (version_id, is_applied) VALUES (133, TRUE);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (134, TRUE);
 	`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	err = RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 132") || !strings.Contains(err.Error(), "rollback is unsafe") {
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 133") || !strings.Contains(err.Error(), "rollback is unsafe") {
 		t.Fatalf("schema-ahead guard error = %v", err)
+	}
+}
+
+func TestMigration133UpgradeAndGuardedDown(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	if err := RunMigrations(databaseURL); err != nil {
+		t.Fatalf("apply migrations through 133: %v", err)
+	}
+
+	ctx := context.Background()
+	for week := 33; week <= 40; week++ {
+		eventPartition := fmt.Sprintf("api_request_events_2026w%d", week)
+		detailPartition := fmt.Sprintf("api_request_error_details_2026w%d", week)
+		for _, relation := range []struct {
+			child  string
+			parent string
+		}{
+			{child: eventPartition, parent: "api_request_events"},
+			{child: detailPartition, parent: "api_request_error_details"},
+		} {
+			var attached bool
+			if err := database.QueryRowContext(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM pg_inherits AS inheritance
+					JOIN pg_class AS child ON child.oid = inheritance.inhrelid
+					JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
+					JOIN pg_namespace AS namespace ON namespace.oid = child.relnamespace
+					WHERE namespace.nspname = current_schema()
+					  AND child.relname = $1
+					  AND parent.relname = $2
+				)
+			`, relation.child, relation.parent).Scan(&attached); err != nil {
+				t.Fatalf("inspect attachment for %s: %v", relation.child, err)
+			}
+			if !attached {
+				t.Fatalf("partition %s is not attached to %s", relation.child, relation.parent)
+			}
+		}
+
+		var manifestAligned bool
+		if err := database.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM api_request_partition_manifest
+				WHERE event_partition = $1
+				  AND detail_partition = $2
+				  AND week_end = week_start + INTERVAL '7 days'
+			)
+		`, eventPartition, detailPartition).Scan(&manifestAligned); err != nil {
+			t.Fatalf("inspect manifest for week %d: %v", week, err)
+		}
+		if !manifestAligned {
+			t.Fatalf("manifest is not aligned for week %d", week)
+		}
+	}
+
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO api_request_events (
+			occurred_at, id, workspace_id, api_key_id, method, route_pattern,
+			status_code, duration_ms, outcome
+		) VALUES (
+			'2026-08-10 01:00:00+00', 'bridge-event', 'bridge-workspace',
+			'bridge-api-key', 'GET', '/v1/bridge', 200, 0, 'success'
+		)
+	`); err != nil {
+		t.Fatalf("insert W33 fixture: %v", err)
+	}
+
+	body, err := fs.ReadFile(migrations, "migrations/133_api_request_event_partition_bridge.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(body), "-- +goose Down")
+	if len(parts) != 2 {
+		t.Fatal("migration 133 must have exactly one Down section")
+	}
+	down := parts[1]
+	if _, err := database.ExecContext(ctx, down); err == nil || !strings.Contains(err.Error(), "bridge partition contains data") {
+		t.Fatalf("guarded Down error = %v, want bridge partition contains data", err)
+	}
+
+	if _, err := database.ExecContext(ctx, `DELETE FROM api_request_events WHERE id = 'bridge-event'`); err != nil {
+		t.Fatalf("delete W33 fixture: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, down); err != nil {
+		t.Fatalf("run guarded Down after emptying bridge: %v", err)
+	}
+
+	for week := 33; week <= 40; week++ {
+		for _, partition := range []string{
+			fmt.Sprintf("api_request_events_2026w%d", week),
+			fmt.Sprintf("api_request_error_details_2026w%d", week),
+		} {
+			var relation sql.NullString
+			if err := database.QueryRowContext(ctx, `SELECT to_regclass(current_schema() || '.' || $1)::TEXT`, partition).Scan(&relation); err != nil {
+				t.Fatalf("inspect dropped partition %s: %v", partition, err)
+			}
+			if relation.Valid {
+				t.Fatalf("partition %s still exists after guarded Down", partition)
+			}
+		}
+	}
+	var bridgeManifestRows int
+	if err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM api_request_partition_manifest
+		WHERE week_start >= '2026-08-10 00:00:00+00'
+		  AND week_start < '2026-10-05 00:00:00+00'
+	`).Scan(&bridgeManifestRows); err != nil {
+		t.Fatalf("count bridge manifest rows after Down: %v", err)
+	}
+	if bridgeManifestRows != 0 {
+		t.Fatalf("bridge manifest rows after Down = %d, want 0", bridgeManifestRows)
 	}
 }
