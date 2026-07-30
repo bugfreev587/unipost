@@ -65,7 +65,7 @@ export type GroundedDocsAnswer = {
   coverage_reason?: string;
 };
 
-const LAST_INDEXED_AT = "2026-07-04T00:00:00.000Z";
+const LAST_INDEXED_AT = "2026-07-29T00:00:00.000Z";
 
 function chunk(input: Omit<DocsAiChunk, "last_indexed_at">): DocsAiChunk {
   return { ...input, last_indexed_at: LAST_INDEXED_AT };
@@ -101,6 +101,34 @@ const platformCapabilitySummary = Object.entries(PLATFORM_METRICS)
   .join("\n");
 
 export const DOCS_AI_INDEX: DocsAiChunk[] = [
+  chunk({
+    id: "api-x-account-profile",
+    title: "Get a connected X account profile",
+    path: "/docs/api/accounts/profile",
+    section_id: "response",
+    primary_nav: "API Reference",
+    section_title: "GET X account profile",
+    product_area: "accounts",
+    tags: ["x profile", "twitter profile", "managed user", "idempotency", "x credits"],
+    intent_tags: ["reference"],
+    endpoint_aliases: ["GET /v1/accounts/{id}/profile", "GET /v1/accounts/:id/profile"],
+    platforms: ["twitter"],
+    content: "GET /v1/accounts/:id/profile reads the live profile for the connected X account owned by the exact external_user_id. Idempotency-Key is required. x_credits_billing_v1 controls customer accounting only; the endpoint remains available when accounting is disabled.",
+  }),
+  chunk({
+    id: "api-x-account-posts",
+    title: "List posts authored by a connected X account",
+    path: "/docs/api/accounts/posts",
+    section_id: "response",
+    primary_nav: "API Reference",
+    section_title: "GET X authored posts",
+    product_area: "accounts",
+    tags: ["x posts", "twitter timeline", "authored history", "cursor", "scanned count", "x credits"],
+    intent_tags: ["reference"],
+    endpoint_aliases: ["GET /v1/accounts/{id}/posts", "GET /v1/accounts/:id/posts"],
+    platforms: ["twitter"],
+    content: "GET /v1/accounts/:id/posts reads 5 to 100 upstream resources synchronously and returns an opaque scoped cursor. Credits are estimated from limit and finalized from scanned_count; filters can make returned_count smaller. Idempotency-Key and the owning external_user_id are required.",
+  }),
   chunk({
     id: "guide-inbox-managed-user-integration",
     title: "Isolate each managed user's Inbox in your app",
