@@ -137,7 +137,26 @@ func (s *RolloutService) ReserveExposure(
 	if err != nil {
 		return ExposureReservation{}, err
 	}
-	return s.base.reserveExposure(ctx, req, enabled)
+	return s.base.reserveExposure(ctx, req, enabled, nil)
+}
+
+func (s *RolloutService) ReserveExposureWithMutation(
+	ctx context.Context,
+	req ExposureReservationRequest,
+	mutation ExposureMutation,
+) (ExposureReservation, error) {
+	mode, err := xinbox.NormalizePersistedAppMode(req.AppMode)
+	if err != nil {
+		return ExposureReservation{}, err
+	}
+	if mode != xinbox.AppModeUniPostManaged {
+		return s.base.reserveExposure(ctx, req, false, mutation)
+	}
+	enabled, err := s.EnabledForWorkspace(ctx, req.WorkspaceID)
+	if err != nil {
+		return ExposureReservation{}, err
+	}
+	return s.base.reserveExposure(ctx, req, enabled, mutation)
 }
 
 func (s *RolloutService) MarkExposureReadStarted(ctx context.Context, id string) error {

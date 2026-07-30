@@ -314,6 +314,12 @@ type ExposureStore interface {
 	ReconcilePendingExposures(context.Context, int, time.Time) (ExposureReleaseReconcileStats, error)
 }
 
+type ExposureMutation func(context.Context, pgx.Tx, ExposureReservation) error
+
+type AtomicExposureStore interface {
+	ReserveExposureWithMutation(context.Context, StoreExposureReservationRequest, ExposureMutation) (ExposureReservation, error)
+}
+
 type Service struct {
 	store      Store
 	inbound    InboundStore
@@ -444,13 +450,22 @@ func (s *Service) ReserveExposure(
 	ctx context.Context,
 	req ExposureReservationRequest,
 ) (ExposureReservation, error) {
-	return s.reserveExposure(ctx, req, true)
+	return s.reserveExposure(ctx, req, true, nil)
+}
+
+func (s *Service) ReserveExposureWithMutation(
+	ctx context.Context,
+	req ExposureReservationRequest,
+	mutation ExposureMutation,
+) (ExposureReservation, error) {
+	return s.reserveExposure(ctx, req, true, mutation)
 }
 
 func (s *Service) reserveExposure(
 	ctx context.Context,
 	req ExposureReservationRequest,
 	accountingEnabled bool,
+	mutation ExposureMutation,
 ) (ExposureReservation, error) {
 	if req.Now.IsZero() {
 		req.Now = time.Now().UTC()
@@ -520,7 +535,7 @@ func (s *Service) reserveExposure(
 			bypassReason = ExposureBypassCustomerXApp
 		}
 	}
-	reservation, err := store.ReserveExposure(ctx, StoreExposureReservationRequest{
+	storeRequest := StoreExposureReservationRequest{
 		ExposureReservationRequest: req,
 		MonthlyAllowance:           allowance,
 		InboundDailyLimit:          dailyLimit,
@@ -532,7 +547,17 @@ func (s *Service) reserveExposure(
 		ReconciliationDeadline:     deadline,
 		CatalogVersion:             CatalogVersion,
 		BypassReason:               bypassReason,
-	})
+	}
+	var reservation ExposureReservation
+	if mutation != nil {
+		atomicStore, ok := s.store.(AtomicExposureStore)
+		if !ok {
+			return ExposureReservation{}, errors.New("X exposure atomic store is not configured")
+		}
+		reservation, err = atomicStore.ReserveExposureWithMutation(ctx, storeRequest, mutation)
+	} else {
+		reservation, err = store.ReserveExposure(ctx, storeRequest)
+	}
 	if err != nil {
 		return ExposureReservation{}, err
 	}

@@ -13,6 +13,22 @@ func (s *PostgresStore) ReserveExposure(
 	ctx context.Context,
 	req StoreExposureReservationRequest,
 ) (ExposureReservation, error) {
+	return s.reserveExposure(ctx, req, nil)
+}
+
+func (s *PostgresStore) ReserveExposureWithMutation(
+	ctx context.Context,
+	req StoreExposureReservationRequest,
+	mutation ExposureMutation,
+) (ExposureReservation, error) {
+	return s.reserveExposure(ctx, req, mutation)
+}
+
+func (s *PostgresStore) reserveExposure(
+	ctx context.Context,
+	req StoreExposureReservationRequest,
+	mutation ExposureMutation,
+) (ExposureReservation, error) {
 	if req.RequestedResources <= 0 || req.MinimumResources <= 0 ||
 		req.UnitsPerResource <= 0 || req.MinimumResources > req.RequestedResources {
 		return ExposureReservation{}, errors.New("invalid X read exposure reservation")
@@ -157,16 +173,21 @@ func (s *PostgresStore) ReserveExposure(
 			requested_resources, reserved_units, period_start, period_end, utc_date,
 			reconciliation_deadline, next_attempt_at, accounting_enabled,
 			purpose, external_user_id, safety_policy, units_per_resource,
-			catalog_version, bypass_reason
+			catalog_version, app_mode, bypass_reason
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11,
-			$12, NULLIF($13, ''), $14, $15, $16, NULLIF($17, ''))
+			$12, NULLIF($13, ''), $14, $15, $16, $17, NULLIF($18, ''))
 		RETURNING id
 	`, req.WorkspaceID, req.SocialAccountID, req.OperationKey, req.IdempotencyKey,
 		req.RequestedResources, units, req.PeriodStart, req.PeriodEnd, req.UTCDate,
 		req.ReconciliationDeadline, req.AccountingEnabled, req.Purpose, req.ExternalUserID,
-		req.SafetyPolicy, req.UnitsPerResource, req.CatalogVersion, req.BypassReason).Scan(&reservation.ID)
+		req.SafetyPolicy, req.UnitsPerResource, req.CatalogVersion, req.AppMode, req.BypassReason).Scan(&reservation.ID)
 	if err != nil {
 		return ExposureReservation{}, err
+	}
+	if mutation != nil {
+		if err := mutation(ctx, tx, reservation); err != nil {
+			return ExposureReservation{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ExposureReservation{}, err

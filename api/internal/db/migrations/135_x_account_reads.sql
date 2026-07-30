@@ -16,6 +16,7 @@ ALTER TABLE x_read_exposures
     CHECK (safety_policy IN ('inbound_daily_cap', 'request_limits')),
   ADD COLUMN units_per_resource BIGINT NOT NULL DEFAULT 1 CHECK (units_per_resource > 0),
   ADD COLUMN catalog_version TEXT NOT NULL DEFAULT 'x-credits-2026-07-16-v1',
+  ADD COLUMN app_mode TEXT NOT NULL DEFAULT 'unipost_managed_app',
   ADD COLUMN bypass_reason TEXT,
   ADD COLUMN finalized_at TIMESTAMPTZ;
 
@@ -47,7 +48,7 @@ CREATE TABLE x_read_receipts (
   requested_resources        INTEGER NOT NULL CHECK (requested_resources > 0),
   operation_key              TEXT NOT NULL,
   status                     TEXT NOT NULL DEFAULT 'executing'
-    CHECK (status IN ('executing', 'outcome_unknown', 'succeeded', 'failed')),
+    CHECK (status IN ('executing', 'outcome_unknown', 'settlement_pending', 'succeeded', 'failed')),
   response_json              JSONB,
   failure_class              TEXT,
   execution_owner            TEXT,
@@ -82,6 +83,7 @@ ALTER TABLE x_read_exposures
   DROP COLUMN IF EXISTS finalized_at,
   DROP COLUMN IF EXISTS bypass_reason,
   DROP COLUMN IF EXISTS catalog_version,
+  DROP COLUMN IF EXISTS app_mode,
   DROP COLUMN IF EXISTS safety_policy,
   DROP COLUMN IF EXISTS units_per_resource,
   DROP COLUMN IF EXISTS external_user_id,
