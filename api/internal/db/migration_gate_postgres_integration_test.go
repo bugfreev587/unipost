@@ -1068,4 +1068,18 @@ func TestMigration133UpgradeAndGuardedDown(t *testing.T) {
 	if bridgeManifestRows != 0 {
 		t.Fatalf("bridge manifest rows after Down = %d, want 0", bridgeManifestRows)
 	}
+	var foreignKeyCount int
+	if err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM pg_constraint
+		WHERE conrelid = 'api_request_error_details'::REGCLASS
+		  AND confrelid = 'api_request_events'::REGCLASS
+		  AND contype = 'f'
+		  AND confdeltype = 'c'
+	`).Scan(&foreignKeyCount); err != nil {
+		t.Fatalf("inspect request-detail foreign key after Down: %v", err)
+	}
+	if foreignKeyCount != 1 {
+		t.Fatalf("request-detail cascading foreign keys after Down = %d, want 1", foreignKeyCount)
+	}
 }

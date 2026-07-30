@@ -4,6 +4,7 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';
 
+-- +goose StatementBegin
 DO $bridge$
 DECLARE
   item RECORD;
@@ -50,16 +51,20 @@ BEGIN
   END LOOP;
 END
 $bridge$;
+-- +goose StatementEnd
 
 -- +goose Down
 
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';
 
+-- +goose StatementBegin
 DO $bridge$
 DECLARE
   item RECORD;
   contains_data BOOLEAN;
+  foreign_key_name TEXT;
+  foreign_key_count INTEGER;
 BEGIN
   FOR item IN
     SELECT *
@@ -107,6 +112,25 @@ BEGIN
     EXECUTE format('DROP TABLE %I', item.detail_partition);
   END LOOP;
 
+  SELECT MIN(conname), COUNT(*)
+  INTO foreign_key_name, foreign_key_count
+  FROM pg_constraint
+  WHERE conrelid = 'api_request_error_details'::REGCLASS
+    AND confrelid = 'api_request_events'::REGCLASS
+    AND contype = 'f';
+
+  IF foreign_key_count <> 1 THEN
+    RAISE EXCEPTION 'expected one request detail foreign key, found %', foreign_key_count;
+  END IF;
+
+  -- PostgreSQL materializes dependencies from the partitioned foreign key onto
+  -- each event child. Remove and restore that parent constraint transactionally
+  -- so empty bridge children can be dropped without DROP TABLE CASCADE.
+  EXECUTE format(
+    'ALTER TABLE api_request_error_details DROP CONSTRAINT %I',
+    foreign_key_name
+  );
+
   FOR item IN
     SELECT event_partition
     FROM (VALUES
@@ -122,5 +146,13 @@ BEGIN
   LOOP
     EXECUTE format('DROP TABLE %I', item.event_partition);
   END LOOP;
+
+  EXECUTE format(
+    'ALTER TABLE api_request_error_details ADD CONSTRAINT %I '
+    || 'FOREIGN KEY (occurred_at, event_id, workspace_id) '
+    || 'REFERENCES api_request_events (occurred_at, id, workspace_id) ON DELETE CASCADE',
+    foreign_key_name
+  );
 END
 $bridge$;
+-- +goose StatementEnd
