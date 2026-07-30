@@ -2,11 +2,14 @@
 
 ## Authorization boundary
 
-Use this procedure only when the Super Admin `request-event-partitions` status
-reports default occupancy and automatic `Ensure` has failed closed. Do not use
-it for retention, routine partition creation, or speculative cleanup. A database
-operator and the release owner must approve the exact environment, UTC week,
-backup, and maintenance window before any write statement runs.
+Use the row-movement transaction in this procedure only when the Super Admin
+`request-event-partitions` status reports default occupancy and automatic
+`Ensure` has failed closed. For a `partition_manifest_mismatch`, perform the
+catalog triage below and stop; do not use the row-movement transaction to repair
+catalog drift. Do not use this procedure for retention, routine partition
+creation, or speculative cleanup. A database operator and the release owner
+must approve the exact environment, UTC week, backup, and maintenance window
+before any write statement runs.
 
 Never use `CASCADE` in this procedure. Automation must not copy, delete, detach,
 or drop default-partition rows.
@@ -26,6 +29,63 @@ or drop default-partition rows.
 Stop if the backup cannot be proven to belong to the target database and locked
 for this attempt.
 
+## Manifest/catalog triage
+
+`Ensure` and the release-readiness inspection both validate manifest metadata,
+physical attachment, and exact UTC range bounds from PostgreSQL's catalog. Their
+reconciliation policy is intentionally narrow:
+
+| Manifest row | Physical event/detail pair | Automatic result |
+| --- | --- | --- |
+| present and canonical | both attached with exact bounds | no-op |
+| absent | both absent | create both, then insert manifest, only when defaults are empty |
+| absent | both attached with exact bounds | insert the missing manifest row |
+| present | either child missing, detached, or wrong-bound | fail closed |
+| absent | partial, detached, name-occupied, or wrong-bound pair | fail closed |
+
+The readiness inspection also fails closed when it finds an attached non-default
+child that no manifest row references. It never drops, detaches, renames, or
+recreates an existing relation.
+
+For `partition_manifest_mismatch`, record the following read-only evidence for
+the affected child names. Run it once for the event child/parent and once for the
+detail child/parent. Set the expected UTC boundaries from the approved ISO week.
+
+```psql
+\set child_partition 'api_request_events_2026w33'
+\set parent_partition 'api_request_events'
+\set week_start '2026-08-10 00:00:00+00'
+\set week_end '2026-08-17 00:00:00+00'
+
+BEGIN READ ONLY;
+SET LOCAL TIME ZONE 'UTC';
+
+SELECT
+  child.oid IS NOT NULL AS relation_exists,
+  COALESCE(child.relispartition, false) AS is_partition,
+  COALESCE(parent.relname = :'parent_partition', false) AS attached_to_expected_parent,
+  pg_get_expr(child.relpartbound, child.oid, true) AS actual_bound,
+  format(
+    'FOR VALUES FROM (%L) TO (%L)',
+    :'week_start'::timestamptz,
+    :'week_end'::timestamptz
+  ) AS expected_bound
+FROM (SELECT 1) AS singleton
+LEFT JOIN pg_class AS child
+  JOIN pg_namespace AS child_namespace
+    ON child_namespace.oid = child.relnamespace
+   AND child_namespace.nspname = current_schema()
+  ON child.relname = :'child_partition'
+LEFT JOIN pg_inherits AS inheritance ON inheritance.inhrelid = child.oid
+LEFT JOIN pg_class AS parent ON parent.oid = inheritance.inhparent;
+
+ROLLBACK;
+```
+
+If the automatic result in the table is `fail closed`, preserve the output,
+locked backup, health response, and application SHA, then request a separately
+reviewed database remediation. Re-running deployment cannot repair that state.
+
 ## Dry run
 
 Set the four psql variables, then run the count-only checks. The names below are
@@ -41,7 +101,9 @@ examples; replace them with the approved week.
 SELECT
   (:'week_start'::timestamptz AT TIME ZONE 'UTC') =
     date_trunc('week', :'week_start'::timestamptz AT TIME ZONE 'UTC')
-  AND :'week_end'::timestamptz = :'week_start'::timestamptz + interval '7 days'
+  AND extract(epoch FROM (
+    :'week_end'::timestamptz - :'week_start'::timestamptz
+  )) = 604800
     AS boundaries_valid,
   starts_with(:'event_partition', 'api_request_events_')
   AND regexp_replace(:'event_partition', '^api_request_events_', '')
