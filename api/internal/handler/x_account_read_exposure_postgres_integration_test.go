@@ -115,6 +115,14 @@ func TestXReadExposureRecoveryPurposeAndConcurrentSettlementPostgres(t *testing.
 
 	start := make(chan struct{})
 	errors := make(chan error, 2)
+	settlementMutation := func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO x_read_settlement_audit (exposure_id, settled)
+			VALUES ('account_exposure', TRUE)
+			ON CONFLICT (exposure_id) DO UPDATE SET settled = EXCLUDED.settled
+		`)
+		return err
+	}
 	go func() {
 		<-start
 		errors <- store.FinalizeExposure(ctx, "account_exposure", 7)
@@ -125,14 +133,7 @@ func TestXReadExposureRecoveryPurposeAndConcurrentSettlementPostgres(t *testing.
 			ctx,
 			"account_exposure",
 			7,
-			func(ctx context.Context, tx pgx.Tx) error {
-				_, err := tx.Exec(ctx, `
-					INSERT INTO x_read_settlement_audit (exposure_id, settled)
-					VALUES ('account_exposure', TRUE)
-					ON CONFLICT (exposure_id) DO UPDATE SET settled = EXCLUDED.settled
-				`)
-				return err
-			},
+			settlementMutation,
 		)
 	}()
 	close(start)
@@ -156,5 +157,28 @@ func TestXReadExposureRecoveryPurposeAndConcurrentSettlementPostgres(t *testing.
 	}
 	if used != 7 || accountStatus != "finalized" || actual != 7 || !settled {
 		t.Fatalf("settlement = used:%d status:%q actual:%d receipt:%t", used, accountStatus, actual, settled)
+	}
+
+	if _, err := pool.Exec(ctx, `DELETE FROM x_read_settlement_audit WHERE exposure_id = 'account_exposure'`); err != nil {
+		t.Fatalf("clear settlement audit: %v", err)
+	}
+	if err := store.FinalizeExposureWithMutation(
+		ctx,
+		"account_exposure",
+		7,
+		settlementMutation,
+	); err != nil {
+		t.Fatalf("apply mutation to already-finalized exposure: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT p.weighted_units_used, a.settled
+		FROM x_usage_periods p
+		JOIN x_read_settlement_audit a ON a.exposure_id = 'account_exposure'
+		WHERE p.workspace_id = 'ws_1'
+	`).Scan(&used, &settled); err != nil {
+		t.Fatalf("load terminal settlement mutation: %v", err)
+	}
+	if used != 7 || !settled {
+		t.Fatalf("terminal settlement mutation = used:%d receipt:%t", used, settled)
 	}
 }
