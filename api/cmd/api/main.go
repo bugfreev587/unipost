@@ -92,6 +92,7 @@ func main() {
 		os.Getenv,
 		func(token string) railwaybackup.Client { return railwaybackup.New(token) },
 		db.RunMigrationsWithBackupGate,
+		requesteventpartitions.EnsureDatabaseReady,
 	); handled {
 		if commandErr != nil {
 			slog.Error("migration command failed", "error", commandErr)
