@@ -73,7 +73,7 @@ func (s *PostgresStore) ResetFailedForRetry(ctx context.Context, operationID str
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM x_read_receipts
 		WHERE operation_id = $1 AND status = 'failed' AND next_attempt_at <= $2
-		  AND failure_class IN ('RATE_LIMITED', 'X_UPSTREAM_ERROR')
+		  AND failure_class IN ('RATE_LIMITED', 'X_UPSTREAM_ERROR_RETRYABLE')
 	`, operationID, now.UTC())
 	if err != nil {
 		return false, err

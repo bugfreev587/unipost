@@ -442,6 +442,43 @@ func TestNonRetriableFailedReceiptDoesNotReset(t *testing.T) {
 	}
 }
 
+func TestNonRetriableUpstreamReceiptDoesNotReset(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{}
+	provider := &fakeProvider{err: &platform.TwitterAccountReadError{StatusCode: 400, Retryable: false}}
+	service := newTestService(store, &fakeCredits{}, provider)
+	req := ProfileRequest{
+		WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1", ExternalAccountID: "x-user",
+		AppMode: "unipost_managed_app", AccessToken: "token", IdempotencyKey: "profile-key", Now: now,
+	}
+	_, _ = service.ReadProfile(context.Background(), req)
+	provider.err = nil
+	req.Now = now.Add(time.Minute)
+	_, err := service.ReadProfile(context.Background(), req)
+	var operationErr *OperationError
+	if !errors.As(err, &operationErr) || operationErr.Code != CodeXUpstream || provider.calls != 1 {
+		t.Fatalf("err=%+v calls=%d", err, provider.calls)
+	}
+}
+
+func TestRetriableUpstreamReceiptCanReset(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{}
+	provider := &fakeProvider{err: &platform.TwitterAccountReadError{StatusCode: 503, Retryable: true}}
+	service := newTestService(store, &fakeCredits{}, provider)
+	req := ProfileRequest{
+		WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1", ExternalAccountID: "x-user",
+		AppMode: "unipost_managed_app", AccessToken: "token", IdempotencyKey: "profile-key", Now: now,
+	}
+	_, _ = service.ReadProfile(context.Background(), req)
+	provider.err = nil
+	req.Now = now.Add(time.Second)
+	_, err := service.ReadProfile(context.Background(), req)
+	if err != nil || provider.calls != 2 {
+		t.Fatalf("err=%+v calls=%d", err, provider.calls)
+	}
+}
+
 func TestRecoveryRetriesAmbiguousReadAndMakesResponseReplayable(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	store := &fakeReceiptStore{}

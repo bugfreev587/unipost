@@ -14,13 +14,14 @@ const (
 	ReceiptSucceeded         = "succeeded"
 	ReceiptFailed            = "failed"
 
-	CodeIdempotencyConflict   = "IDEMPOTENCY_CONFLICT"
-	CodeReadInProgress        = "READ_IN_PROGRESS"
-	CodeReadSettlementPending = "READ_SETTLEMENT_PENDING"
-	CodeInsufficientCredits   = "INSUFFICIENT_X_CREDITS"
-	CodeRateLimited           = "RATE_LIMITED"
-	CodeReauthorization       = "ACCOUNT_REAUTHORIZATION_REQUIRED"
-	CodeXUpstream             = "X_UPSTREAM_ERROR"
+	CodeIdempotencyConflict          = "IDEMPOTENCY_CONFLICT"
+	CodeReadInProgress               = "READ_IN_PROGRESS"
+	CodeReadSettlementPending        = "READ_SETTLEMENT_PENDING"
+	CodeInsufficientCredits          = "INSUFFICIENT_X_CREDITS"
+	CodeRateLimited                  = "RATE_LIMITED"
+	CodeReauthorization              = "ACCOUNT_REAUTHORIZATION_REQUIRED"
+	CodeXUpstream                    = "X_UPSTREAM_ERROR"
+	receiptFailureXUpstreamRetryable = "X_UPSTREAM_ERROR_RETRYABLE"
 )
 
 var (

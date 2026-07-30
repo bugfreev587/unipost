@@ -222,7 +222,7 @@ func (s *Service) begin(ctx context.Context, input admissionInput) (admission, e
 }
 
 func retryableFailure(code string) bool {
-	return code == CodeRateLimited || code == CodeXUpstream
+	return code == CodeRateLimited || code == receiptFailureXUpstreamRetryable
 }
 
 func existingAdmission(receipt Receipt, fingerprint string, now time.Time) (admission, error) {
@@ -244,6 +244,9 @@ func existingAdmission(receipt Receipt, fingerprint string, now time.Time) (admi
 		return admission{}, &OperationError{Code: CodeReadSettlementPending, RetryAfter: 5 * time.Second}
 	case ReceiptFailed:
 		code := receipt.FailureClass
+		if code == receiptFailureXUpstreamRetryable {
+			code = CodeXUpstream
+		}
 		if code == "" {
 			code = CodeXUpstream
 		}
@@ -489,7 +492,11 @@ func (s *Service) failRead(ctx context.Context, admitted admission, readErr erro
 	if providerErr != nil {
 		retryAfter = providerErr.RetryAfter
 	}
-	_ = s.store.MarkFailed(ctx, admitted.receipt.OperationID, code, now, now.Add(retryAfter))
+	failureClass := code
+	if code == CodeXUpstream && providerErr != nil && providerErr.Retryable {
+		failureClass = receiptFailureXUpstreamRetryable
+	}
+	_ = s.store.MarkFailed(ctx, admitted.receipt.OperationID, failureClass, now, now.Add(retryAfter))
 	if code == CodeRateLimited {
 		slog.Warn("X account read rate limited",
 			"operation_id", admitted.receipt.OperationID,
