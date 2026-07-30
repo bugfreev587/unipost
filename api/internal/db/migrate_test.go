@@ -87,8 +87,8 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("read final Goose version: %v", err)
 	}
-	if version != 133 {
-		t.Fatalf("final Goose version = %d, want 133", version)
+	if version != 134 {
+		t.Fatalf("final Goose version = %d, want 134", version)
 	}
 	timezoneTx, err := database.Begin()
 	if err != nil {
@@ -104,6 +104,51 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	}
 	if err := timezoneTx.Rollback(); err != nil {
 		t.Fatalf("rollback non-UTC migration contract transaction: %v", err)
+	}
+	dstTx, err := database.Begin()
+	if err != nil {
+		t.Fatalf("begin DST migration contract transaction: %v", err)
+	}
+	if _, err := dstTx.Exec(`SET LOCAL TIME ZONE 'America/Los_Angeles'`); err != nil {
+		_ = dstTx.Rollback()
+		t.Fatalf("set DST-observing timezone: %v", err)
+	}
+	if _, err := dstTx.Exec(`
+		INSERT INTO api_request_partition_manifest (
+			week_start, week_end, event_partition, detail_partition
+		) VALUES (
+			'2027-03-08 00:00:00+00', '2027-03-15 00:00:00+00',
+			'dst_valid_event_partition', 'dst_valid_detail_partition'
+		)
+	`); err != nil {
+		_ = dstTx.Rollback()
+		t.Fatalf("migration 134 rejected an exact 168-hour week across DST: %v", err)
+	}
+	if err := dstTx.Rollback(); err != nil {
+		t.Fatalf("rollback valid DST migration contract transaction: %v", err)
+	}
+
+	dstInvalidTx, err := database.Begin()
+	if err != nil {
+		t.Fatalf("begin invalid DST migration contract transaction: %v", err)
+	}
+	if _, err := dstInvalidTx.Exec(`SET LOCAL TIME ZONE 'America/Los_Angeles'`); err != nil {
+		_ = dstInvalidTx.Rollback()
+		t.Fatalf("set invalid DST-observing timezone: %v", err)
+	}
+	if _, err := dstInvalidTx.Exec(`
+		INSERT INTO api_request_partition_manifest (
+			week_start, week_end, event_partition, detail_partition
+		) VALUES (
+			'2027-03-08 00:00:00+00', '2027-03-14 23:00:00+00',
+			'dst_invalid_event_partition', 'dst_invalid_detail_partition'
+		)
+	`); err == nil {
+		_ = dstInvalidTx.Rollback()
+		t.Fatal("migration 134 accepted a 167-hour calendar week across DST")
+	}
+	if err := dstInvalidTx.Rollback(); err != nil {
+		t.Fatalf("rollback invalid DST migration contract transaction: %v", err)
 	}
 	var observabilityReadsEnabled bool
 	if err := database.QueryRow(`
@@ -180,8 +225,8 @@ func TestLatestEmbeddedMigrationVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 133 {
-		t.Fatalf("latest embedded migration version = %d, want 133", version)
+	if version != 134 {
+		t.Fatalf("latest embedded migration version = %d, want 134", version)
 	}
 }
 
