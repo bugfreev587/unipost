@@ -156,14 +156,15 @@ func (s *PostgresStore) ReserveExposure(
 			workspace_id, social_account_id, operation_key, idempotency_key,
 			requested_resources, reserved_units, period_start, period_end, utc_date,
 			reconciliation_deadline, next_attempt_at, accounting_enabled,
-			purpose, external_user_id, safety_policy, catalog_version, bypass_reason
+			purpose, external_user_id, safety_policy, units_per_resource,
+			catalog_version, bypass_reason
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11,
-			$12, NULLIF($13, ''), $14, $15, NULLIF($16, ''))
+			$12, NULLIF($13, ''), $14, $15, $16, NULLIF($17, ''))
 		RETURNING id
 	`, req.WorkspaceID, req.SocialAccountID, req.OperationKey, req.IdempotencyKey,
 		req.RequestedResources, units, req.PeriodStart, req.PeriodEnd, req.UTCDate,
 		req.ReconciliationDeadline, req.AccountingEnabled, req.Purpose, req.ExternalUserID,
-		req.SafetyPolicy, req.CatalogVersion, req.BypassReason).Scan(&reservation.ID)
+		req.SafetyPolicy, req.UnitsPerResource, req.CatalogVersion, req.BypassReason).Scan(&reservation.ID)
 	if err != nil {
 		return ExposureReservation{}, err
 	}

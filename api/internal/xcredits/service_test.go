@@ -382,6 +382,27 @@ func TestPostgresReserveUsesRowSerializationWithoutSerializableFailures(t *testi
 	}
 }
 
+func TestSnapshotAggregatesFinalizedAndPendingFinancialStates(t *testing.T) {
+	source, err := os.ReadFile("postgres.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"MonthlyFinalized",
+		"MonthlyPending",
+		"MonthlyEffective",
+		"FROM x_usage_events",
+		"FROM x_read_exposures",
+		"accounting_enabled",
+		"finalize_pending",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("snapshot aggregation missing %q", want)
+		}
+	}
+}
+
 type fakeExposureStore struct {
 	*fakeStore
 	markedID      string

@@ -74,6 +74,9 @@ func (s *RolloutService) Snapshot(ctx context.Context, workspaceID string, now t
 	}
 	snapshot.MonthlyAllowance = nil
 	snapshot.MonthlyUsed = 0
+	snapshot.MonthlyFinalized = 0
+	snapshot.MonthlyPending = 0
+	snapshot.MonthlyEffective = 0
 	snapshot.MonthlyRemaining = nil
 	snapshot.PausePaidSources = false
 	snapshot.InboundPauseReason = ""
@@ -88,6 +91,10 @@ func (s *RolloutService) Snapshot(ctx context.Context, workspaceID string, now t
 		}
 	}
 	return snapshot, nil
+}
+
+func (s *RolloutService) ListEvents(ctx context.Context, req ListEventsRequest) (EventPage, error) {
+	return s.base.ListEvents(ctx, req)
 }
 
 func (s *RolloutService) AdmitInbound(ctx context.Context, req InboundRequest) (InboundAdmission, error) {

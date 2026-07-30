@@ -99,6 +99,9 @@ type Snapshot struct {
 	PeriodEnd          time.Time `json:"billing_period_end"`
 	MonthlyAllowance   *int64    `json:"monthly_allowance"`
 	MonthlyUsed        int64     `json:"monthly_used"`
+	MonthlyFinalized   int64     `json:"monthly_finalized"`
+	MonthlyPending     int64     `json:"monthly_pending"`
+	MonthlyEffective   int64     `json:"monthly_effective"`
 	MonthlyRemaining   *int64    `json:"monthly_remaining"`
 	InboundDailyUsed   int64     `json:"inbound_daily_usage"`
 	InboundDailyLimit  *int64    `json:"inbound_daily_limit"`

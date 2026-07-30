@@ -14,6 +14,7 @@ ALTER TABLE x_read_exposures
   ADD COLUMN external_user_id TEXT,
   ADD COLUMN safety_policy TEXT NOT NULL DEFAULT 'inbound_daily_cap'
     CHECK (safety_policy IN ('inbound_daily_cap', 'request_limits')),
+  ADD COLUMN units_per_resource BIGINT NOT NULL DEFAULT 1 CHECK (units_per_resource > 0),
   ADD COLUMN catalog_version TEXT NOT NULL DEFAULT 'x-credits-2026-07-16-v1',
   ADD COLUMN bypass_reason TEXT,
   ADD COLUMN finalized_at TIMESTAMPTZ;
@@ -82,6 +83,7 @@ ALTER TABLE x_read_exposures
   DROP COLUMN IF EXISTS bypass_reason,
   DROP COLUMN IF EXISTS catalog_version,
   DROP COLUMN IF EXISTS safety_policy,
+  DROP COLUMN IF EXISTS units_per_resource,
   DROP COLUMN IF EXISTS external_user_id,
   DROP COLUMN IF EXISTS purpose;
 

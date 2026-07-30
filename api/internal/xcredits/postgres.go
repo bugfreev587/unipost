@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -776,6 +777,41 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID string, now ti
 		return Snapshot{}, err
 	}
 
+	var finalized, pending int64
+	err = s.pool.QueryRow(ctx, `
+		WITH financial_states AS (
+			SELECT
+				CASE WHEN status = 'finalized' THEN weighted_units ELSE 0 END AS finalized,
+				CASE WHEN status = 'provisional' THEN weighted_units ELSE 0 END AS pending
+			FROM x_usage_events
+			WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
+			UNION ALL
+			SELECT
+				CASE WHEN status = 'finalized' THEN COALESCE(actual_units, 0) ELSE 0 END,
+				CASE WHEN status IN ('reserved', 'read_started', 'finalize_pending',
+				                         'release_pending', 'needs_reconciliation')
+				     THEN reserved_units ELSE 0 END
+			FROM x_read_exposures
+			WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
+			  AND accounting_enabled
+		)
+		SELECT COALESCE(SUM(finalized), 0), COALESCE(SUM(pending), 0)
+		FROM financial_states
+	`, workspaceID, period.Start, period.End).Scan(&finalized, &pending)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	effective := finalized + pending
+	// The period counter remains the admission authority. A mismatch indicates
+	// historical or recovery drift, so preserve its conservative value while
+	// still exposing the auditable split.
+	if used > effective {
+		pending += used - effective
+		effective = used
+	} else {
+		used = effective
+	}
+
 	var inboundUsed, inboundAccepted, inboundSuppressed int64
 	var storedInboundLimit int64
 	err = s.pool.QueryRow(ctx, `
@@ -855,6 +891,9 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID string, now ti
 		PeriodEnd:          period.End,
 		MonthlyAllowance:   monthlyAllowance,
 		MonthlyUsed:        used,
+		MonthlyFinalized:   finalized,
+		MonthlyPending:     pending,
+		MonthlyEffective:   effective,
 		MonthlyRemaining:   monthlyRemaining,
 		InboundDailyUsed:   inboundUsed,
 		InboundDailyLimit:  dailyLimit,
@@ -866,4 +905,139 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID string, now ti
 		InboundPauseReason: pauseReason,
 		CatalogVersion:     CatalogVersion,
 	}, nil
+}
+
+func (s *PostgresStore) ListEvents(ctx context.Context, req ListEventsRequest) (EventPage, error) {
+	cursor, err := decodeEventCursor(req.Cursor)
+	if err != nil {
+		return EventPage{}, err
+	}
+	if req.Limit <= 0 {
+		req.Limit = 50
+	}
+	if req.Limit > 100 {
+		req.Limit = 100
+	}
+
+	query := `
+		WITH ledger AS (
+			SELECT
+				'xue_' || e.id AS operation_id,
+				COALESCE(e.social_account_id, '') AS account_id,
+				''::TEXT AS external_user_id,
+				e.operation_key AS operation,
+				e.catalog_version,
+				e.weighted_units AS estimated,
+				e.weighted_units AS reserved,
+				CASE WHEN e.status = 'finalized' THEN e.weighted_units ELSE 0 END AS charged,
+				CASE WHEN e.status = 'reversed' THEN e.weighted_units ELSE 0 END AS released,
+				CASE e.status
+					WHEN 'provisional' THEN 'reserved'
+					WHEN 'reversed' THEN 'released'
+					ELSE e.status
+				END AS public_status,
+				e.created_at,
+				e.updated_at,
+				CASE WHEN e.status IN ('finalized', 'reversed') THEN e.updated_at END AS finalized_at,
+				NULL::TIMESTAMPTZ AS expires_at
+			FROM x_usage_events e
+			WHERE e.workspace_id = $1
+			UNION ALL
+			SELECT
+				COALESCE(r.operation_id, 'xre_' || x.id),
+				x.social_account_id,
+				COALESCE(x.external_user_id, ''),
+				x.operation_key,
+				x.catalog_version,
+				CASE WHEN x.accounting_enabled THEN x.requested_resources * x.units_per_resource ELSE 0 END,
+				CASE WHEN x.accounting_enabled THEN x.reserved_units ELSE 0 END,
+				CASE WHEN x.accounting_enabled AND x.status = 'finalized' THEN COALESCE(x.actual_units, 0) ELSE 0 END,
+				CASE WHEN x.accounting_enabled AND x.status IN ('finalized', 'released')
+					THEN x.reserved_units - COALESCE(x.actual_units, 0) ELSE 0 END,
+				CASE
+					WHEN NOT x.accounting_enabled THEN 'bypassed'
+					WHEN x.status IN ('read_started', 'finalize_pending', 'release_pending', 'needs_reconciliation')
+						THEN 'reconciliation_pending'
+					ELSE x.status
+				END,
+				x.created_at,
+				x.updated_at,
+				x.finalized_at,
+				r.expires_at
+			FROM x_read_exposures x
+			LEFT JOIN x_read_receipts r ON r.exposure_id = x.id
+			WHERE x.workspace_id = $1
+		)
+		SELECT operation_id, account_id, external_user_id, operation, catalog_version,
+		       estimated, reserved, charged, released, public_status, created_at,
+		       updated_at, finalized_at, expires_at
+		FROM ledger
+		WHERE TRUE`
+	args := []any{req.WorkspaceID}
+	add := func(condition string, value any) {
+		args = append(args, value)
+		query += fmt.Sprintf(condition, len(args))
+	}
+	if req.AccountID != "" {
+		add(" AND account_id = $%d", req.AccountID)
+	}
+	if req.ExternalUserID != "" {
+		add(" AND external_user_id = $%d", req.ExternalUserID)
+	}
+	if req.Operation != "" {
+		add(" AND operation = $%d", req.Operation)
+	}
+	if req.Status != "" {
+		add(" AND public_status = $%d", req.Status)
+	}
+	if req.StartTime != nil {
+		add(" AND created_at >= $%d", req.StartTime.UTC())
+	}
+	if req.EndTime != nil {
+		add(" AND created_at < $%d", req.EndTime.UTC())
+	}
+	if !cursor.CreatedAt.IsZero() {
+		args = append(args, cursor.CreatedAt.UTC(), cursor.ID)
+		query += fmt.Sprintf(" AND (created_at, operation_id) < ($%d, $%d)", len(args)-1, len(args))
+	}
+	args = append(args, req.Limit+1)
+	query += fmt.Sprintf(" ORDER BY created_at DESC, operation_id DESC LIMIT $%d", len(args))
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return EventPage{}, err
+	}
+	defer rows.Close()
+	items := make([]Event, 0, req.Limit)
+	for rows.Next() {
+		var item Event
+		var finalizedAt, expiresAt pgtype.Timestamptz
+		if err := rows.Scan(
+			&item.OperationID, &item.AccountID, &item.ExternalUserID, &item.Operation,
+			&item.CatalogVersion, &item.Estimated, &item.Reserved, &item.Charged,
+			&item.Released, &item.Status, &item.CreatedAt, &item.UpdatedAt,
+			&finalizedAt, &expiresAt,
+		); err != nil {
+			return EventPage{}, err
+		}
+		if finalizedAt.Valid {
+			value := finalizedAt.Time.UTC()
+			item.FinalizedAt = &value
+		}
+		if expiresAt.Valid {
+			value := expiresAt.Time.UTC()
+			item.ExpiresAt = &value
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return EventPage{}, err
+	}
+	page := EventPage{Items: items}
+	if len(items) > req.Limit {
+		last := items[req.Limit-1]
+		page.Items = items[:req.Limit]
+		page.NextCursor = encodeEventCursor(eventCursor{CreatedAt: last.CreatedAt, ID: last.OperationID})
+	}
+	return page, nil
 }
