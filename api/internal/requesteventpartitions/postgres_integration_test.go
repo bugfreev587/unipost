@@ -99,7 +99,8 @@ func seedPartitionSchema(t *testing.T, pool *pgxpool.Pool) {
 			detail_partition TEXT NOT NULL UNIQUE,
 			state TEXT NOT NULL DEFAULT 'active',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			CHECK (week_end = week_start + INTERVAL '7 days')
+			CONSTRAINT api_request_partition_manifest_week_duration_check
+				CHECK (EXTRACT(EPOCH FROM (week_end - week_start)) = 604800)
 		);
 	`)
 	if err != nil {
@@ -161,6 +162,83 @@ func assertPartitionAttached(t *testing.T, pool *pgxpool.Pool, child, parent str
 	}
 }
 
+func insertManifestWeek(t *testing.T, pool *pgxpool.Pool, week Week) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO api_request_partition_manifest (
+			week_start, week_end, event_partition, detail_partition
+		) VALUES ($1, $2, $3, $4)
+	`, week.Start, week.End, week.EventTable, week.DetailTable); err != nil {
+		t.Fatalf("insert manifest week: %v", err)
+	}
+}
+
+func createPhysicalPartition(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	table string,
+	parent string,
+	start time.Time,
+	end time.Time,
+) {
+	t.Helper()
+	statement := fmt.Sprintf(
+		"CREATE TABLE %s PARTITION OF %s FOR VALUES FROM ('%s') TO ('%s')",
+		pgx.Identifier{table}.Sanitize(),
+		pgx.Identifier{parent}.Sanitize(),
+		start.UTC().Format(time.RFC3339),
+		end.UTC().Format(time.RFC3339),
+	)
+	if _, err := pool.Exec(context.Background(), statement); err != nil {
+		t.Fatalf("create physical partition %s: %v", table, err)
+	}
+}
+
+func createPhysicalPair(t *testing.T, pool *pgxpool.Pool, week Week) {
+	t.Helper()
+	createPhysicalPartition(t, pool, week.EventTable, "api_request_events", week.Start, week.End)
+	createPhysicalPartition(t, pool, week.DetailTable, "api_request_error_details", week.Start, week.End)
+}
+
+func assertRelationMissing(t *testing.T, pool *pgxpool.Pool, relation string) {
+	t.Helper()
+	var resolved *string
+	if err := pool.QueryRow(
+		context.Background(),
+		`SELECT to_regclass(current_schema() || '.' || $1)::TEXT`,
+		relation,
+	).Scan(&resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved != nil {
+		t.Fatalf("relation %s unexpectedly exists as %s", relation, *resolved)
+	}
+}
+
+func assertManifestWeek(t *testing.T, pool *pgxpool.Pool, week Week) {
+	t.Helper()
+	var end time.Time
+	var eventTable, detailTable string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT week_end, event_partition, detail_partition
+		FROM api_request_partition_manifest
+		WHERE week_start = $1
+	`, week.Start).Scan(&end, &eventTable, &detailTable); err != nil {
+		t.Fatal(err)
+	}
+	if !end.Equal(week.End) || eventTable != week.EventTable || detailTable != week.DetailTable {
+		t.Fatalf(
+			"manifest = (%s, %q, %q), want (%s, %q, %q)",
+			end,
+			eventTable,
+			detailTable,
+			week.End,
+			week.EventTable,
+			week.DetailTable,
+		)
+	}
+}
+
 func TestPostgresStoreEnsureCreatesAlignedPairsAndIsIdempotent(t *testing.T) {
 	pool := openPartitionIntegrationPool(t)
 	store := NewPostgresStore(pool)
@@ -185,6 +263,99 @@ func TestPostgresStoreEnsureCreatesAlignedPairsAndIsIdempotent(t *testing.T) {
 	}
 	if eventTable != week.EventTable || detailTable != week.DetailTable {
 		t.Fatalf("manifest pair = (%q, %q), want (%q, %q)", eventTable, detailTable, week.EventTable, week.DetailTable)
+	}
+}
+
+func TestPostgresStoreEnsureRejectsManifestWhosePhysicalPairIsMissing(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	week := futureWeek(t, 1)
+	insertManifestWeek(t, pool, week)
+
+	err := NewPostgresStore(pool).Ensure(context.Background(), []Week{week})
+	var drift *PartitionDriftError
+	if !errors.As(err, &drift) {
+		t.Fatalf("error = %v, want PartitionDriftError", err)
+	}
+	assertRelationMissing(t, pool, week.EventTable)
+	assertRelationMissing(t, pool, week.DetailTable)
+}
+
+func TestPostgresStoreEnsureRepairsMissingManifestForValidPhysicalPair(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	week := futureWeek(t, 8)
+	createPhysicalPair(t, pool, week)
+
+	if err := NewPostgresStore(pool).Ensure(context.Background(), []Week{week}); err != nil {
+		t.Fatal(err)
+	}
+	assertPartitionAttached(t, pool, week.EventTable, "api_request_events")
+	assertPartitionAttached(t, pool, week.DetailTable, "api_request_error_details")
+	assertManifestWeek(t, pool, week)
+}
+
+func TestPostgresStoreEnsureRejectsPartialPhysicalPair(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	week := futureWeek(t, 15)
+	createPhysicalPartition(t, pool, week.EventTable, "api_request_events", week.Start, week.End)
+
+	err := NewPostgresStore(pool).Ensure(context.Background(), []Week{week})
+	var drift *PartitionDriftError
+	if !errors.As(err, &drift) {
+		t.Fatalf("error = %v, want PartitionDriftError", err)
+	}
+	assertPartitionAttached(t, pool, week.EventTable, "api_request_events")
+	assertRelationMissing(t, pool, week.DetailTable)
+}
+
+func TestPostgresStoreEnsureRejectsWrongBoundPhysicalPair(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	week := futureWeek(t, 22)
+	wrongStart := week.Start.Add(time.Hour)
+	wrongEnd := week.End.Add(time.Hour)
+	createPhysicalPartition(t, pool, week.EventTable, "api_request_events", wrongStart, wrongEnd)
+	createPhysicalPartition(t, pool, week.DetailTable, "api_request_error_details", wrongStart, wrongEnd)
+
+	err := NewPostgresStore(pool).Ensure(context.Background(), []Week{week})
+	var drift *PartitionDriftError
+	if !errors.As(err, &drift) {
+		t.Fatalf("error = %v, want PartitionDriftError", err)
+	}
+	var manifestRows int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM api_request_partition_manifest WHERE week_start = $1
+	`, week.Start).Scan(&manifestRows); err != nil {
+		t.Fatal(err)
+	}
+	if manifestRows != 0 {
+		t.Fatalf("manifest rows = %d, want 0", manifestRows)
+	}
+}
+
+func TestPostgresStoreEnsureAndInspectAreDSTSafe(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	connection, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Release()
+	if _, err := connection.Exec(context.Background(), `SET TIME ZONE 'America/Los_Angeles'`); err != nil {
+		t.Fatal(err)
+	}
+
+	week, err := weekForStart(time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewPostgresStore(connection.Conn())
+	if err := store.Ensure(context.Background(), []Week{week}); err != nil {
+		t.Fatalf("ensure exact UTC week across DST: %v", err)
+	}
+	inspection, err := store.Inspect(context.Background(), week.Start, 0)
+	if err != nil {
+		t.Fatalf("inspect exact UTC week across DST: %v", err)
+	}
+	if !inspection.Ready || containsReason(inspection.Reasons, ReasonPartitionMismatch) {
+		t.Fatalf("ready=%v reasons=%v, want DST-safe catalog match", inspection.Ready, inspection.Reasons)
 	}
 }
 
@@ -393,5 +564,39 @@ func TestPostgresStoreInspectFailsReadinessForMetadataMismatch(t *testing.T) {
 	}
 	if inspection.Ready || !containsReason(inspection.Reasons, ReasonPartitionMismatch) {
 		t.Fatalf("ready=%v reasons=%v, want metadata mismatch", inspection.Ready, inspection.Reasons)
+	}
+}
+
+func TestPostgresStoreInspectFailsReadinessForWrongPhysicalBounds(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	store := NewPostgresStore(pool)
+	week := futureWeek(t, 8)
+	wrongStart := week.Start.Add(time.Hour)
+	wrongEnd := week.End.Add(time.Hour)
+	createPhysicalPartition(t, pool, week.EventTable, "api_request_events", wrongStart, wrongEnd)
+	createPhysicalPartition(t, pool, week.DetailTable, "api_request_error_details", wrongStart, wrongEnd)
+	insertManifestWeek(t, pool, week)
+
+	inspection, err := store.Inspect(context.Background(), week.Start, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Ready || !containsReason(inspection.Reasons, ReasonPartitionMismatch) {
+		t.Fatalf("ready=%v reasons=%v, want physical-bound mismatch", inspection.Ready, inspection.Reasons)
+	}
+}
+
+func TestPostgresStoreInspectFailsReadinessForOrphanPhysicalPair(t *testing.T) {
+	pool := openPartitionIntegrationPool(t)
+	store := NewPostgresStore(pool)
+	week := futureWeek(t, 15)
+	createPhysicalPair(t, pool, week)
+
+	inspection, err := store.Inspect(context.Background(), week.Start, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Ready || !containsReason(inspection.Reasons, ReasonPartitionMismatch) {
+		t.Fatalf("ready=%v reasons=%v, want orphan physical-pair mismatch", inspection.Ready, inspection.Reasons)
 	}
 }

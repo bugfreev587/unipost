@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -34,6 +33,31 @@ type DefaultPartitionOccupiedError struct {
 	Week       Week
 	EventRows  int64
 	DetailRows int64
+}
+
+type PartitionDriftError struct {
+	Week   Week
+	Reason string
+}
+
+func (e *PartitionDriftError) Error() string {
+	return fmt.Sprintf(
+		"request-event partition drift for [%s, %s): %s",
+		e.Week.Start.Format(time.RFC3339),
+		e.Week.End.Format(time.RFC3339),
+		e.Reason,
+	)
+}
+
+type partitionRelationState struct {
+	Exists       bool
+	IsPartition  bool
+	Attached     bool
+	BoundMatches bool
+}
+
+func (s partitionRelationState) valid() bool {
+	return s.Exists && s.IsPartition && s.Attached && s.BoundMatches
 }
 
 type Inspection struct {
@@ -77,6 +101,9 @@ func (s *PostgresStore) Ensure(ctx context.Context, weeks []Week) error {
 	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout = '30s'`); err != nil {
 		return fmt.Errorf("set partition statement timeout: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `SET LOCAL TIME ZONE 'UTC'`); err != nil {
+		return fmt.Errorf("set partition time zone: %w", err)
+	}
 	if _, err := tx.Exec(
 		ctx,
 		`SELECT pg_advisory_xact_lock($1::INTEGER, $2::INTEGER)`,
@@ -114,7 +141,8 @@ func ensureWeek(ctx context.Context, tx pgx.Tx, week Week) error {
 		FROM api_request_partition_manifest
 		WHERE week_start = $1
 	`, week.Start).Scan(&manifestEnd, &manifestEvent, &manifestDetail)
-	if err == nil {
+	manifestExists := err == nil
+	if manifestExists {
 		if !manifestEnd.Equal(week.End) || manifestEvent != week.EventTable || manifestDetail != week.DetailTable {
 			return fmt.Errorf(
 				"request-event partition manifest mismatch for %s: end=%s event=%q detail=%q",
@@ -124,10 +152,59 @@ func ensureWeek(ctx context.Context, tx pgx.Tx, week Week) error {
 				manifestDetail,
 			)
 		}
-		return nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("read request-event partition manifest for %s: %w", week.Start.Format(time.RFC3339), err)
+	}
+
+	eventState, err := inspectPartitionRelation(
+		ctx,
+		tx,
+		week.EventTable,
+		"api_request_events",
+		week.Start,
+		week.End,
+	)
+	if err != nil {
+		return fmt.Errorf("inspect request-event partition %s: %w", week.EventTable, err)
+	}
+	detailState, err := inspectPartitionRelation(
+		ctx,
+		tx,
+		week.DetailTable,
+		"api_request_error_details",
+		week.Start,
+		week.End,
+	)
+	if err != nil {
+		return fmt.Errorf("inspect request-error partition %s: %w", week.DetailTable, err)
+	}
+
+	if manifestExists {
+		if eventState.valid() && detailState.valid() {
+			return nil
+		}
+		return &PartitionDriftError{
+			Week: week,
+			Reason: fmt.Sprintf(
+				"manifest exists but physical pair is invalid: event=%+v detail=%+v",
+				eventState,
+				detailState,
+			),
+		}
+	}
+
+	if eventState.valid() && detailState.valid() {
+		return insertManifestRecord(ctx, tx, week)
+	}
+	if eventState.Exists || detailState.Exists {
+		return &PartitionDriftError{
+			Week: week,
+			Reason: fmt.Sprintf(
+				"manifest is missing and physical pair is incomplete or invalid: event=%+v detail=%+v",
+				eventState,
+				detailState,
+			),
+		}
 	}
 
 	var eventRows, detailRows int64
@@ -173,6 +250,51 @@ func ensureWeek(ctx context.Context, tx pgx.Tx, week Week) error {
 	)); err != nil {
 		return fmt.Errorf("create request-error partition %s: %w", week.DetailTable, err)
 	}
+	return insertManifestRecord(ctx, tx, week)
+}
+
+func inspectPartitionRelation(
+	ctx context.Context,
+	tx pgx.Tx,
+	childName string,
+	parentName string,
+	start time.Time,
+	end time.Time,
+) (partitionRelationState, error) {
+	var state partitionRelationState
+	err := tx.QueryRow(ctx, `
+		SELECT
+			child.oid IS NOT NULL,
+			COALESCE(child.relispartition, FALSE),
+			COALESCE(EXISTS (
+				SELECT 1
+				FROM pg_inherits AS inheritance
+				JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
+				JOIN pg_namespace AS parent_namespace ON parent_namespace.oid = parent.relnamespace
+				WHERE inheritance.inhrelid = child.oid
+				  AND parent_namespace.nspname = current_schema()
+				  AND parent.relname = $2
+			), FALSE),
+			COALESCE(
+				pg_get_expr(child.relpartbound, child.oid, TRUE) =
+					format('FOR VALUES FROM (%L) TO (%L)', $3::TIMESTAMPTZ, $4::TIMESTAMPTZ),
+				FALSE
+			)
+		FROM (SELECT 1) AS singleton
+		LEFT JOIN pg_class AS child
+			JOIN pg_namespace AS child_namespace ON child_namespace.oid = child.relnamespace
+				AND child_namespace.nspname = current_schema()
+			ON child.relname = $1
+	`, childName, parentName, start, end).Scan(
+		&state.Exists,
+		&state.IsPartition,
+		&state.Attached,
+		&state.BoundMatches,
+	)
+	return state, err
+}
+
+func insertManifestRecord(ctx context.Context, tx pgx.Tx, week Week) error {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO api_request_partition_manifest (
 			week_start, week_end, event_partition, detail_partition
@@ -202,20 +324,17 @@ func (s *PostgresStore) Inspect(
 	if _, err := tx.Exec(ctx, `SET TRANSACTION READ ONLY`); err != nil {
 		return Inspection{}, fmt.Errorf("set partition inspection read only: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `SET LOCAL TIME ZONE 'UTC'`); err != nil {
+		return Inspection{}, fmt.Errorf("set partition inspection time zone: %w", err)
+	}
 
 	inspection := Inspection{
 		InspectedAt: now.UTC(),
 		Reasons:     make([]string, 0, 4),
 	}
-	var latestEnd pgtype.Timestamptz
-	if err := tx.QueryRow(ctx, `
-		SELECT COUNT(*), MAX(week_end)
-		FROM api_request_partition_manifest
-	`).Scan(&inspection.PartitionPairs, &latestEnd); err != nil {
-		return Inspection{}, fmt.Errorf("inspect request-event partition manifest: %w", err)
-	}
-	if latestEnd.Valid {
-		inspection.LatestExplicitEnd = latestEnd.Time.UTC()
+	mismatchedManifest, err := inspectManifestCatalog(ctx, tx, &inspection)
+	if err != nil {
+		return Inspection{}, err
 	}
 	inspection.CoverageDays = ExplicitCoverageDays(inspection.InspectedAt, inspection.LatestExplicitEnd)
 
@@ -245,43 +364,6 @@ func (s *PostgresStore) Inspect(
 		return Inspection{}, err
 	}
 
-	var mismatchedManifestRows int64
-	if err := tx.QueryRow(ctx, `
-		SELECT COUNT(*)
-		FROM api_request_partition_manifest AS manifest
-		WHERE manifest.week_end <> manifest.week_start + INTERVAL '7 days'
-		   OR manifest.event_partition <>
-		      'api_request_events_' || to_char(manifest.week_start AT TIME ZONE 'UTC', 'IYYY"w"IW')
-		   OR manifest.detail_partition <>
-		      'api_request_error_details_' || to_char(manifest.week_start AT TIME ZONE 'UTC', 'IYYY"w"IW')
-		   OR NOT EXISTS (
-				SELECT 1
-				FROM pg_inherits AS inheritance
-				JOIN pg_class AS child ON child.oid = inheritance.inhrelid
-				JOIN pg_namespace AS child_namespace ON child_namespace.oid = child.relnamespace
-				JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
-				JOIN pg_namespace AS parent_namespace ON parent_namespace.oid = parent.relnamespace
-				WHERE child_namespace.nspname = current_schema()
-				  AND parent_namespace.nspname = current_schema()
-				  AND child.relname = manifest.event_partition
-				  AND parent.relname = 'api_request_events'
-		   )
-		   OR NOT EXISTS (
-				SELECT 1
-				FROM pg_inherits AS inheritance
-				JOIN pg_class AS child ON child.oid = inheritance.inhrelid
-				JOIN pg_namespace AS child_namespace ON child_namespace.oid = child.relnamespace
-				JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
-				JOIN pg_namespace AS parent_namespace ON parent_namespace.oid = parent.relnamespace
-				WHERE child_namespace.nspname = current_schema()
-				  AND parent_namespace.nspname = current_schema()
-				  AND child.relname = manifest.detail_partition
-				  AND parent.relname = 'api_request_error_details'
-		   )
-	`).Scan(&mismatchedManifestRows); err != nil {
-		return Inspection{}, fmt.Errorf("inspect request-event partition attachments: %w", err)
-	}
-
 	if inspection.CoverageDays < minimumCoverageDays {
 		inspection.Reasons = append(inspection.Reasons, ReasonCoverageLow)
 	}
@@ -291,7 +373,7 @@ func (s *PostgresStore) Inspect(
 	if inspection.DetailDefaultRows > 0 {
 		inspection.Reasons = append(inspection.Reasons, ReasonDetailDefaultRows)
 	}
-	if mismatchedManifestRows > 0 {
+	if mismatchedManifest {
 		inspection.Reasons = append(inspection.Reasons, ReasonPartitionMismatch)
 	}
 	sort.Strings(inspection.Reasons)
@@ -301,6 +383,113 @@ func (s *PostgresStore) Inspect(
 		return Inspection{}, fmt.Errorf("commit partition inspection: %w", err)
 	}
 	return inspection, nil
+}
+
+func inspectManifestCatalog(ctx context.Context, tx pgx.Tx, inspection *Inspection) (bool, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT week_start, week_end, event_partition, detail_partition
+		FROM api_request_partition_manifest
+		ORDER BY week_start
+	`)
+	if err != nil {
+		return false, fmt.Errorf("inspect request-event partition manifest: %w", err)
+	}
+	defer rows.Close()
+
+	mismatched := false
+	manifestWeeks := make([]Week, 0)
+	for rows.Next() {
+		var week Week
+		if err := rows.Scan(&week.Start, &week.End, &week.EventTable, &week.DetailTable); err != nil {
+			return false, fmt.Errorf("scan request-event partition manifest: %w", err)
+		}
+		inspection.PartitionPairs++
+		if week.End.After(inspection.LatestExplicitEnd) {
+			inspection.LatestExplicitEnd = week.End.UTC()
+		}
+		manifestWeeks = append(manifestWeeks, week)
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate request-event partition manifest: %w", err)
+	}
+	rows.Close()
+
+	for _, week := range manifestWeeks {
+		canonical, canonicalErr := weekForStart(week.Start)
+		if canonicalErr != nil ||
+			week.End.Sub(week.Start) != 7*24*time.Hour ||
+			week.EventTable != canonical.EventTable ||
+			week.DetailTable != canonical.DetailTable {
+			mismatched = true
+			continue
+		}
+		eventState, err := inspectPartitionRelation(
+			ctx,
+			tx,
+			week.EventTable,
+			"api_request_events",
+			week.Start,
+			week.End,
+		)
+		if err != nil {
+			return false, fmt.Errorf("inspect request-event partition %s: %w", week.EventTable, err)
+		}
+		detailState, err := inspectPartitionRelation(
+			ctx,
+			tx,
+			week.DetailTable,
+			"api_request_error_details",
+			week.Start,
+			week.End,
+		)
+		if err != nil {
+			return false, fmt.Errorf("inspect request-error partition %s: %w", week.DetailTable, err)
+		}
+		if !eventState.valid() || !detailState.valid() {
+			mismatched = true
+		}
+	}
+
+	var orphanEventPartitions, orphanDetailPartitions int64
+	if err := tx.QueryRow(ctx, `
+		SELECT
+			(
+				SELECT COUNT(*)
+				FROM pg_inherits AS inheritance
+				JOIN pg_class AS child ON child.oid = inheritance.inhrelid
+				JOIN pg_namespace AS child_namespace ON child_namespace.oid = child.relnamespace
+				JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
+				JOIN pg_namespace AS parent_namespace ON parent_namespace.oid = parent.relnamespace
+				WHERE child_namespace.nspname = current_schema()
+				  AND parent_namespace.nspname = current_schema()
+				  AND parent.relname = 'api_request_events'
+				  AND child.relname <> 'api_request_events_default'
+				  AND NOT EXISTS (
+					SELECT 1 FROM api_request_partition_manifest AS manifest
+					WHERE manifest.event_partition = child.relname
+				  )
+			),
+			(
+				SELECT COUNT(*)
+				FROM pg_inherits AS inheritance
+				JOIN pg_class AS child ON child.oid = inheritance.inhrelid
+				JOIN pg_namespace AS child_namespace ON child_namespace.oid = child.relnamespace
+				JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
+				JOIN pg_namespace AS parent_namespace ON parent_namespace.oid = parent.relnamespace
+				WHERE child_namespace.nspname = current_schema()
+				  AND parent_namespace.nspname = current_schema()
+				  AND parent.relname = 'api_request_error_details'
+				  AND child.relname <> 'api_request_error_details_default'
+				  AND NOT EXISTS (
+					SELECT 1 FROM api_request_partition_manifest AS manifest
+					WHERE manifest.detail_partition = child.relname
+				  )
+			)
+	`).Scan(&orphanEventPartitions, &orphanDetailPartitions); err != nil {
+		return false, fmt.Errorf("inspect orphan request-event partitions: %w", err)
+	}
+
+	return mismatched || orphanEventPartitions > 0 || orphanDetailPartitions > 0, nil
 }
 
 func inspectPartitionTree(
