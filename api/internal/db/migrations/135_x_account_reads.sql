@@ -69,6 +69,12 @@ CREATE INDEX x_read_receipts_recovery_idx
 CREATE INDEX x_read_receipts_expiry_idx
   ON x_read_receipts (expires_at);
 
+CREATE INDEX x_read_receipts_workspace_rate_idx
+  ON x_read_receipts (workspace_id, created_at DESC);
+
+CREATE INDEX x_read_receipts_account_rate_idx
+  ON x_read_receipts (social_account_id, created_at DESC);
+
 -- +goose Down
 
 DROP TABLE IF EXISTS x_read_receipts;

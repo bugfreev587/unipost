@@ -23,12 +23,18 @@ const (
 	CodeXUpstream             = "X_UPSTREAM_ERROR"
 )
 
-var ErrReceiptNotFound = errors.New("X account-read receipt not found")
+var (
+	ErrReceiptNotFound        = errors.New("X account-read receipt not found")
+	ErrAccountReadRateLimited = errors.New("X account-read operational rate limit exceeded")
+)
 
 type OperationError struct {
-	Code       string
-	RetryAfter time.Duration
-	Cause      error
+	Code               string
+	RetryAfter         time.Duration
+	Cause              error
+	EstimatedCredits   int64
+	AvailableCredits   int64
+	MaxAffordableLimit int
 }
 
 func (e *OperationError) Error() string {

@@ -70,6 +70,23 @@ func (s *PostgresStore) Lookup(
 func (s *PostgresStore) AdmissionMutation(input NewReceipt) xcredits.ExposureMutation {
 	return func(ctx context.Context, tx pgx.Tx, exposure xcredits.ExposureReservation) error {
 		receipt := input.WithExposure(exposure.ID)
+		var workspaceRecent, accountRecent, accountExecuting int
+		if err := tx.QueryRow(ctx, `
+			SELECT
+				(SELECT COUNT(*) FROM x_read_receipts
+				 WHERE workspace_id = $1 AND created_at >= NOW() - INTERVAL '1 minute'),
+				(SELECT COUNT(*) FROM x_read_receipts
+				 WHERE social_account_id = $2 AND created_at >= NOW() - INTERVAL '1 minute'),
+				(SELECT COUNT(*) FROM x_read_receipts
+				 WHERE social_account_id = $2 AND status = 'executing')
+		`, receipt.WorkspaceID, receipt.AccountID).Scan(
+			&workspaceRecent, &accountRecent, &accountExecuting,
+		); err != nil {
+			return err
+		}
+		if workspaceRecent >= 60 || accountRecent >= 20 || accountExecuting >= 2 {
+			return ErrAccountReadRateLimited
+		}
 		_, err := tx.Exec(ctx, `
 			INSERT INTO x_read_receipts (
 				operation_id, workspace_id, social_account_id, external_user_id,

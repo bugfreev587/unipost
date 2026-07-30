@@ -213,6 +213,21 @@ func TestInsufficientCreditsStopsBeforeXCall(t *testing.T) {
 	}
 }
 
+func TestOperationalRateLimitStopsBeforeXCall(t *testing.T) {
+	store := &fakeReceiptStore{}
+	credits := &fakeCredits{reserveErr: ErrAccountReadRateLimited}
+	provider := &fakeProvider{}
+	service := newTestService(store, credits, provider)
+	_, err := service.ReadProfile(context.Background(), ProfileRequest{
+		WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1", ExternalAccountID: "x-user",
+		AppMode: "unipost_managed_app", AccessToken: "token", IdempotencyKey: "profile",
+	})
+	var operationErr *OperationError
+	if !errors.As(err, &operationErr) || operationErr.Code != CodeRateLimited || provider.calls != 0 {
+		t.Fatalf("err=%v calls=%d", err, provider.calls)
+	}
+}
+
 func TestRecoveryRetriesAmbiguousReadAndMakesResponseReplayable(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	store := &fakeReceiptStore{}

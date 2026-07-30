@@ -13,6 +13,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xaccountreads"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -69,11 +70,12 @@ func (h *PlatformHandler) GetGlobalCapabilities(w http.ResponseWriter, r *http.R
 // is included alongside so the client can correlate without re-fetching
 // the global map.
 type accountCapabilityResponse struct {
-	SchemaVersion string               `json:"schema_version"`
-	AccountID     string               `json:"account_id"`
-	Platform      string               `json:"platform"`
-	Capability    platform.Capability  `json:"capability"`
-	XInbox        *xinbox.Capabilities `json:"x_inbox,omitempty"`
+	SchemaVersion string                      `json:"schema_version"`
+	AccountID     string                      `json:"account_id"`
+	Platform      string                      `json:"platform"`
+	Capability    platform.Capability         `json:"capability"`
+	XInbox        *xinbox.Capabilities        `json:"x_inbox,omitempty"`
+	XAccountReads *xaccountreads.Capabilities `json:"x_account_reads,omitempty"`
 }
 
 // GetAccountCapabilities handles GET /v1/social-accounts/{id}/capabilities.
@@ -105,6 +107,12 @@ func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found")
 		return
+	}
+	if externalUserID := strings.TrimSpace(r.URL.Query().Get("external_user_id")); externalUserID != "" {
+		if !acc.ExternalUserID.Valid || acc.ExternalUserID.String != externalUserID {
+			writeError(w, http.StatusForbidden, "ACCOUNT_ACCESS_DENIED", "The account does not belong to the selected Managed User")
+			return
+		}
 	}
 
 	cap, ok := platform.CapabilityFor(strings.ToLower(acc.Platform))
@@ -165,6 +173,20 @@ func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.
 		}
 		xInbox := xinbox.EvaluateCapabilities(input)
 		response.XInbox = &xInbox
+		billingEnabled := false
+		if h.flags != nil {
+			billingEnabled, err = h.flags.ForWorkspace(r.Context(), workspaceID, featureflags.XCreditsBillingV1)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to evaluate X Credits accounting")
+				return
+			}
+		}
+		xReads := xaccountreads.EvaluateCapabilities(xaccountreads.CapabilityInput{
+			AccountStatus: acc.Status, Disconnected: acc.DisconnectedAt.Valid,
+			Scopes: acc.Scope, RefreshAvailable: acc.RefreshToken.Valid && strings.TrimSpace(acc.RefreshToken.String) != "",
+			AppMode: appMode, BillingEnabled: billingEnabled,
+		})
+		response.XAccountReads = &xReads
 	}
 	writeSuccess(w, response)
 }

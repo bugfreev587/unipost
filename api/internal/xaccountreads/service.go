@@ -154,7 +154,29 @@ func (s *Service) begin(ctx context.Context, input admissionInput) (admission, e
 			return existingAdmission(existing, fingerprint)
 		}
 		if errors.Is(err, xcredits.ErrMonthlyLimitExceeded) || errors.Is(err, xcredits.ErrAllowanceNotConfigured) {
-			return admission{}, &OperationError{Code: CodeInsufficientCredits, Cause: err}
+			estimated := int64(input.RequestedResources) * input.UnitsPerResource
+			available := int64(0)
+			if snapshots, ok := s.credits.(interface {
+				Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error)
+			}); ok {
+				if snapshot, snapshotErr := snapshots.Snapshot(ctx, input.WorkspaceID, input.Now); snapshotErr == nil && snapshot.MonthlyRemaining != nil {
+					available = *snapshot.MonthlyRemaining
+				}
+			}
+			maxAffordable := int(available / input.UnitsPerResource)
+			if maxAffordable > 100 {
+				maxAffordable = 100
+			}
+			if maxAffordable < 5 && input.Endpoint == "posts" {
+				maxAffordable = 0
+			}
+			return admission{}, &OperationError{
+				Code: CodeInsufficientCredits, Cause: err, EstimatedCredits: estimated,
+				AvailableCredits: available, MaxAffordableLimit: maxAffordable,
+			}
+		}
+		if errors.Is(err, ErrAccountReadRateLimited) {
+			return admission{}, &OperationError{Code: CodeRateLimited, RetryAfter: time.Minute, Cause: err}
 		}
 		return admission{}, err
 	}

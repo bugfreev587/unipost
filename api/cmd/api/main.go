@@ -60,6 +60,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/trials"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
+	"github.com/xiaoboyu/unipost-api/internal/xaccountreads"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
@@ -759,6 +760,22 @@ func main() {
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker).
 		SetXTokenRefresher(xTokenRefresher)
+	xAccountReadStore := xaccountreads.NewPostgresStore(pool)
+	xAccountReadService := xaccountreads.NewService(
+		xAccountReadStore,
+		xCreditsService,
+		platform.NewTwitterAdapter(),
+		encryptor,
+		[]byte(encryptionKey),
+	)
+	xAccountReadsHandler := handler.NewXAccountReadsHandler(
+		queries, encryptor, xAccountReadService, xTokenRefresher,
+	)
+	xAccountReadService.SetTokenResolver(xAccountReadsHandler)
+	if processMode == processModeAPI {
+		xAccountReadRecoveryWorker := worker.NewXAccountReadRecoveryWorker(xAccountReadService)
+		go xAccountReadRecoveryWorker.Start(workerCtx)
+	}
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr).
@@ -1155,6 +1172,8 @@ func main() {
 		r.Delete("/v1/accounts/{id}", socialAccountHandler.Disconnect)
 		r.Post("/v1/accounts/{id}/dismiss", socialAccountHandler.Dismiss)
 		r.Get("/v1/accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
+		r.Get("/v1/accounts/{id}/profile", xAccountReadsHandler.Profile)
+		r.Get("/v1/accounts/{id}/posts", xAccountReadsHandler.Posts)
 		r.Get("/v1/accounts/{id}/health", socialAccountHandler.AccountHealth)
 		r.Get("/v1/accounts/{id}/metrics", socialAccountHandler.AccountMetrics)
 		r.Get("/v1/accounts/{id}/instagram/profile", socialAccountHandler.InstagramProfile)
