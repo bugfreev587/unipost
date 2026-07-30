@@ -81,7 +81,7 @@ ALTER TABLE x_inbox_backfill_exposure_reservations
 ALTER TABLE x_inbox_backfill_exposure_reservations
   ADD CONSTRAINT x_inbox_backfill_exposure_reservations_reserved_units_check CHECK (reserved_units > 0);
 
-ALTER TABLE x_read_exposures
+ALTER TABLE x_inbox_backfill_exposure_reservations
   DROP COLUMN IF EXISTS finalized_at,
   DROP COLUMN IF EXISTS bypass_reason,
   DROP COLUMN IF EXISTS catalog_version,

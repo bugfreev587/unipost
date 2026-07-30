@@ -44,6 +44,9 @@ func (s *fakeReceiptStore) ResetFailedForRetry(_ context.Context, operationID st
 	if s.receipt.OperationID != operationID || s.receipt.Status != ReceiptFailed || s.receipt.NextAttemptAt.After(now) {
 		return false, nil
 	}
+	if !retryableFailure(s.receipt.FailureClass) {
+		return false, nil
+	}
 	s.receipt = Receipt{}
 	return true, nil
 }
@@ -71,6 +74,15 @@ func (s *fakeReceiptStore) SuccessMutation(operationID string, response []byte, 
 	}
 }
 
+func (s *fakeReceiptStore) SettlementPendingMutation(operationID string, response []byte, next time.Time) xcredits.ExposureSettlementMutation {
+	return func(context.Context, pgx.Tx) error {
+		s.receipt.Status = ReceiptSettlementPending
+		s.receipt.ResponseJSON = append([]byte(nil), response...)
+		s.receipt.NextAttemptAt = next
+		return nil
+	}
+}
+
 func (s *fakeReceiptStore) MarkFailed(_ context.Context, operationID, class string, now, nextAttemptAt time.Time) error {
 	s.receipt.Status = ReceiptFailed
 	s.receipt.FailureClass = class
@@ -86,6 +98,9 @@ func (s *fakeReceiptStore) MarkOutcomeUnknown(_ context.Context, operationID str
 }
 
 func (s *fakeReceiptStore) MarkSettlementPending(_ context.Context, operationID string, response []byte, next time.Time) error {
+	if s.receipt.Status != ReceiptExecuting && s.receipt.Status != ReceiptSettlementPending {
+		return errors.New("invalid settlement-pending transition")
+	}
 	s.receipt.Status = ReceiptSettlementPending
 	s.receipt.ResponseJSON = append([]byte(nil), response...)
 	s.receipt.NextAttemptAt = next
@@ -126,6 +141,13 @@ func (f *fakeCredits) FinalizeExposureWithMutation(ctx context.Context, _ string
 		return err
 	}
 	f.finalized = units
+	return nil
+}
+func (f *fakeCredits) MarkExposureFinalizePendingWithMutation(ctx context.Context, _ string, units int64, _ string, mutation xcredits.ExposureSettlementMutation) error {
+	if err := mutation(ctx, nil); err != nil {
+		return err
+	}
+	f.finalized = 0
 	return nil
 }
 func (f *fakeCredits) ReleaseExposure(context.Context, string) error { f.released++; return nil }
@@ -170,6 +192,25 @@ func (f *fakeTokenResolver) ResolveAccountReadToken(context.Context, string) (st
 
 func newTestService(store *fakeReceiptStore, credits *fakeCredits, provider *fakeProvider) *Service {
 	return NewService(store, credits, provider, passthroughCipher{}, []byte("0123456789abcdef0123456789abcdef"))
+}
+
+func TestCursorKeyRotationDoesNotChangeIdempotencyHash(t *testing.T) {
+	store := &fakeReceiptStore{}
+	credits := &fakeCredits{}
+	provider := &fakeProvider{}
+	stableIdempotencySecret := []byte("stable-idempotency-0123456789abcdef")
+	oldService := NewServiceWithSecrets(
+		store, credits, provider, passthroughCipher{}, stableIdempotencySecret,
+		[]byte("old-cursor-key-0123456789abcdef"),
+	)
+	rotatedService := NewServiceWithSecrets(
+		store, credits, provider, passthroughCipher{}, stableIdempotencySecret,
+		[]byte("new-cursor-key-0123456789abcdef"),
+		[]byte("old-cursor-key-0123456789abcdef"),
+	)
+	if oldService.keyHash("customer-key") != rotatedService.keyHash("customer-key") {
+		t.Fatal("cursor rotation changed the idempotency receipt lookup hash")
+	}
 }
 
 func TestReadPostsSettlesScannedResourcesAndReplaysWithoutSecondXCall(t *testing.T) {
@@ -362,6 +403,45 @@ func TestRateLimitedPageRetriesWithSameKeyAndEquivalentRefreshedCursor(t *testin
 	}
 }
 
+func TestDueFailedReceiptStillRejectsDifferentFingerprint(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{}
+	provider := &fakeProvider{err: &platform.TwitterAccountReadError{StatusCode: 429, Retryable: true, RetryAfter: time.Minute}}
+	service := newTestService(store, &fakeCredits{}, provider)
+	req := ProfileRequest{
+		WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1", ExternalAccountID: "x-user",
+		AppMode: "unipost_managed_app", AccessToken: "token", IdempotencyKey: "profile-key", Now: now,
+	}
+	_, _ = service.ReadProfile(context.Background(), req)
+	provider.err = nil
+	req.ExternalUserID = "managed_2"
+	req.Now = now.Add(2 * time.Minute)
+	_, err := service.ReadProfile(context.Background(), req)
+	var operationErr *OperationError
+	if !errors.As(err, &operationErr) || operationErr.Code != CodeIdempotencyConflict || provider.calls != 1 {
+		t.Fatalf("err=%+v calls=%d", err, provider.calls)
+	}
+}
+
+func TestNonRetriableFailedReceiptDoesNotReset(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{}
+	provider := &fakeProvider{err: &platform.TwitterAccountReadError{StatusCode: 401}}
+	service := newTestService(store, &fakeCredits{}, provider)
+	req := ProfileRequest{
+		WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1", ExternalAccountID: "x-user",
+		AppMode: "unipost_managed_app", AccessToken: "token", IdempotencyKey: "profile-key", Now: now,
+	}
+	_, _ = service.ReadProfile(context.Background(), req)
+	provider.err = nil
+	req.Now = now.Add(time.Minute)
+	_, err := service.ReadProfile(context.Background(), req)
+	var operationErr *OperationError
+	if !errors.As(err, &operationErr) || operationErr.Code != CodeReauthorization || provider.calls != 1 {
+		t.Fatalf("err=%+v calls=%d", err, provider.calls)
+	}
+}
+
 func TestRecoveryRetriesAmbiguousReadAndMakesResponseReplayable(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	store := &fakeReceiptStore{}
@@ -381,6 +461,41 @@ func TestRecoveryRetriesAmbiguousReadAndMakesResponseReplayable(t *testing.T) {
 	}
 	if stats.Succeeded != 1 || store.receipt.Status != ReceiptSucceeded || provider.calls != 2 {
 		t.Fatalf("stats=%+v receipt=%+v calls=%d", stats, store.receipt, provider.calls)
+	}
+}
+
+func TestRecoveryPersistsKnownResponseBeforeRetryingFailedAtomicSettlement(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &fakeReceiptStore{receipt: Receipt{
+		OperationID: "xro_1", WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1",
+		ExposureID: "exposure-1", Endpoint: "profile", Status: ReceiptOutcomeUnknown,
+		EncryptedRequest: "encrypted:{\"external_account_id\":\"x-user\"}", RequestedResources: 1,
+		ReservedUnits: 10, AccountingEnabled: true, CatalogVersion: xcredits.CatalogVersion,
+		AppMode: "unipost_managed_app", ExpiresAt: now.Add(23 * time.Hour),
+	}, markSuccessErr: errors.New("atomic success receipt failed")}
+	credits := &fakeCredits{}
+	provider := &fakeProvider{profile: platform.TwitterAccountProfile{
+		ExternalAccountID: "x-user", Username: "v", DisplayName: "V", AccountCreatedAt: now,
+	}}
+	service := newTestService(store, credits, provider).SetTokenResolver(&fakeTokenResolver{token: "token"})
+
+	first, err := service.Reconcile(context.Background(), 10, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Deferred != 1 || store.receipt.Status != ReceiptSettlementPending || provider.calls != 1 || credits.finalized != 0 {
+		t.Fatalf("first=%+v receipt=%+v calls=%d finalized=%d", first, store.receipt, provider.calls, credits.finalized)
+	}
+	store.markSuccessErr = nil
+	// The Postgres recovery query hydrates this value from the exposure row that
+	// was updated atomically with the settlement-pending receipt.
+	store.receipt.ActualUnits = 10
+	second, err := service.Reconcile(context.Background(), 10, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Succeeded != 1 || store.receipt.Status != ReceiptSucceeded || provider.calls != 1 || credits.finalized != 10 {
+		t.Fatalf("second=%+v receipt=%+v calls=%d finalized=%d", second, store.receipt, provider.calls, credits.finalized)
 	}
 }
 

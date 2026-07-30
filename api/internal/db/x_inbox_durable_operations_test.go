@@ -79,6 +79,10 @@ func TestXAccountReadsMigrationGeneralizesExposureAndAddsReceipts(t *testing.T) 
 	if strings.Contains(sql, "ALTER TABLE x_inbox_backfill_exposure_reservations RENAME") {
 		t.Fatal("X account reads migration renames the live Inbox table and is not rolling-deploy compatible")
 	}
+	down := strings.SplitN(sql, "-- +goose Down", 2)
+	if len(down) != 2 || strings.Contains(down[1], "ALTER TABLE x_read_exposures") {
+		t.Fatal("X account reads rollback alters the dropped compatibility view instead of the physical table")
+	}
 }
 
 func TestXInboxOutboundCompletionUsesConflictLookupAndAtomicSettlement(t *testing.T) {

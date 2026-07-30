@@ -175,6 +175,10 @@ func (s *RolloutService) FinalizeExposureWithMutation(ctx context.Context, id st
 	return s.base.FinalizeExposureWithMutation(ctx, id, units, mutation)
 }
 
+func (s *RolloutService) MarkExposureFinalizePendingWithMutation(ctx context.Context, id string, units int64, message string, mutation ExposureSettlementMutation) error {
+	return s.base.MarkExposureFinalizePendingWithMutation(ctx, id, units, message, mutation)
+}
+
 func (s *RolloutService) ReleaseExposure(ctx context.Context, id string) error {
 	return s.base.ReleaseExposure(ctx, id)
 }

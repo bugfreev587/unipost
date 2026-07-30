@@ -781,11 +781,12 @@ func main() {
 		}
 		xAccountReadPreviousCursorKeys = append(xAccountReadPreviousCursorKeys, []byte(key))
 	}
-	xAccountReadService := xaccountreads.NewService(
+	xAccountReadService := xaccountreads.NewServiceWithSecrets(
 		xAccountReadStore,
 		xCreditsService,
 		platform.NewTwitterAdapter(),
 		encryptor,
+		[]byte(encryptionKey),
 		[]byte(xAccountReadCursorKey),
 		xAccountReadPreviousCursorKeys...,
 	)

@@ -232,10 +232,35 @@ func (s *PostgresStore) MarkExposureFinalizePending(
 	actualUnits int64,
 	message string,
 ) error {
+	return s.markExposureFinalizePending(ctx, id, actualUnits, message, nil)
+}
+
+func (s *PostgresStore) MarkExposureFinalizePendingWithMutation(
+	ctx context.Context,
+	id string,
+	actualUnits int64,
+	message string,
+	mutation ExposureSettlementMutation,
+) error {
+	return s.markExposureFinalizePending(ctx, id, actualUnits, message, mutation)
+}
+
+func (s *PostgresStore) markExposureFinalizePending(
+	ctx context.Context,
+	id string,
+	actualUnits int64,
+	message string,
+	mutation ExposureSettlementMutation,
+) error {
 	if actualUnits < 0 {
 		return errors.New("actual X backfill exposure cannot be negative")
 	}
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
 		UPDATE x_read_exposures
 		SET status = 'finalize_pending',
 		    actual_units = $2,
@@ -252,7 +277,12 @@ func (s *PostgresStore) MarkExposureFinalizePending(
 	if tag.RowsAffected() != 1 {
 		return errors.New("X exposure finalize-pending state was not persisted")
 	}
-	return nil
+	if mutation != nil {
+		if err := mutation(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PostgresStore) ReleaseExposure(ctx context.Context, id string) error {
@@ -315,23 +345,27 @@ func (s *PostgresStore) settleExposure(
 	var workspaceID, status string
 	var periodStart, periodEnd time.Time
 	var utcDate time.Time
-	var reservedUnits int64
+	var reservedUnits, storedActualUnits int64
 	var accountingEnabled bool
 	var safetyPolicy string
 	err = tx.QueryRow(ctx, `
 		SELECT workspace_id, period_start, period_end, utc_date, reserved_units, status,
+		       COALESCE(actual_units, 0),
 		       accounting_enabled, safety_policy
 		FROM x_read_exposures
 		WHERE id = $1
 		FOR UPDATE
 	`, id).Scan(
-		&workspaceID, &periodStart, &periodEnd, &utcDate, &reservedUnits, &status,
+		&workspaceID, &periodStart, &periodEnd, &utcDate, &reservedUnits, &status, &storedActualUnits,
 		&accountingEnabled, &safetyPolicy,
 	)
 	if err != nil {
 		return err
 	}
 	if status == "finalized" || status == "released" {
+		if actualUnits != storedActualUnits {
+			return errors.New("finalized X exposure units do not match the account-read receipt")
+		}
 		if mutation != nil {
 			if err := mutation(ctx, tx); err != nil {
 				return err

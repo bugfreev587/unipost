@@ -73,6 +73,7 @@ func (s *PostgresStore) ResetFailedForRetry(ctx context.Context, operationID str
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM x_read_receipts
 		WHERE operation_id = $1 AND status = 'failed' AND next_attempt_at <= $2
+		  AND failure_class IN ('RATE_LIMITED', 'X_UPSTREAM_ERROR')
 	`, operationID, now.UTC())
 	if err != nil {
 		return false, err
@@ -141,6 +142,30 @@ func (s *PostgresStore) SuccessMutation(
 	}
 }
 
+func (s *PostgresStore) SettlementPendingMutation(
+	operationID string,
+	response []byte,
+	next time.Time,
+) xcredits.ExposureSettlementMutation {
+	return func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE x_read_receipts
+			SET status = 'settlement_pending', response_json = $2::JSONB,
+			    attempt_count = attempt_count + 1, next_attempt_at = $3,
+			    execution_owner = NULL, execution_lease_expires_at = NULL, updated_at = NOW()
+			WHERE operation_id = $1
+			  AND status IN ('executing', 'outcome_unknown', 'settlement_pending')
+		`, operationID, response, next.UTC())
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errors.New("X account-read settlement-pending transition was not persisted")
+		}
+		return nil
+	}
+}
+
 func (s *PostgresStore) MarkFailed(
 	ctx context.Context,
 	operationID string,
@@ -196,7 +221,7 @@ func (s *PostgresStore) MarkSettlementPending(
 		SET status = 'settlement_pending', response_json = $2::JSONB,
 		    attempt_count = attempt_count + 1, next_attempt_at = $3,
 		    execution_owner = NULL, execution_lease_expires_at = NULL, updated_at = NOW()
-		WHERE operation_id = $1 AND status IN ('executing', 'settlement_pending')
+		WHERE operation_id = $1 AND status IN ('executing', 'outcome_unknown', 'settlement_pending')
 	`, operationID, response, next.UTC())
 	if err != nil {
 		return err

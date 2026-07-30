@@ -25,6 +25,7 @@ type Store interface {
 	MarkOutcomeUnknown(context.Context, string, time.Time) error
 	MarkSettlementPending(context.Context, string, []byte, time.Time) error
 	SuccessMutation(string, []byte, time.Time) xcredits.ExposureSettlementMutation
+	SettlementPendingMutation(string, []byte, time.Time) xcredits.ExposureSettlementMutation
 }
 
 type CreditsService interface {
@@ -32,6 +33,7 @@ type CreditsService interface {
 	MarkExposureReadStarted(context.Context, string) error
 	FinalizeExposure(context.Context, string, int64) error
 	FinalizeExposureWithMutation(context.Context, string, int64, xcredits.ExposureSettlementMutation) error
+	MarkExposureFinalizePendingWithMutation(context.Context, string, int64, string, xcredits.ExposureSettlementMutation) error
 	ReleaseExposure(context.Context, string) error
 	MarkExposureFinalizePending(context.Context, string, int64, string) error
 	MarkExposureReleasePending(context.Context, string, string) error
@@ -67,8 +69,20 @@ type Service struct {
 }
 
 func NewService(store Store, credits CreditsService, provider Provider, cipher Cipher, secret []byte, previousSecrets ...[]byte) *Service {
-	cursors, _ := NewCursorCodec(secret, previousSecrets...)
-	key := sha256.Sum256(append([]byte("unipost:x-account-read:idempotency:"), secret...))
+	return NewServiceWithSecrets(store, credits, provider, cipher, secret, secret, previousSecrets...)
+}
+
+func NewServiceWithSecrets(
+	store Store,
+	credits CreditsService,
+	provider Provider,
+	cipher Cipher,
+	idempotencySecret []byte,
+	cursorSecret []byte,
+	previousCursorSecrets ...[]byte,
+) *Service {
+	cursors, _ := NewCursorCodec(cursorSecret, previousCursorSecrets...)
+	key := sha256.Sum256(append([]byte("unipost:x-account-read:idempotency:"), idempotencySecret...))
 	return &Service{store: store, credits: credits, provider: provider, cipher: cipher, hashKey: key[:], cursors: cursors}
 }
 
@@ -124,7 +138,10 @@ func (s *Service) begin(ctx context.Context, input admissionInput) (admission, e
 		return admission{}, err
 	}
 	if existing, err := s.store.Lookup(ctx, input.WorkspaceID, keyHash, input.Now); err == nil {
-		if existing.Status == ReceiptFailed && !existing.NextAttemptAt.After(input.Now) {
+		if existing.RequestFingerprint != fingerprint {
+			return existingAdmission(existing, fingerprint, input.Now)
+		}
+		if existing.Status == ReceiptFailed && retryableFailure(existing.FailureClass) && !existing.NextAttemptAt.After(input.Now) {
 			reset, resetErr := s.store.ResetFailedForRetry(ctx, existing.OperationID, input.Now)
 			if resetErr != nil {
 				return admission{}, resetErr
@@ -202,6 +219,10 @@ func (s *Service) begin(ctx context.Context, input admissionInput) (admission, e
 	}
 	receipt.Receipt.ExposureID = reservation.ID
 	return admission{receipt: receipt.Receipt, reservation: reservation}, nil
+}
+
+func retryableFailure(code string) bool {
+	return code == CodeRateLimited || code == CodeXUpstream
 }
 
 func existingAdmission(receipt Receipt, fingerprint string, now time.Time) (admission, error) {
@@ -429,8 +450,16 @@ func (s *Service) complete(ctx context.Context, admitted admission, actualUnits 
 		actualUnits,
 		s.store.SuccessMutation(admitted.receipt.OperationID, body, now),
 	); err != nil {
-		_ = s.credits.MarkExposureFinalizePending(ctx, admitted.reservation.ID, actualUnits, "X account-read finalization failed")
-		_ = s.store.MarkSettlementPending(ctx, admitted.receipt.OperationID, body, now.Add(time.Minute))
+		pendingErr := s.credits.MarkExposureFinalizePendingWithMutation(
+			ctx,
+			admitted.reservation.ID,
+			actualUnits,
+			"X account-read finalization failed",
+			s.store.SettlementPendingMutation(admitted.receipt.OperationID, body, now.Add(time.Minute)),
+		)
+		if pendingErr != nil {
+			return &OperationError{Code: CodeReadSettlementPending, RetryAfter: time.Minute, Cause: errors.Join(err, pendingErr)}
+		}
 		return &OperationError{Code: CodeReadSettlementPending, RetryAfter: time.Minute, Cause: err}
 	}
 	return nil
