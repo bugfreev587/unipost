@@ -133,7 +133,7 @@ const PLATFORM_COLORS: Record<string, string> = {
   instagram: "#e1306c",
   threads: "#000000",
   tiktok: "#000000",
-  youtube: "#ff0000",
+  youtube: "#64748b",
   bluesky: "#0085ff",
   facebook: "#1877f2",
 };

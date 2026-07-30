@@ -1543,10 +1543,7 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 
 func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post db.SocialPost, res db.SocialPostResult, job db.PostDeliveryJob, oc publishOneOutcome) error {
 	errMsg := sanitizeDeliveryErrorText(oc.err.Error())
-	debugCurl := pgtype.Text{}
-	if sanitizedDebugCurl := sanitizeDeliveryErrorText(oc.debugCurl); sanitizedDebugCurl != "" {
-		debugCurl = pgtype.Text{String: sanitizedDebugCurl, Valid: true}
-	}
+	sanitizedDebugCurl := sanitizeDeliveryErrorText(oc.debugCurl)
 	failureStage := inferDispatchFailureStage(errMsg)
 
 	// Classify before touching the result row. If this attempt is
@@ -1573,13 +1570,15 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	}
 
 	resultUpdate := db.UpdateSocialPostResultAfterRetryParams{
-		ID:              res.ID,
-		Status:          resultStatus,
-		ExternalID:      pgtype.Text{},
-		ErrorMessage:    pgtype.Text{String: errMsg, Valid: true},
-		PublishedAt:     pgtype.Timestamptz{},
-		Url:             pgtype.Text{},
-		DebugCurl:       debugCurl,
+		ID:           res.ID,
+		Status:       resultStatus,
+		ExternalID:   pgtype.Text{},
+		ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
+		PublishedAt:  pgtype.Timestamptz{},
+		Url:          pgtype.Text{},
+		// Persist diagnostics only after this transaction commits. Keeping the
+		// legacy value empty makes telemetry incapable of rolling back delivery.
+		DebugCurl:       pgtype.Text{},
 		XCreditsCounted: oc.xCreditsCounted,
 		XCreditOperation: pgtype.Text{
 			String: oc.xCreditOperation,
@@ -1708,6 +1707,7 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	if !failureApplied {
 		return nil
 	}
+	h.recordPostFailureDebug(res.ID, post.WorkspaceID, sanitizedDebugCurl)
 	logLevel := integrationlogs.LevelWarn
 	if !failure.IsRetriable || (job.Kind == "retry" && job.Attempts >= job.MaxAttempts) {
 		logLevel = integrationlogs.LevelError
@@ -1733,8 +1733,7 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 			"max_attempts":    job.MaxAttempts,
 		},
 		ResponsePayload: map[string]any{
-			"error":      errMsg,
-			"debug_curl": oc.debugCurl,
+			"error": errMsg,
 		},
 	}))
 	h.syncLoopsPostFailed(ctx, post, res, job, failure, anotherAttempt)

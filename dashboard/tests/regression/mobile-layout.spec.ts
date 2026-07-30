@@ -4,17 +4,16 @@ import { expect, test } from "@playwright/test";
 // unipost.dev), where src/proxy.ts rewrites "/" -> /marketing. On the app
 // host (app.unipost.dev, the default baseURL) "/" is auth-gated and
 // "/marketing" redirects back to it, so the landing page must be reached
-// via an absolute URL on the landing host. The CI "Dashboard build" job
-// runs a single local server that the proxy always treats as the app host,
-// so no distinct landing host exists there and the landing assertion is
-// skipped. Pricing is public on every host, so it stays baseURL-relative.
+// via an absolute URL on the landing host. The dedicated local regression
+// gate uses the RFC localhost names dev-app.localhost and dev.localhost on one
+// server, while the ordinary single-host CI build still skips this assertion.
+// Pricing is public on every host, so it stays baseURL-relative.
 const appBaseURL = process.env.DASHBOARD_BASE_URL || "https://app.unipost.dev";
 const landingBaseURL = appBaseURL
   .replace("://staging-app.", "://staging.")
   .replace("://dev-app.", "://dev.")
   .replace("://app.", "://");
-const landingHostTestable =
-  landingBaseURL !== appBaseURL && !/localhost|127\.0\.0\.1/.test(appBaseURL);
+const landingHostTestable = landingBaseURL !== appBaseURL;
 
 const mobilePublicRoutes = [
   {
@@ -30,6 +29,7 @@ const mobilePublicRoutes = [
   {
     path: "/docs/guides/posts/retry-failed-posts",
     marker: /Decide whether UniPost will retry a failed destination automatically/i,
+    verifyFallbackFonts: true,
   },
 ];
 
@@ -46,8 +46,20 @@ test.describe("mobile public layout", () => {
         "Landing page is served only on a distinct landing host; the local CI server is the app host.",
       );
 
+      let blockedFontRequests = 0;
+      if (route.verifyFallbackFonts) {
+        await page.route(/\.(?:woff2?|ttf|otf)(?:\?.*)?$/, (requestRoute) => {
+          blockedFontRequests += 1;
+          return requestRoute.abort();
+        });
+      }
+
       await page.goto(route.path, { waitUntil: "domcontentloaded" });
       await expect(page.getByText(route.marker).first()).toBeVisible();
+
+      if (route.verifyFallbackFonts) {
+        expect(blockedFontRequests).toBeGreaterThan(0);
+      }
 
       const layout = await page.evaluate(() => {
         const root = document.documentElement;

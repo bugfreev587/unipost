@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { BarChart3, Bot, Ruler, type LucideIcon } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { PublicPlatformIcon } from "@/components/public/public-platform-icon";
 
 export type ToolIconKey =
   | "agentpost"
@@ -55,7 +55,7 @@ export function ToolCard({ tool }: { tool: ToolCardData }) {
 function ToolIcon({ icon }: { icon: ToolIconKey }) {
   const Icon = ICONS[icon] || BarChart3;
   if (icon === "tiktok" || icon === "youtube" || icon === "instagram" || icon === "threads" || icon === "pinterest") {
-    return <PlatformIcon platform={icon} size={24} />;
+    return <PublicPlatformIcon platform={icon} size={24} />;
   }
   return <Icon aria-hidden="true" />;
 }

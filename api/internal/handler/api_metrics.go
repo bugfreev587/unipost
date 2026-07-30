@@ -12,10 +12,13 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/observabilityreads"
 )
 
 type APIMetricsHandler struct {
-	queries apiMetricsQuerier
+	queries  apiMetricsQuerier
+	selector observabilityreads.ReadPathSelector
+	v2       observabilityreads.MetricsReader
 }
 
 type apiMetricsQuerier interface {
@@ -39,12 +42,24 @@ func NewAPIMetricsHandler(queries apiMetricsQuerier) *APIMetricsHandler {
 	return &APIMetricsHandler{queries: queries}
 }
 
+func (h *APIMetricsHandler) WithObservabilityReads(selector observabilityreads.ReadPathSelector, reader observabilityreads.MetricsReader) *APIMetricsHandler {
+	h.selector, h.v2 = selector, reader
+	return h
+}
+
 type AdminAPIMetricsHandler struct {
-	queries adminAPIMetricsQuerier
+	queries  adminAPIMetricsQuerier
+	selector observabilityreads.ReadPathSelector
+	v2       observabilityreads.MetricsReader
 }
 
 func NewAdminAPIMetricsHandler(queries adminAPIMetricsQuerier) *AdminAPIMetricsHandler {
 	return &AdminAPIMetricsHandler{queries: queries}
+}
+
+func (h *AdminAPIMetricsHandler) WithObservabilityReads(selector observabilityreads.ReadPathSelector, reader observabilityreads.MetricsReader) *AdminAPIMetricsHandler {
+	h.selector, h.v2 = selector, reader
+	return h
 }
 
 // Summary returns per-endpoint metrics for a workspace within a time range.
@@ -53,6 +68,15 @@ func (h *APIMetricsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	opts, ok := h.parseOptions(w, r)
 	if !ok {
+		return
+	}
+	if reader := observabilityreads.SelectMetricsReader(r.Context(), h.selector, h.v2); reader != nil {
+		rows, freshness, err := reader.Summary(r.Context(), metricsQuery(workspaceID, opts, false))
+		if err != nil {
+			writeMetricsReadError(w, "api_metrics.Summary", err)
+			return
+		}
+		writeMetricsSuccess(w, rows, freshness)
 		return
 	}
 
@@ -81,6 +105,15 @@ func (h *APIMetricsHandler) Trend(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	opts, ok := h.parseOptions(w, r)
 	if !ok {
+		return
+	}
+	if reader := observabilityreads.SelectMetricsReader(r.Context(), h.selector, h.v2); reader != nil {
+		rows, freshness, err := reader.Trend(r.Context(), metricsQuery(workspaceID, opts, false))
+		if err != nil {
+			writeMetricsReadError(w, "api_metrics.Trend", err)
+			return
+		}
+		writeMetricsSuccess(w, rows, freshness)
 		return
 	}
 
@@ -118,6 +151,15 @@ func (h *APIMetricsHandler) Overall(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	opts, ok := h.parseOptions(w, r)
 	if !ok {
+		return
+	}
+	if reader := observabilityreads.SelectMetricsReader(r.Context(), h.selector, h.v2); reader != nil {
+		row, freshness, err := reader.Overall(r.Context(), metricsQuery(workspaceID, opts, false))
+		if err != nil {
+			writeMetricsReadError(w, "api_metrics.Overall", err)
+			return
+		}
+		writeMetricsSuccess(w, row, freshness)
 		return
 	}
 
@@ -163,6 +205,15 @@ func (h *APIMetricsHandler) StatusCodes(w http.ResponseWriter, r *http.Request) 
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	opts, ok := h.parseOptions(w, r)
 	if !ok {
+		return
+	}
+	if reader := observabilityreads.SelectMetricsReader(r.Context(), h.selector, h.v2); reader != nil {
+		rows, freshness, err := reader.StatusCodes(r.Context(), metricsQuery(workspaceID, opts, false))
+		if err != nil {
+			writeMetricsReadError(w, "api_metrics.StatusCodes", err)
+			return
+		}
+		writeMetricsSuccess(w, rows, freshness)
 		return
 	}
 
@@ -301,6 +352,15 @@ func (h *AdminAPIMetricsHandler) Overall(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	if reader := observabilityreads.SelectMetricsReader(r.Context(), h.selector, h.v2); reader != nil {
+		row, freshness, err := reader.Overall(r.Context(), metricsQuery(opts.workspaceID, opts, true))
+		if err != nil {
+			writeMetricsReadError(w, "admin_api_metrics.Overall", err)
+			return
+		}
+		writeMetricsSuccess(w, row, freshness)
+		return
+	}
 	row, err := h.queries.GetAdminAPIMetricsOverall(r.Context(), db.GetAdminAPIMetricsOverallParams{
 		CreatedAt:       pgtype.Timestamptz{Time: opts.from, Valid: true},
 		CreatedAt_2:     pgtype.Timestamptz{Time: opts.to, Valid: true},
@@ -339,6 +399,15 @@ func (h *AdminAPIMetricsHandler) Summary(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	if reader := observabilityreads.SelectMetricsReader(r.Context(), h.selector, h.v2); reader != nil {
+		rows, freshness, err := reader.Summary(r.Context(), metricsQuery(opts.workspaceID, opts, true))
+		if err != nil {
+			writeMetricsReadError(w, "admin_api_metrics.Summary", err)
+			return
+		}
+		writeMetricsSuccess(w, rows, freshness)
+		return
+	}
 	rows, err := h.queries.GetAdminAPIMetricsSummary(r.Context(), db.GetAdminAPIMetricsSummaryParams{
 		CreatedAt:       pgtype.Timestamptz{Time: opts.from, Valid: true},
 		CreatedAt_2:     pgtype.Timestamptz{Time: opts.to, Valid: true},
@@ -361,6 +430,15 @@ func (h *AdminAPIMetricsHandler) Summary(w http.ResponseWriter, r *http.Request)
 func (h *AdminAPIMetricsHandler) Trend(w http.ResponseWriter, r *http.Request) {
 	opts, ok := h.parseOptions(w, r)
 	if !ok {
+		return
+	}
+	if reader := observabilityreads.SelectMetricsReader(r.Context(), h.selector, h.v2); reader != nil {
+		rows, freshness, err := reader.Trend(r.Context(), metricsQuery(opts.workspaceID, opts, true))
+		if err != nil {
+			writeMetricsReadError(w, "admin_api_metrics.Trend", err)
+			return
+		}
+		writeMetricsSuccess(w, rows, freshness)
 		return
 	}
 	params := db.GetAdminAPIMetricsTrendHourlyParams{
@@ -395,6 +473,15 @@ func (h *AdminAPIMetricsHandler) StatusCodes(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if reader := observabilityreads.SelectMetricsReader(r.Context(), h.selector, h.v2); reader != nil {
+		rows, freshness, err := reader.StatusCodes(r.Context(), metricsQuery(opts.workspaceID, opts, true))
+		if err != nil {
+			writeMetricsReadError(w, "admin_api_metrics.StatusCodes", err)
+			return
+		}
+		writeMetricsSuccess(w, rows, freshness)
+		return
+	}
 	rows, err := h.queries.GetAdminAPIMetricsStatusCodes(r.Context(), db.GetAdminAPIMetricsStatusCodesParams{
 		CreatedAt:       pgtype.Timestamptz{Time: opts.from, Valid: true},
 		CreatedAt_2:     pgtype.Timestamptz{Time: opts.to, Valid: true},
@@ -417,6 +504,15 @@ func (h *AdminAPIMetricsHandler) Workspaces(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	if reader := observabilityreads.SelectMetricsReader(r.Context(), h.selector, h.v2); reader != nil {
+		rows, freshness, err := reader.Workspaces(r.Context(), metricsQuery(opts.workspaceID, opts, true))
+		if err != nil {
+			writeMetricsReadError(w, "admin_api_metrics.Workspaces", err)
+			return
+		}
+		writeMetricsSuccess(w, rows, freshness)
+		return
+	}
 	rows, err := h.queries.GetAdminAPIMetricsWorkspaces(r.Context(), db.GetAdminAPIMetricsWorkspacesParams{
 		CreatedAt:       pgtype.Timestamptz{Time: opts.from, Valid: true},
 		CreatedAt_2:     pgtype.Timestamptz{Time: opts.to, Valid: true},
@@ -434,6 +530,23 @@ func (h *AdminAPIMetricsHandler) Workspaces(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeSuccess(w, rows)
+}
+
+func metricsQuery(workspaceID string, opts apiMetricsOptions, admin bool) observabilityreads.MetricsQuery {
+	return observabilityreads.MetricsQuery{From: opts.from, To: opts.to, WorkspaceID: workspaceID, Method: opts.method, Path: opts.path, StatusClass: opts.statusClass, Sort: opts.sort, Interval: opts.interval, Limit: opts.limit, MinCalls: opts.minCalls, ApplyMinCalls: admin}
+}
+
+func writeMetricsSuccess(w http.ResponseWriter, data any, freshness observabilityreads.MetricsFreshness) {
+	writeJSON(w, http.StatusOK, struct {
+		Data      any                                 `json:"data"`
+		Freshness observabilityreads.MetricsFreshness `json:"freshness"`
+		RequestID string                              `json:"request_id,omitempty"`
+	}{Data: data, Freshness: freshness, RequestID: requestIDFromResponse(w)})
+}
+
+func writeMetricsReadError(w http.ResponseWriter, operation string, err error) {
+	slog.Error(operation+": v2 query failed", "err", err)
+	writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load metrics")
 }
 
 func stringIn(v string, allowed []string) bool {

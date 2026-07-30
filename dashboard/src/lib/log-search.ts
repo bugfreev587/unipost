@@ -1,5 +1,17 @@
 import type { IntegrationLog } from "@/lib/api";
 
+export function logDetailUnavailableMessage(
+  log: Pick<IntegrationLog, "id" | "category" | "status" | "detail_status">,
+): string | null {
+  if (log.detail_status === "expired") {
+    return "Detail payload expired. The structured log metadata remains available.";
+  }
+  if (typeof log.id === "string" && log.category === "api_request" && log.status === "success") {
+    return "Detailed payloads are retained only for failed API requests.";
+  }
+  return null;
+}
+
 export function integrationLogMatchesSearch(
   log: Pick<
     IntegrationLog,

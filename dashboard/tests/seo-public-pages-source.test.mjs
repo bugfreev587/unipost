@@ -301,12 +301,12 @@ describe("homepage and about page carry entity SEO intent", () => {
 
   it("about page platform grid renders official platform icons before labels", () => {
     const source = read("src/app/about/page.tsx");
-    assert.match(source, /import \{ PlatformIcon \} from "@\/components\/platform-icons"/);
+    assert.match(source, /import \{ PublicPlatformIcon \} from "@\/components\/public\/public-platform-icon"/);
     assert.match(source, /const ABOUT_PLATFORMS = \[/);
     for (const platform of ["twitter", "linkedin", "instagram", "tiktok", "threads", "youtube", "facebook", "pinterest", "bluesky"]) {
       assert.match(source, new RegExp(`platform: "${platform}"`));
     }
-    assert.match(source, /<PlatformIcon platform=\{platform\.platform\}/);
+    assert.match(source, /<PublicPlatformIcon platform=\{platform\.platform\}/);
     assert.match(source, /<span className="about-platform-name">\{platform\.name\}<\/span>/);
   });
 });

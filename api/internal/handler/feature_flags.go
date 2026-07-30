@@ -34,8 +34,10 @@ func NewFeatureFlagsHandler(store featureFlagAdminStore, evaluator featureFlagEv
 
 type adminFeatureFlagResponse struct {
 	featureflags.Flag
-	Label     string `json:"label"`
-	OwnerArea string `json:"owner_area"`
+	Label           string `json:"label"`
+	OwnerArea       string `json:"owner_area"`
+	Internal        bool   `json:"internal"`
+	ActivationReady bool   `json:"activation_ready"`
 }
 
 func (h *FeatureFlagsHandler) ListAdmin(w http.ResponseWriter, r *http.Request) {
@@ -55,9 +57,11 @@ func (h *FeatureFlagsHandler) ListAdmin(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		out = append(out, adminFeatureFlagResponse{
-			Flag:      flag,
-			Label:     definition.Label,
-			OwnerArea: definition.OwnerArea,
+			Flag:            flag,
+			Label:           definition.Label,
+			OwnerArea:       definition.OwnerArea,
+			Internal:        definition.Internal,
+			ActivationReady: definition.ActivationReady,
 		})
 	}
 	writeSuccess(w, out)
@@ -81,6 +85,10 @@ func (h *FeatureFlagsHandler) UpdateAdmin(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "enabled must be a boolean")
 		return
 	}
+	if *body.Enabled && !definition.ActivationReady {
+		writeError(w, http.StatusConflict, "FLAG_NOT_READY", "This feature flag cannot be enabled until its SDK, canonical live-publisher, historical Metrics coverage/parity, retention-safety, and exact-SHA prerequisites are met")
+		return
+	}
 	actor := auth.GetUserID(r.Context())
 	if actor == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing admin user")
@@ -96,9 +104,11 @@ func (h *FeatureFlagsHandler) UpdateAdmin(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeSuccess(w, adminFeatureFlagResponse{
-		Flag:      flag,
-		Label:     definition.Label,
-		OwnerArea: definition.OwnerArea,
+		Flag:            flag,
+		Label:           definition.Label,
+		OwnerArea:       definition.OwnerArea,
+		Internal:        definition.Internal,
+		ActivationReady: definition.ActivationReady,
 	})
 }
 

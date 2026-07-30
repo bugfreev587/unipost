@@ -2,11 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
-import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import {
   Clock3,
-  ExternalLink,
   Eye,
   ListVideo,
   MessageCircle,
@@ -19,7 +17,9 @@ import {
   Video,
   type LucideIcon,
 } from "lucide-react";
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
+import { YouTubeChannelIdentity } from "@/components/youtube/youtube-channel-identity";
+import { YouTubeSourceLink } from "@/components/youtube/youtube-source-link";
 import {
   getAccountMetrics,
   getYouTubeAnalyticsSummary,
@@ -249,7 +249,7 @@ export function YouTubeAnalyticsView({ profileId }: { profileId: string }) {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 20, marginBottom: 24 }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-            <div className="platform-icon-wrap"><PlatformIcon platform="youtube" /></div>
+            <div className="platform-icon-wrap"><AccountDestinationIcon platform="youtube" /></div>
             <div className="dt-page-title">YouTube Analytics</div>
           </div>
           <div className="dt-subtitle" style={{ maxWidth: 760 }}>
@@ -375,8 +375,6 @@ function ChannelPanel({
   metrics: AccountMetrics | null;
   summary: YouTubeAnalyticsSummary | null;
 }) {
-  const channelName = account.account_name || "YouTube channel";
-  const channelUrl = account.external_account_id ? `https://www.youtube.com/channel/${account.external_account_id}` : "";
   const hiddenSubscriberCount = Boolean(metrics?.platform_specific?.hidden_subscriber_count);
   const subscriberRounded = Boolean(metrics?.platform_specific?.subscriber_count_rounded);
 
@@ -389,46 +387,15 @@ function ChannelPanel({
         </div>
       </div>
       <div className="settings-section-body">
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <ChannelAvatar src={account.account_avatar_url || ""} label={channelName} />
-          <div style={{ minWidth: 0 }}>
-            <div style={{ color: "var(--dtext)", fontWeight: 700 }}>{channelName}</div>
-            <div style={{ color: "var(--dmuted)", fontSize: 12, fontFamily: "var(--font-geist-mono), monospace", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {account.external_account_id || account.id}
-            </div>
-          </div>
+        <div style={{ marginBottom: 16 }}>
+          <YouTubeChannelIdentity account={account} disclosure="Data from YouTube" />
         </div>
         <div style={{ display: "grid", gap: 9, color: "var(--dmuted)", fontSize: 13 }}>
           <div>Last metrics fetch: {formatDateTime(metrics?.fetched_at)}</div>
           <div>Analytics window: {summary ? `${summary.start_date} to ${summary.end_date}` : "Unavailable until YouTube Analytics responds"}</div>
           <div>Subscriber count: {hiddenSubscriberCount ? "Hidden by channel settings" : subscriberRounded ? "Rounded by YouTube" : "Exact when YouTube returns it"}</div>
-          {channelUrl && (
-            <Link href={channelUrl} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--daccent)", textDecoration: "none" }}>
-              <ExternalLink style={{ width: 14, height: 14 }} />
-              Open channel
-            </Link>
-          )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function ChannelAvatar({ src, label }: { src: string; label: string }) {
-  const [failedSrc, setFailedSrc] = useState("");
-  const showImage = src && failedSrc !== src;
-  return (
-    <div style={{ width: 48, height: 48, borderRadius: "50%", background: "linear-gradient(135deg, #dc2626, #111827)", display: "grid", placeItems: "center", color: "white", fontWeight: 700, overflow: "hidden", flexShrink: 0 }}>
-      {showImage ? (
-        <img
-          src={src}
-          alt=""
-          onError={() => setFailedSrc(src)}
-          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-        />
-      ) : (
-        label.slice(0, 2).toUpperCase()
-      )}
     </div>
   );
 }
@@ -536,10 +503,14 @@ function TopVideosTable({ rows }: { rows: YouTubeAnalyticsVideoRow[] }) {
               {rows.map((row) => (
                 <tr key={row.video_id}>
                   <td style={tdStyle}>
-                    <Link href={`https://www.youtube.com/watch?v=${row.video_id}`} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "var(--daccent)", textDecoration: "none" }}>
-                      <Video style={{ width: 14, height: 14 }} />
+                    <div style={{ display: "grid", gap: 2 }}>
                       <span style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 12 }}>{row.video_id}</span>
-                    </Link>
+                      <YouTubeSourceLink
+                        href={`https://www.youtube.com/watch?v=${row.video_id}`}
+                        label={`video ${row.video_id}`}
+                        disclosure="View on YouTube"
+                      />
+                    </div>
                   </td>
                   <td style={tdRightStyle}>{formatNumber(row.metrics.views)}</td>
                   <td style={tdRightStyle}>{formatWatchTime(row.metrics.estimated_minutes_watched)}</td>

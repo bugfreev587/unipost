@@ -20,6 +20,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/observabilityreads"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/trials"
 )
@@ -41,6 +42,8 @@ type AdminHandler struct {
 	holds     paidquota.HoldReconciler
 	evaluator paidQuotaEvaluationService
 	trials    adminTrialService
+	selector  observabilityReadSelector
+	v2        observabilityreads.LogReader
 }
 
 func (h *AdminHandler) SetTrialService(service adminTrialService) *AdminHandler {
@@ -69,6 +72,16 @@ func (h *AdminHandler) hasOpenTrial(ctx context.Context, workspaceID string) (bo
 
 func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager, queries *db.Queries) *AdminHandler {
 	return &AdminHandler{pool: pool, stripeMgr: stripeMgr, queries: queries}
+}
+
+func (h *AdminHandler) SetObservabilityReads(selector observabilityReadSelector, reader observabilityreads.LogReader) *AdminHandler {
+	h.selector = selector
+	h.v2 = reader
+	return h
+}
+
+func (h *AdminHandler) observabilityLogReader(ctx context.Context) observabilityreads.LogReader {
+	return observabilityreads.SelectLogReader(ctx, h.selector, h.v2)
 }
 
 func (h *AdminHandler) SetPaidQuotaServices(holds paidquota.HoldReconciler, evaluator paidQuotaEvaluationService) *AdminHandler {
@@ -272,7 +285,7 @@ type adminIntegrationLogResponse struct {
 	ResponsePayload  json.RawMessage `json:"response_payload,omitempty"`
 }
 
-const adminLogsBaseSelect = `
+const adminLogsMetadataSelect = `
 SELECT
   l.id,
   l.workspace_id,
@@ -301,14 +314,22 @@ SELECT
   l.remote_status_code,
   l.duration_ms,
   l.error_code,
-  l.metadata,
-  l.request_payload,
-  l.response_payload
+  l.metadata`
+
+const adminLogsFrom = `
 FROM integration_logs l
 LEFT JOIN workspaces w ON w.id = l.workspace_id
 LEFT JOIN users u ON u.id = w.user_id
 LEFT JOIN subscriptions s ON s.workspace_id = w.id
 `
+
+func adminLogsSelect(includePayloads bool) string {
+	query := adminLogsMetadataSelect
+	if includePayloads {
+		query += ",\n  l.request_payload,\n  l.response_payload"
+	}
+	return query + adminLogsFrom
+}
 
 func parseAdminLogTime(raw string, fallback time.Time) time.Time {
 	raw = strings.TrimSpace(raw)
@@ -327,7 +348,7 @@ func scanAdminIntegrationLogRow(row pgx.Row, includePayloads bool) (adminIntegra
 	var requestID, traceID, actorUserID, actorAPIKeyID, profileID, socialAccountID, postID, platformPostID, platform, endpoint, method, errorCode *string
 	var httpStatusCode, remoteStatusCode, durationMs *int32
 	var requestPayload, responsePayload []byte
-	err := row.Scan(
+	destinations := []any{
 		&out.ID,
 		&out.WorkspaceID,
 		&out.WorkspaceName,
@@ -356,9 +377,11 @@ func scanAdminIntegrationLogRow(row pgx.Row, includePayloads bool) (adminIntegra
 		&durationMs,
 		&errorCode,
 		&out.Metadata,
-		&requestPayload,
-		&responsePayload,
-	)
+	}
+	if includePayloads {
+		destinations = append(destinations, &requestPayload, &responsePayload)
+	}
+	err := row.Scan(destinations...)
 	if err != nil {
 		return adminIntegrationLogResponse{}, err
 	}
@@ -415,6 +438,10 @@ func scanAdminIntegrationLogRow(row pgx.Row, includePayloads bool) (adminIntegra
 }
 
 func (h *AdminHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
+	if reader := h.observabilityLogReader(r.Context()); reader != nil {
+		h.listLogsV2(w, r, reader)
+		return
+	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 || limit > 500 {
@@ -424,7 +451,7 @@ func (h *AdminHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 	from := parseAdminLogTime(q.Get("from"), time.Now().AddDate(0, 0, -7))
 	to := parseAdminLogTime(q.Get("to"), time.Now())
 
-	sql := adminLogsBaseSelect + `
+	sql := adminLogsSelect(false) + `
 WHERE ($1::TEXT = '' OR l.workspace_id = $1)
   AND ($2::TEXT = '' OR u.email ILIKE '%' || $2 || '%')
   AND ($3::TEXT = '' OR l.category = $3)
@@ -493,14 +520,60 @@ LIMIT $17`
 	writeSuccessWithListMeta(w, out, len(out), limit)
 }
 
+func (h *AdminHandler) listLogsV2(w http.ResponseWriter, r *http.Request, reader observabilityreads.LogReader) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	to := parseAdminLogTime(q.Get("to"), time.Now())
+	from := parseAdminLogTime(q.Get("from"), to.AddDate(0, 0, -7))
+	var cursor *observabilityreads.LogCursor
+	if raw := strings.TrimSpace(q.Get("cursor")); raw != "" {
+		decoded, err := observabilityreads.DecodeLogCursor(raw)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid cursor")
+			return
+		}
+		cursor = &decoded
+	}
+	page, err := reader.ListAdmin(r.Context(), observabilityLogFilters(q, from, to), cursor, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load admin logs: "+err.Error())
+		return
+	}
+	nextCursor := ""
+	if page.NextCursor != nil {
+		nextCursor, err = observabilityreads.EncodeLogCursor(*page.NextCursor)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encode admin logs cursor")
+			return
+		}
+	}
+	writeSuccessWithCursor(w, page.Logs, nextCursor, page.NextCursor != nil, limit)
+}
+
 func (h *AdminHandler) GetLog(w http.ResponseWriter, r *http.Request) {
+	if reader := h.observabilityLogReader(r.Context()); reader != nil {
+		item, err := reader.GetAdmin(r.Context(), chi.URLParam(r, "id"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Log not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load admin log: "+err.Error())
+			return
+		}
+		writeSuccess(w, item)
+		return
+	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid log id")
 		return
 	}
 
-	row := h.pool.QueryRow(r.Context(), adminLogsBaseSelect+`
+	row := h.pool.QueryRow(r.Context(), adminLogsSelect(true)+`
 WHERE l.id = $1
 LIMIT 1`, id)
 
@@ -919,11 +992,66 @@ type adminPostFailure struct {
 	PlatformErrorCode  *string   `json:"platform_error_code,omitempty"`
 	IsRetriable        *bool     `json:"is_retriable,omitempty"`
 	NextAction         *string   `json:"next_action,omitempty"`
-	// DebugCurl is the redacted curl dump captured by debugrt when the
-	// adapter's HTTP call failed. Always included for admins — this
-	// is the primary diagnostic surface for platform failures.
+	// DebugCurl remains nil on list responses. The dedicated Super Admin
+	// detail endpoint reads the diagnostic field only after selection.
 	DebugCurl *string `json:"debug_curl,omitempty"`
 }
+
+type adminPostFailureDebugResponse struct {
+	DebugCurl     *string `json:"debug_curl"`
+	OriginalBytes int64   `json:"original_bytes"`
+	StoredBytes   int64   `json:"stored_bytes"`
+	Truncated     bool    `json:"truncated"`
+	SourceKind    string  `json:"source_kind"`
+}
+
+const adminPostFailureDebugSQL = `
+WITH target_result AS (
+  SELECT pf.social_post_result_id AS id, pf.workspace_id, 0 AS priority
+  FROM post_failures pf
+  WHERE pf.id = $1 AND pf.social_post_result_id IS NOT NULL
+
+  UNION ALL
+
+  SELECT spr.id, sp.workspace_id, 1 AS priority
+  FROM social_post_results spr
+  JOIN social_posts sp ON sp.id = spr.post_id
+  WHERE spr.id = $1
+)
+SELECT
+  target.workspace_id,
+  COALESCE(
+    LEFT(NULLIF(detail.debug_text, ''), 8192),
+    LEFT(NULLIF(spr.debug_curl, ''), 8192)
+  ) AS debug_curl,
+  COALESCE(
+    detail.original_bytes,
+    OCTET_LENGTH(NULLIF(spr.debug_curl, '')),
+    0
+  ) AS original_bytes,
+  COALESCE(
+    OCTET_LENGTH(LEFT(NULLIF(detail.debug_text, ''), 8192)),
+    OCTET_LENGTH(LEFT(NULLIF(spr.debug_curl, ''), 8192)),
+    0
+  ) AS stored_bytes,
+  CASE
+    WHEN detail.social_post_result_id IS NOT NULL THEN
+      detail.truncated OR CHAR_LENGTH(detail.debug_text) > 8192
+    WHEN NULLIF(spr.debug_curl, '') IS NOT NULL THEN
+      CHAR_LENGTH(spr.debug_curl) > 8192
+    ELSE FALSE
+  END AS truncated,
+  CASE
+    WHEN detail.social_post_result_id IS NOT NULL THEN 'bounded'
+    WHEN NULLIF(spr.debug_curl, '') IS NOT NULL THEN 'legacy'
+    ELSE 'none'
+  END AS source_kind
+FROM target_result target
+LEFT JOIN post_failure_debug_details detail
+  ON detail.social_post_result_id = target.id
+LEFT JOIN social_post_results spr ON spr.id = target.id
+ORDER BY target.priority
+LIMIT 1`
 
 type adminPostFailureQuery struct {
 	UserID   string
@@ -1563,7 +1691,7 @@ WITH failed_results AS (
     NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
     NULLIF(COALESCE(pf.message, spr.error_message), '') AS error_message,
     NULL::TEXT AS error_summary,
-    NULLIF(spr.debug_curl, '') AS debug_curl,
+    NULL::TEXT AS debug_curl,
     NULLIF(COALESCE(pf.error_code, spr.error_code), '') AS error_code,
     NULLIF(COALESCE(pf.failure_stage, spr.failure_stage), '') AS failure_stage,
     NULLIF(COALESCE(pf.platform_error_code, spr.platform_error_code), '') AS platform_error_code,
@@ -1654,7 +1782,7 @@ linked_failure_events AS (
     NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
     NULLIF(COALESCE(pf.message, spr.error_message), '') AS error_message,
     NULLIF(sp.metadata->>'error_summary', '') AS error_summary,
-    NULLIF(spr.debug_curl, '') AS debug_curl,
+    NULL::TEXT AS debug_curl,
     NULLIF(COALESCE(pf.error_code, spr.error_code), '') AS error_code,
     NULLIF(COALESCE(pf.failure_stage, spr.failure_stage), '') AS failure_stage,
     NULLIF(COALESCE(pf.platform_error_code, spr.platform_error_code), '') AS platform_error_code,
@@ -2694,6 +2822,53 @@ func (h *AdminHandler) ListPostFailures(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load post failures: "+err.Error())
 		return
 	}
+
+	writeSuccess(w, out)
+}
+
+func (h *AdminHandler) GetPostFailureDebug(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid failure id")
+		return
+	}
+
+	var (
+		workspaceID string
+		out         adminPostFailureDebugResponse
+	)
+	err := h.pool.QueryRow(r.Context(), adminPostFailureDebugSQL, id).Scan(
+		&workspaceID,
+		&out.DebugCurl,
+		&out.OriginalBytes,
+		&out.StoredBytes,
+		&out.Truncated,
+		&out.SourceKind,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Failure not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load failure debug detail")
+		return
+	}
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID:  workspaceID,
+		ActorUserID:  auth.GetUserID(r.Context()),
+		Action:       audit.ActionPostFailureDebugViewed,
+		ResourceType: "post_failure_debug_detail",
+		ResourceID:   id,
+		Category:     audit.CategoryPublishing,
+		IPAddress:    r.RemoteAddr,
+		UserAgent:    r.UserAgent(),
+		Metadata: map[string]any{
+			"source_kind":    out.SourceKind,
+			"original_bytes": out.OriginalBytes,
+			"stored_bytes":   out.StoredBytes,
+			"truncated":      out.Truncated,
+		},
+	})
 
 	writeSuccess(w, out)
 }
