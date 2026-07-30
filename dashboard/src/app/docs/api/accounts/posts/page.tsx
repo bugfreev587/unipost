@@ -27,7 +27,7 @@ const RESPONSE_FIELDS: ApiFieldItem[] = [
   { name: "data[].external_post_id", type: "string", description: "Stable X post ID and the deduplication key." },
   { name: "data[].text", type: "string", description: "Post text returned by X." },
   { name: "data[].created_at", type: "string", description: "RFC 3339 publication time." },
-  { name: "data[].content_type", type: "string", description: "original_post, reply, quote_post, or repost." },
+  { name: "data[].content_type", type: "string", description: "original_post, reply, quote, or repost, with repost > reply > quote precedence." },
   { name: "data[].is_reply", type: "boolean", description: "Whether the post is a reply." },
   { name: "data[].is_self_reply", type: "boolean", description: "Whether the reply targets the same connected author." },
   { name: "data[].is_repost", type: "boolean", description: "Whether the post is a repost." },
@@ -48,7 +48,7 @@ const ERROR_FIELDS: ApiFieldItem[] = [
   { name: "error.code", type: "string", description: "Stable machine-readable error code." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "error.details", type: "object", description: "May include estimated_credits, available_credits, and max_affordable_limit." },
-  { name: "error.details.retry_cursor", type: "string", description: "Refreshed opaque cursor when a retriable delay would outlive the submitted cursor. Retry with a new Idempotency-Key." },
+  { name: "error.details.retry_cursor", type: "string", description: "Refreshed opaque cursor when a retriable delay would outlive the submitted cursor. Retry the same logical page with the same Idempotency-Key." },
   { name: "error.details.retry_cursor_expires_at", type: "string", description: "RFC 3339 expiry for retry_cursor." },
   { name: "request_id", type: "string", description: "Request identifier for support." },
 ];

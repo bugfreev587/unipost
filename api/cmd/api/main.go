@@ -761,12 +761,33 @@ func main() {
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker).
 		SetXTokenRefresher(xTokenRefresher)
 	xAccountReadStore := xaccountreads.NewPostgresStore(pool)
+	xAccountReadCursorKey := strings.TrimSpace(os.Getenv("X_ACCOUNT_READ_CURSOR_KEY"))
+	if xAccountReadCursorKey == "" {
+		xAccountReadCursorKey = encryptionKey
+	}
+	if len(xAccountReadCursorKey) < 16 {
+		slog.Error("X_ACCOUNT_READ_CURSOR_KEY must contain at least 16 bytes")
+		os.Exit(1)
+	}
+	var xAccountReadPreviousCursorKeys [][]byte
+	for _, raw := range strings.Split(os.Getenv("X_ACCOUNT_READ_CURSOR_PREVIOUS_KEYS"), ",") {
+		key := strings.TrimSpace(raw)
+		if key == "" {
+			continue
+		}
+		if len(key) < 16 {
+			slog.Error("X_ACCOUNT_READ_CURSOR_PREVIOUS_KEYS contains a key shorter than 16 bytes")
+			os.Exit(1)
+		}
+		xAccountReadPreviousCursorKeys = append(xAccountReadPreviousCursorKeys, []byte(key))
+	}
 	xAccountReadService := xaccountreads.NewService(
 		xAccountReadStore,
 		xCreditsService,
 		platform.NewTwitterAdapter(),
 		encryptor,
-		[]byte(encryptionKey),
+		[]byte(xAccountReadCursorKey),
+		xAccountReadPreviousCursorKeys...,
 	)
 	xAccountReadsHandler := handler.NewXAccountReadsHandler(
 		queries, encryptor, xAccountReadService, xTokenRefresher,

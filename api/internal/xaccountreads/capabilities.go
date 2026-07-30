@@ -31,17 +31,18 @@ type Capabilities struct {
 }
 
 type CapabilityInput struct {
-	AccountStatus    string
-	Disconnected     bool
-	Scopes           []string
-	RefreshAvailable bool
-	AppMode          xinbox.AppMode
-	BillingEnabled   bool
+	AccountStatus           string
+	Disconnected            bool
+	Scopes                  []string
+	RefreshAvailable        bool
+	AppCredentialsAvailable bool
+	AppMode                 xinbox.AppMode
+	BillingEnabled          bool
 }
 
 func EvaluateCapabilities(input CapabilityInput) Capabilities {
-	profileAuthorized := accountReadBaseAuthorized(input) && hasScopes(input.Scopes, "users.read")
-	postsAuthorized := accountReadBaseAuthorized(input) && hasScopes(input.Scopes, "users.read", "tweet.read")
+	profileAuthorized := accountReadBaseAuthorized(input) && hasScopes(input.Scopes, "users.read", "offline.access")
+	postsAuthorized := accountReadBaseAuthorized(input) && hasScopes(input.Scopes, "users.read", "tweet.read", "offline.access")
 	return Capabilities{
 		ProfileRead: ReadCapability{
 			Supported: true, Authorized: profileAuthorized, ReconnectRequired: !profileAuthorized,
@@ -55,8 +56,11 @@ func EvaluateCapabilities(input CapabilityInput) Capabilities {
 }
 
 func accountReadBaseAuthorized(input CapabilityInput) bool {
-	return !input.Disconnected && strings.EqualFold(input.AccountStatus, "active") &&
-		input.RefreshAvailable && input.AppMode != xinbox.AppModeLegacyUnknown
+	if input.Disconnected || !strings.EqualFold(input.AccountStatus, "active") ||
+		!input.RefreshAvailable || input.AppMode == xinbox.AppModeLegacyUnknown {
+		return false
+	}
+	return input.AppMode != xinbox.AppModeWorkspace || input.AppCredentialsAvailable
 }
 
 func hasScopes(granted []string, required ...string) bool {

@@ -2,13 +2,12 @@
 -- unipost:safety reversible
 
 -- The Inbox backfill reservation table already contains the authoritative X
--- paid-read financial state machine. Generalize it in place so account reads
--- reuse the same reservation/finalization/release recovery path.
+-- paid-read financial state machine. Keep its physical name during rolling
+-- deploys so old replicas remain compatible, and expose the generalized name
+-- through a simple automatically-updatable view for new replicas.
 -- The existing reconciliation_deadline remains the single authoritative
 -- deadline for both legacy Inbox and new account-read exposures.
-ALTER TABLE x_inbox_backfill_exposure_reservations RENAME TO x_read_exposures;
-
-ALTER TABLE x_read_exposures
+ALTER TABLE x_inbox_backfill_exposure_reservations
   ADD COLUMN purpose TEXT NOT NULL DEFAULT 'inbox_backfill'
     CHECK (purpose IN ('inbox_backfill', 'account_profile', 'account_post_history')),
   ADD COLUMN external_user_id TEXT,
@@ -20,27 +19,23 @@ ALTER TABLE x_read_exposures
   ADD COLUMN bypass_reason TEXT,
   ADD COLUMN finalized_at TIMESTAMPTZ;
 
-ALTER TABLE x_read_exposures
+ALTER TABLE x_inbox_backfill_exposure_reservations
   DROP CONSTRAINT IF EXISTS x_inbox_backfill_exposure_reservations_reserved_units_check;
-ALTER TABLE x_read_exposures
+ALTER TABLE x_inbox_backfill_exposure_reservations
   ADD CONSTRAINT x_read_exposures_reserved_units_check CHECK (reserved_units >= 0);
 
-ALTER INDEX IF EXISTS x_inbox_backfill_exposure_pending_idx
-  RENAME TO x_read_exposures_pending_idx;
-ALTER INDEX IF EXISTS x_inbox_exposure_reconciliation_current_idx
-  RENAME TO x_read_exposures_status_updated_idx;
-ALTER INDEX IF EXISTS x_inbox_exposure_reconciliation_deadline_idx
-  RENAME TO x_read_exposures_deadline_idx;
+CREATE VIEW x_read_exposures AS
+  SELECT * FROM x_inbox_backfill_exposure_reservations;
 
 CREATE INDEX x_read_exposures_workspace_created_idx
-  ON x_read_exposures (workspace_id, created_at DESC, id DESC);
+  ON x_inbox_backfill_exposure_reservations (workspace_id, created_at DESC, id DESC);
 
 CREATE TABLE x_read_receipts (
   operation_id               TEXT PRIMARY KEY DEFAULT ('xro_' || replace(gen_random_uuid()::TEXT, '-', '')),
   workspace_id               TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   social_account_id          TEXT NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
   external_user_id           TEXT NOT NULL,
-  exposure_id                TEXT NOT NULL UNIQUE REFERENCES x_read_exposures(id) ON DELETE CASCADE,
+  exposure_id                TEXT NOT NULL UNIQUE REFERENCES x_inbox_backfill_exposure_reservations(id) ON DELETE CASCADE,
   endpoint                   TEXT NOT NULL CHECK (endpoint IN ('profile', 'posts')),
   idempotency_key_hash       TEXT NOT NULL,
   request_fingerprint        TEXT NOT NULL,
@@ -79,10 +74,11 @@ CREATE INDEX x_read_receipts_account_rate_idx
 
 DROP TABLE IF EXISTS x_read_receipts;
 DROP INDEX IF EXISTS x_read_exposures_workspace_created_idx;
+DROP VIEW IF EXISTS x_read_exposures;
 
-ALTER TABLE x_read_exposures
+ALTER TABLE x_inbox_backfill_exposure_reservations
   DROP CONSTRAINT IF EXISTS x_read_exposures_reserved_units_check;
-ALTER TABLE x_read_exposures
+ALTER TABLE x_inbox_backfill_exposure_reservations
   ADD CONSTRAINT x_inbox_backfill_exposure_reservations_reserved_units_check CHECK (reserved_units > 0);
 
 ALTER TABLE x_read_exposures
@@ -94,12 +90,3 @@ ALTER TABLE x_read_exposures
   DROP COLUMN IF EXISTS units_per_resource,
   DROP COLUMN IF EXISTS external_user_id,
   DROP COLUMN IF EXISTS purpose;
-
-ALTER INDEX IF EXISTS x_read_exposures_pending_idx
-  RENAME TO x_inbox_backfill_exposure_pending_idx;
-ALTER INDEX IF EXISTS x_read_exposures_status_updated_idx
-  RENAME TO x_inbox_exposure_reconciliation_current_idx;
-ALTER INDEX IF EXISTS x_read_exposures_deadline_idx
-  RENAME TO x_inbox_exposure_reconciliation_deadline_idx;
-
-ALTER TABLE x_read_exposures RENAME TO x_inbox_backfill_exposure_reservations;

@@ -19,17 +19,19 @@ import (
 
 type Store interface {
 	Lookup(context.Context, string, string, time.Time) (Receipt, error)
+	ResetFailedForRetry(context.Context, string, time.Time) (bool, error)
 	AdmissionMutation(NewReceipt) xcredits.ExposureMutation
-	MarkSucceeded(context.Context, string, []byte, time.Time) error
-	MarkFailed(context.Context, string, string, time.Time) error
+	MarkFailed(context.Context, string, string, time.Time, time.Time) error
 	MarkOutcomeUnknown(context.Context, string, time.Time) error
 	MarkSettlementPending(context.Context, string, []byte, time.Time) error
+	SuccessMutation(string, []byte, time.Time) xcredits.ExposureSettlementMutation
 }
 
 type CreditsService interface {
 	ReserveExposureWithMutation(context.Context, xcredits.ExposureReservationRequest, xcredits.ExposureMutation) (xcredits.ExposureReservation, error)
 	MarkExposureReadStarted(context.Context, string) error
 	FinalizeExposure(context.Context, string, int64) error
+	FinalizeExposureWithMutation(context.Context, string, int64, xcredits.ExposureSettlementMutation) error
 	ReleaseExposure(context.Context, string) error
 	MarkExposureFinalizePending(context.Context, string, int64, string) error
 	MarkExposureReleasePending(context.Context, string, string) error
@@ -64,8 +66,8 @@ type Service struct {
 	tokens   TokenResolver
 }
 
-func NewService(store Store, credits CreditsService, provider Provider, cipher Cipher, secret []byte) *Service {
-	cursors, _ := NewCursorCodec(secret)
+func NewService(store Store, credits CreditsService, provider Provider, cipher Cipher, secret []byte, previousSecrets ...[]byte) *Service {
+	cursors, _ := NewCursorCodec(secret, previousSecrets...)
 	key := sha256.Sum256(append([]byte("unipost:x-account-read:idempotency:"), secret...))
 	return &Service{store: store, credits: credits, provider: provider, cipher: cipher, hashKey: key[:], cursors: cursors}
 }
@@ -122,7 +124,17 @@ func (s *Service) begin(ctx context.Context, input admissionInput) (admission, e
 		return admission{}, err
 	}
 	if existing, err := s.store.Lookup(ctx, input.WorkspaceID, keyHash, input.Now); err == nil {
-		return existingAdmission(existing, fingerprint)
+		if existing.Status == ReceiptFailed && !existing.NextAttemptAt.After(input.Now) {
+			reset, resetErr := s.store.ResetFailedForRetry(ctx, existing.OperationID, input.Now)
+			if resetErr != nil {
+				return admission{}, resetErr
+			}
+			if !reset {
+				return existingAdmission(existing, fingerprint, input.Now)
+			}
+		} else {
+			return existingAdmission(existing, fingerprint, input.Now)
+		}
 	} else if !errors.Is(err, ErrReceiptNotFound) {
 		return admission{}, err
 	}
@@ -153,7 +165,7 @@ func (s *Service) begin(ctx context.Context, input admissionInput) (admission, e
 	}, s.store.AdmissionMutation(receipt))
 	if err != nil {
 		if existing, lookupErr := s.store.Lookup(ctx, input.WorkspaceID, keyHash, input.Now); lookupErr == nil {
-			return existingAdmission(existing, fingerprint)
+			return existingAdmission(existing, fingerprint, input.Now)
 		}
 		if errors.Is(err, xcredits.ErrMonthlyLimitExceeded) || errors.Is(err, xcredits.ErrAllowanceNotConfigured) {
 			estimated := int64(input.RequestedResources) * input.UnitsPerResource
@@ -192,7 +204,7 @@ func (s *Service) begin(ctx context.Context, input admissionInput) (admission, e
 	return admission{receipt: receipt.Receipt, reservation: reservation}, nil
 }
 
-func existingAdmission(receipt Receipt, fingerprint string) (admission, error) {
+func existingAdmission(receipt Receipt, fingerprint string, now time.Time) (admission, error) {
 	if receipt.RequestFingerprint != fingerprint {
 		slog.Warn("X account read idempotency conflict",
 			"operation_id", receipt.OperationID,
@@ -214,7 +226,11 @@ func existingAdmission(receipt Receipt, fingerprint string) (admission, error) {
 		if code == "" {
 			code = CodeXUpstream
 		}
-		return admission{}, &OperationError{Code: code}
+		retryAfter := time.Duration(0)
+		if receipt.NextAttemptAt.After(now) {
+			retryAfter = receipt.NextAttemptAt.Sub(now)
+		}
+		return admission{}, &OperationError{Code: code, RetryAfter: retryAfter}
 	default:
 		return admission{}, errors.New("invalid X account-read receipt state")
 	}
@@ -249,7 +265,11 @@ func (s *Service) ReadProfile(ctx context.Context, req ProfileRequest) (ProfileR
 	if err := s.credits.MarkExposureReadStarted(ctx, admitted.reservation.ID); err != nil {
 		return ProfileResult{}, err
 	}
-	profile, err := s.provider.ReadAccountProfile(ctx, req.AccessToken, req.ExternalAccountID)
+	accessToken, err := s.resolveAccessToken(ctx, admitted, req.AccessToken, req.Now)
+	if err != nil {
+		return ProfileResult{}, err
+	}
+	profile, err := s.provider.ReadAccountProfile(ctx, accessToken, req.ExternalAccountID)
 	if err != nil {
 		return ProfileResult{}, s.failRead(ctx, admitted, err, req.Now)
 	}
@@ -287,7 +307,7 @@ func (s *Service) ReadPosts(ctx context.Context, req PostsRequest) (PostsResult,
 		Limit                                                                     int
 		ExcludeReposts, ExcludeRepliesToOthers                                    bool
 	}{
-		req.WorkspaceID, req.AccountID, req.ExternalUserID, "/posts", req.Cursor,
+		req.WorkspaceID, req.AccountID, req.ExternalUserID, "/posts", upstreamCursor,
 		scope.StartTime, scope.EndTime, req.Limit, req.ExcludeReposts, req.ExcludeRepliesToOthers,
 	}
 	admitted, err := s.begin(ctx, admissionInput{
@@ -304,7 +324,7 @@ func (s *Service) ReadPosts(ctx context.Context, req PostsRequest) (PostsResult,
 		Now: req.Now,
 	})
 	if err != nil {
-		return PostsResult{}, err
+		return PostsResult{}, s.withRetryCursor(err, req.Cursor, scope, cursorExpiresAt, req.Now)
 	}
 	if admitted.replay {
 		var result PostsResult
@@ -318,21 +338,16 @@ func (s *Service) ReadPosts(ctx context.Context, req PostsRequest) (PostsResult,
 	if err := s.credits.MarkExposureReadStarted(ctx, admitted.reservation.ID); err != nil {
 		return PostsResult{}, err
 	}
-	page, err := s.provider.ReadAuthoredPosts(ctx, req.AccessToken, req.ExternalAccountID, platform.TwitterAuthoredPostsRequest{
+	accessToken, err := s.resolveAccessToken(ctx, admitted, req.AccessToken, req.Now)
+	if err != nil {
+		return PostsResult{}, err
+	}
+	page, err := s.provider.ReadAuthoredPosts(ctx, accessToken, req.ExternalAccountID, platform.TwitterAuthoredPostsRequest{
 		Limit: req.Limit, PaginationToken: upstreamCursor, StartTime: req.StartTime, EndTime: req.EndTime,
 		ExcludeReposts: req.ExcludeReposts, ExcludeRepliesToOthers: req.ExcludeRepliesToOthers,
 	})
 	if err != nil {
-		readErr := s.failRead(ctx, admitted, err, req.Now)
-		var operationErr *OperationError
-		if req.Cursor != "" && errors.As(readErr, &operationErr) && operationErr.RetryAfter > 0 &&
-			!cursorExpiresAt.After(req.Now.Add(operationErr.RetryAfter)) {
-			if retryCursor, expiresAt, refreshErr := s.cursors.Refresh(req.Cursor, scope, req.Now); refreshErr == nil {
-				operationErr.RetryCursor = retryCursor
-				operationErr.RetryCursorExpiresAt = expiresAt
-			}
-		}
-		return PostsResult{}, readErr
+		return PostsResult{}, s.withRetryCursor(s.failRead(ctx, admitted, err, req.Now), req.Cursor, scope, cursorExpiresAt, req.Now)
 	}
 	data := make([]PostData, 0, len(page.Posts))
 	for _, post := range page.Posts {
@@ -358,6 +373,47 @@ func (s *Service) ReadPosts(ctx context.Context, req PostsRequest) (PostsResult,
 	return result, nil
 }
 
+func (s *Service) resolveAccessToken(ctx context.Context, admitted admission, provided string, now time.Time) (string, error) {
+	if provided != "" {
+		return provided, nil
+	}
+	if s.tokens == nil {
+		return "", s.failBeforeProvider(ctx, admitted, errors.New("X account-read token resolver is not configured"), now)
+	}
+	token, err := s.tokens.ResolveAccountReadToken(ctx, admitted.receipt.AccountID)
+	if err != nil || token == "" {
+		if err == nil {
+			err = errors.New("X account-read token resolver returned an empty token")
+		}
+		return "", s.failBeforeProvider(ctx, admitted, err, now)
+	}
+	return token, nil
+}
+
+func (s *Service) failBeforeProvider(ctx context.Context, admitted admission, cause error, now time.Time) error {
+	if err := s.credits.ReleaseExposure(ctx, admitted.reservation.ID); err != nil {
+		_ = s.credits.MarkExposureReleasePending(ctx, admitted.reservation.ID, "X account-read pre-provider release failed")
+		_ = s.store.MarkOutcomeUnknown(ctx, admitted.receipt.OperationID, now.Add(time.Minute))
+		return &OperationError{Code: CodeReadSettlementPending, RetryAfter: time.Minute, Cause: err}
+	}
+	_ = s.store.MarkFailed(ctx, admitted.receipt.OperationID, CodeReauthorization, now, now)
+	return &OperationError{Code: CodeReauthorization, Cause: cause}
+}
+
+func (s *Service) withRetryCursor(err error, cursor string, scope CursorScope, expiresAt time.Time, now time.Time) error {
+	var operationErr *OperationError
+	if cursor == "" || !errors.As(err, &operationErr) || operationErr.RetryAfter <= 0 ||
+		expiresAt.After(now.Add(operationErr.RetryAfter)) {
+		return err
+	}
+	retryCursor, retryExpiresAt, refreshErr := s.cursors.Refresh(cursor, scope, now)
+	if refreshErr == nil {
+		operationErr.RetryCursor = retryCursor
+		operationErr.RetryCursorExpiresAt = retryExpiresAt
+	}
+	return err
+}
+
 func (s *Service) complete(ctx context.Context, admitted admission, actualUnits int64, credits *CreditsReceipt, response any, now time.Time) error {
 	if admitted.reservation.AccountingEnabled {
 		credits.Charged = actualUnits
@@ -367,13 +423,15 @@ func (s *Service) complete(ctx context.Context, admitted admission, actualUnits 
 	if err != nil {
 		return err
 	}
-	if err := s.credits.FinalizeExposure(ctx, admitted.reservation.ID, actualUnits); err != nil {
+	if err := s.credits.FinalizeExposureWithMutation(
+		ctx,
+		admitted.reservation.ID,
+		actualUnits,
+		s.store.SuccessMutation(admitted.receipt.OperationID, body, now),
+	); err != nil {
 		_ = s.credits.MarkExposureFinalizePending(ctx, admitted.reservation.ID, actualUnits, "X account-read finalization failed")
 		_ = s.store.MarkSettlementPending(ctx, admitted.receipt.OperationID, body, now.Add(time.Minute))
 		return &OperationError{Code: CodeReadSettlementPending, RetryAfter: time.Minute, Cause: err}
-	}
-	if err := s.store.MarkSucceeded(ctx, admitted.receipt.OperationID, body, now); err != nil {
-		return err
 	}
 	return nil
 }
@@ -398,11 +456,11 @@ func (s *Service) failRead(ctx context.Context, admitted admission, readErr erro
 			code = CodeReauthorization
 		}
 	}
-	_ = s.store.MarkFailed(ctx, admitted.receipt.OperationID, code, now)
 	retryAfter := time.Duration(0)
 	if providerErr != nil {
 		retryAfter = providerErr.RetryAfter
 	}
+	_ = s.store.MarkFailed(ctx, admitted.receipt.OperationID, code, now, now.Add(retryAfter))
 	if code == CodeRateLimited {
 		slog.Warn("X account read rate limited",
 			"operation_id", admitted.receipt.OperationID,

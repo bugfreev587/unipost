@@ -30,6 +30,8 @@ test("X profile and authored-post references document their public contracts", a
   assert.match(posts, /exclude_replies_to_others/);
   assert.match(posts, /cursor_expires_at/);
   assert.match(posts, /retry_cursor/);
+  assert.match(posts, /repost > reply > quote/);
+  assert.doesNotMatch(posts, /quote_post/);
   assert.match(posts, /external_post_id/);
   assert.match(posts, /thread_id/);
   assert.match(posts, /position is not exposed/i);

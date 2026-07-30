@@ -395,7 +395,9 @@ The public cursor is opaque, authenticated, and encrypted. Its payload binds:
 
 The UniPost cursor expires after seven days and every page response returns `cursor_expires_at`. A modified, expired, cross-account, cross-user, or filter-mismatched cursor returns `400 INVALID_CURSOR`. UniPost must not expose the upstream X pagination token directly. X may impose a shorter undocumented validity period on its own token; UniPost cannot promise continuation after X rejects that token.
 
-Each continuation page requires a new `Idempotency-Key`. Replaying a completed page with the same key returns the stored response during the 24-hour receipt period. If UniPost returns a retriable error whose `Retry-After` would extend beyond the cursor's remaining lifetime, the error details include a newly signed `retry_cursor` wrapping the same upstream token. If the caller simply allows a cursor to expire, restarting the scan is a new billable operation; UniPost does not refund caller-caused expiry.
+Each continuation page requires a new `Idempotency-Key`, but retries of that same logical page reuse its key. Replaying a completed page with the same key returns the stored response during the 24-hour receipt period. If UniPost returns a retriable error whose `Retry-After` would extend beyond the cursor's remaining lifetime, the error details include a newly signed `retry_cursor` wrapping the same upstream token; the caller uses that cursor with the same key after `Retry-After`. If the caller simply allows a cursor to expire, restarting the scan is a new billable operation; UniPost does not refund caller-caused expiry.
+
+Cursor envelopes carry a version and non-secret key identifier. `X_ACCOUNT_READ_CURSOR_KEY` selects the current signing/encryption key and `X_ACCOUNT_READ_CURSOR_PREVIOUS_KEYS` supplies a comma-separated decode-only key ring during rotation. Previous keys remain configured for at least the seven-day cursor lifetime; new cursors are always issued with the current key.
 
 UniPost does not intentionally duplicate a post within a response. Callers must still upsert by `external_post_id` because a live timeline can change between page requests.
 

@@ -346,14 +346,19 @@ func (a *TwitterAdapter) ReadAuthoredPosts(
 			case "replied_to":
 				post.IsReply = true
 				post.ReplyToExternalPostID = ref.ID
-				post.ContentType = "reply"
 			case "quoted":
 				post.IsQuote = true
-				post.ContentType = "quote_post"
 			case "retweeted":
 				post.IsRepost = true
-				post.ContentType = "repost"
 			}
+		}
+		switch {
+		case post.IsRepost:
+			post.ContentType = "repost"
+		case post.IsReply:
+			post.ContentType = "reply"
+		case post.IsQuote:
+			post.ContentType = "quote"
 		}
 		post.IsSelfReply = post.IsReply && source.InReplyToUserID == userID
 		if request.ExcludeReposts && post.IsRepost {

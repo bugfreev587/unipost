@@ -46,14 +46,14 @@ func NewXAccountReadsHandler(
 }
 
 func (h *XAccountReadsHandler) Profile(w http.ResponseWriter, r *http.Request) {
-	account, externalUserID, idempotencyKey, token, ok := h.authorize(w, r, "users.read")
+	account, externalUserID, idempotencyKey, ok := h.authorize(w, r, "users.read")
 	if !ok {
 		return
 	}
 	result, err := h.service.ReadProfile(r.Context(), xaccountreads.ProfileRequest{
 		WorkspaceID: auth.GetWorkspaceID(r.Context()), AccountID: account.ID,
 		ExternalUserID: externalUserID, ExternalAccountID: account.ExternalAccountID,
-		AppMode: account.XAppMode.String, AccessToken: token, IdempotencyKey: idempotencyKey,
+		AppMode: account.XAppMode.String, IdempotencyKey: idempotencyKey,
 		Now: time.Now().UTC(),
 	})
 	if err != nil {
@@ -90,14 +90,14 @@ func (h *XAccountReadsHandler) Posts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	account, externalUserID, idempotencyKey, token, authorized := h.authorize(w, r, "users.read", "tweet.read")
+	account, externalUserID, idempotencyKey, authorized := h.authorize(w, r, "users.read", "tweet.read")
 	if !authorized {
 		return
 	}
 	result, err := h.service.ReadPosts(r.Context(), xaccountreads.PostsRequest{
 		WorkspaceID: auth.GetWorkspaceID(r.Context()), AccountID: account.ID,
 		ExternalUserID: externalUserID, ExternalAccountID: account.ExternalAccountID,
-		AppMode: account.XAppMode.String, AccessToken: token, IdempotencyKey: idempotencyKey,
+		AppMode: account.XAppMode.String, IdempotencyKey: idempotencyKey,
 		Limit: limit, Cursor: strings.TrimSpace(r.URL.Query().Get("cursor")),
 		StartTime: start, EndTime: end, ExcludeReposts: excludeReposts,
 		ExcludeRepliesToOthers: excludeReplies, Now: time.Now().UTC(),
@@ -113,21 +113,21 @@ func (h *XAccountReadsHandler) authorize(
 	w http.ResponseWriter,
 	r *http.Request,
 	requiredScopes ...string,
-) (db.SocialAccount, string, string, string, bool) {
+) (db.SocialAccount, string, string, bool) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
-		return db.SocialAccount{}, "", "", "", false
+		return db.SocialAccount{}, "", "", false
 	}
 	externalUserID := strings.TrimSpace(r.URL.Query().Get("external_user_id"))
 	if externalUserID == "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "external_user_id is required")
-		return db.SocialAccount{}, "", "", "", false
+		return db.SocialAccount{}, "", "", false
 	}
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idempotencyKey == "" {
 		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required")
-		return db.SocialAccount{}, "", "", "", false
+		return db.SocialAccount{}, "", "", false
 	}
 	accountID := chi.URLParam(r, "id")
 	account, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
@@ -139,32 +139,27 @@ func (h *XAccountReadsHandler) authorize(
 		} else {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load account")
 		}
-		return db.SocialAccount{}, "", "", "", false
+		return db.SocialAccount{}, "", "", false
 	}
 	if !strings.EqualFold(account.Platform, "twitter") {
 		writeError(w, http.StatusBadRequest, "WRONG_PLATFORM", "This endpoint is available only for X accounts")
-		return db.SocialAccount{}, "", "", "", false
+		return db.SocialAccount{}, "", "", false
 	}
 	if !account.ExternalUserID.Valid || account.ExternalUserID.String != externalUserID {
 		writeError(w, http.StatusForbidden, "ACCOUNT_ACCESS_DENIED", "The account does not belong to the selected Managed User")
-		return db.SocialAccount{}, "", "", "", false
+		return db.SocialAccount{}, "", "", false
 	}
 	if account.DisconnectedAt.Valid || !strings.EqualFold(account.Status, "active") ||
 		!account.RefreshToken.Valid || strings.TrimSpace(account.RefreshToken.String) == "" ||
 		!accountHasScopes(account.Scope, append(requiredScopes, "offline.access")...) {
 		writeError(w, http.StatusUnprocessableEntity, "ACCOUNT_REAUTHORIZATION_REQUIRED", "Reconnect the X account with the required read permissions")
-		return db.SocialAccount{}, "", "", "", false
+		return db.SocialAccount{}, "", "", false
 	}
 	if _, err := xinbox.NormalizePersistedAppMode(account.XAppMode.String); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "ACCOUNT_REAUTHORIZATION_REQUIRED", "Reconnect the X account to establish its X app identity")
-		return db.SocialAccount{}, "", "", "", false
+		return db.SocialAccount{}, "", "", false
 	}
-	token, err := h.tokenForAccount(r.Context(), account)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "ACCOUNT_REAUTHORIZATION_REQUIRED", "Reconnect the X account to refresh authorization")
-		return db.SocialAccount{}, "", "", "", false
-	}
-	return account, externalUserID, idempotencyKey, token, true
+	return account, externalUserID, idempotencyKey, true
 }
 
 func (h *XAccountReadsHandler) ResolveAccountReadToken(ctx context.Context, accountID string) (string, error) {

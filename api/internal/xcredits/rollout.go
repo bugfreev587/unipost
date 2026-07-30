@@ -171,6 +171,10 @@ func (s *RolloutService) FinalizeExposure(ctx context.Context, id string, units 
 	return s.base.FinalizeExposure(ctx, id, units)
 }
 
+func (s *RolloutService) FinalizeExposureWithMutation(ctx context.Context, id string, units int64, mutation ExposureSettlementMutation) error {
+	return s.base.FinalizeExposureWithMutation(ctx, id, units, mutation)
+}
+
 func (s *RolloutService) ReleaseExposure(ctx context.Context, id string) error {
 	return s.base.ReleaseExposure(ctx, id)
 }

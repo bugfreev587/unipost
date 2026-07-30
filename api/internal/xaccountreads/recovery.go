@@ -50,17 +50,18 @@ func (s *Service) Reconcile(ctx context.Context, limit int, now time.Time) (Reco
 				stats.Deferred++
 				continue
 			}
-			_ = s.store.MarkFailed(ctx, receipt.OperationID, "reconciliation_expired", now)
+			_ = s.store.MarkFailed(ctx, receipt.OperationID, "reconciliation_expired", now, now)
 			stats.Released++
 			continue
 		}
 		if receipt.Status == ReceiptSettlementPending {
-			if err := s.credits.FinalizeExposure(ctx, receipt.ExposureID, receipt.ActualUnits); err != nil {
+			if err := s.credits.FinalizeExposureWithMutation(
+				ctx,
+				receipt.ExposureID,
+				receipt.ActualUnits,
+				s.store.SuccessMutation(receipt.OperationID, receipt.ResponseJSON, now),
+			); err != nil {
 				_ = s.store.MarkSettlementPending(ctx, receipt.OperationID, receipt.ResponseJSON, nextRecoveryAttempt(receipt.AttemptCount, now))
-				stats.Deferred++
-				continue
-			}
-			if err := s.store.MarkSucceeded(ctx, receipt.OperationID, receipt.ResponseJSON, now); err != nil {
 				stats.Deferred++
 				continue
 			}

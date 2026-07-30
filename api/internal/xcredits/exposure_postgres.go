@@ -196,7 +196,16 @@ func (s *PostgresStore) reserveExposure(
 }
 
 func (s *PostgresStore) FinalizeExposure(ctx context.Context, id string, actualUnits int64) error {
-	return s.settleExposure(ctx, id, actualUnits, "finalized")
+	return s.settleExposure(ctx, id, actualUnits, "finalized", nil)
+}
+
+func (s *PostgresStore) FinalizeExposureWithMutation(
+	ctx context.Context,
+	id string,
+	actualUnits int64,
+	mutation ExposureSettlementMutation,
+) error {
+	return s.settleExposure(ctx, id, actualUnits, "finalized", mutation)
 }
 
 func (s *PostgresStore) MarkExposureReadStarted(ctx context.Context, id string) error {
@@ -247,7 +256,7 @@ func (s *PostgresStore) MarkExposureFinalizePending(
 }
 
 func (s *PostgresStore) ReleaseExposure(ctx context.Context, id string) error {
-	return s.settleExposure(ctx, id, 0, "released")
+	return s.settleExposure(ctx, id, 0, "released", nil)
 }
 
 func (s *PostgresStore) MarkExposureReleasePending(
@@ -296,6 +305,7 @@ func (s *PostgresStore) settleExposure(
 	id string,
 	actualUnits int64,
 	finalStatus string,
+	mutation ExposureSettlementMutation,
 ) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -322,6 +332,11 @@ func (s *PostgresStore) settleExposure(
 		return err
 	}
 	if status == "finalized" || status == "released" {
+		if mutation != nil {
+			if err := mutation(ctx, tx); err != nil {
+				return err
+			}
+		}
 		return tx.Commit(ctx)
 	}
 	if actualUnits < 0 || actualUnits > reservedUnits {
@@ -356,6 +371,11 @@ func (s *PostgresStore) settleExposure(
 		WHERE id = $1
 	`, id, actualUnits, finalStatus); err != nil {
 		return err
+	}
+	if mutation != nil {
+		if err := mutation(ctx, tx); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }

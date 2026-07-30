@@ -69,6 +69,17 @@ func (s *PostgresStore) Lookup(
 	return receipt, nil
 }
 
+func (s *PostgresStore) ResetFailedForRetry(ctx context.Context, operationID string, now time.Time) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM x_read_receipts
+		WHERE operation_id = $1 AND status = 'failed' AND next_attempt_at <= $2
+	`, operationID, now.UTC())
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 func (s *PostgresStore) AdmissionMutation(input NewReceipt) xcredits.ExposureMutation {
 	return func(ctx context.Context, tx pgx.Tx, exposure xcredits.ExposureReservation) error {
 		receipt := input.WithExposure(exposure.ID)
@@ -106,27 +117,28 @@ func (s *PostgresStore) AdmissionMutation(input NewReceipt) xcredits.ExposureMut
 	}
 }
 
-func (s *PostgresStore) MarkSucceeded(
-	ctx context.Context,
+func (s *PostgresStore) SuccessMutation(
 	operationID string,
 	response []byte,
 	now time.Time,
-) error {
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE x_read_receipts
-		SET status = 'succeeded', response_json = $2::JSONB, completed_at = $3,
-		    execution_owner = NULL, execution_lease_expires_at = NULL,
-		    failure_class = NULL, updated_at = $3
-		WHERE operation_id = $1
-		  AND status IN ('executing', 'outcome_unknown', 'settlement_pending', 'succeeded')
-	`, operationID, response, now.UTC())
-	if err != nil {
-		return err
+) xcredits.ExposureSettlementMutation {
+	return func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE x_read_receipts
+			SET status = 'succeeded', response_json = $2::JSONB, completed_at = $3,
+			    execution_owner = NULL, execution_lease_expires_at = NULL,
+			    failure_class = NULL, updated_at = $3
+			WHERE operation_id = $1
+			  AND status IN ('executing', 'outcome_unknown', 'settlement_pending', 'succeeded')
+		`, operationID, response, now.UTC())
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errors.New("X account-read success receipt transition was not persisted")
+		}
+		return nil
 	}
-	if tag.RowsAffected() != 1 {
-		return errors.New("X account-read success receipt transition was not persisted")
-	}
-	return nil
 }
 
 func (s *PostgresStore) MarkFailed(
@@ -134,13 +146,15 @@ func (s *PostgresStore) MarkFailed(
 	operationID string,
 	class string,
 	now time.Time,
+	nextAttemptAt time.Time,
 ) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE x_read_receipts
 		SET status = 'failed', failure_class = LEFT($2, 100), completed_at = $3,
+		    next_attempt_at = $4,
 		    execution_owner = NULL, execution_lease_expires_at = NULL, updated_at = $3
 		WHERE operation_id = $1 AND status IN ('executing', 'outcome_unknown', 'settlement_pending')
-	`, operationID, class, now.UTC())
+	`, operationID, class, now.UTC(), nextAttemptAt.UTC())
 	if err != nil {
 		return err
 	}

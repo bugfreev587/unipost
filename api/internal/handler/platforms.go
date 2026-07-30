@@ -184,7 +184,8 @@ func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.
 		xReads := xaccountreads.EvaluateCapabilities(xaccountreads.CapabilityInput{
 			AccountStatus: acc.Status, Disconnected: acc.DisconnectedAt.Valid,
 			Scopes: acc.Scope, RefreshAvailable: acc.RefreshToken.Valid && strings.TrimSpace(acc.RefreshToken.String) != "",
-			AppMode: appMode, BillingEnabled: billingEnabled,
+			AppCredentialsAvailable: input.AppCredentials.ClientIDConfigured && input.AppCredentials.ClientSecretConfigured,
+			AppMode:                 appMode, BillingEnabled: billingEnabled,
 		})
 		response.XAccountReads = &xReads
 	}

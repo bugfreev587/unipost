@@ -267,7 +267,29 @@ func TestTwitterAuthoredPostsNormalizesRelationshipsFiltersAndPagination(t *test
 	}
 	if page.Posts[0].ContentType != "original_post" || len(page.Posts[0].Media) != 1 ||
 		page.Posts[1].ContentType != "reply" || !page.Posts[1].IsSelfReply ||
-		page.Posts[2].ContentType != "quote_post" || page.Posts[2].Text != "my commentary" {
+		page.Posts[2].ContentType != "quote" || page.Posts[2].Text != "my commentary" {
+		t.Fatalf("posts=%+v", page.Posts)
+	}
+}
+
+func TestTwitterAuthoredPostsUsesDeterministicRelationshipPrecedence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"data":[{"id":"mixed","text":"mixed","author_id":"user-1","created_at":"2026-07-20T10:00:00Z","conversation_id":"mixed","referenced_tweets":[
+				{"type":"retweeted","id":"source"},{"type":"replied_to","id":"parent"},{"type":"quoted","id":"quoted"}
+			]}],
+			"meta":{"result_count":1}
+		}`)
+	}))
+	defer server.Close()
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+
+	page, err := adapter.ReadAuthoredPosts(context.Background(), "user-token", "user-1", TwitterAuthoredPostsRequest{Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Posts) != 1 || page.Posts[0].ContentType != "repost" ||
+		!page.Posts[0].IsRepost || !page.Posts[0].IsReply || !page.Posts[0].IsQuote {
 		t.Fatalf("posts=%+v", page.Posts)
 	}
 }

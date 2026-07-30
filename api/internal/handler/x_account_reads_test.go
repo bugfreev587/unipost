@@ -19,18 +19,22 @@ import (
 )
 
 type fakeXAccountReadService struct {
-	profile xaccountreads.ProfileResult
-	posts   xaccountreads.PostsResult
-	err     error
-	calls   int
+	profile        xaccountreads.ProfileResult
+	posts          xaccountreads.PostsResult
+	err            error
+	calls          int
+	profileRequest xaccountreads.ProfileRequest
+	postsRequest   xaccountreads.PostsRequest
 }
 
-func (f *fakeXAccountReadService) ReadProfile(context.Context, xaccountreads.ProfileRequest) (xaccountreads.ProfileResult, error) {
+func (f *fakeXAccountReadService) ReadProfile(_ context.Context, req xaccountreads.ProfileRequest) (xaccountreads.ProfileResult, error) {
 	f.calls++
+	f.profileRequest = req
 	return f.profile, f.err
 }
-func (f *fakeXAccountReadService) ReadPosts(context.Context, xaccountreads.PostsRequest) (xaccountreads.PostsResult, error) {
+func (f *fakeXAccountReadService) ReadPosts(_ context.Context, req xaccountreads.PostsRequest) (xaccountreads.PostsResult, error) {
 	f.calls++
+	f.postsRequest = req
 	return f.posts, f.err
 }
 
@@ -78,6 +82,9 @@ func TestXAccountProfileReadReturnsDocumentedEnvelope(t *testing.T) {
 	}
 	if body.Data.Username != "v" || body.Meta.Credits.Charged != 10 || service.calls != 1 {
 		t.Fatalf("body=%+v calls=%d", body, service.calls)
+	}
+	if service.profileRequest.AccessToken != "" {
+		t.Fatalf("handler resolved access token before service admission")
 	}
 }
 

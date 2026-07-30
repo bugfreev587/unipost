@@ -72,3 +72,33 @@ func TestCursorRefreshPreservesUpstreamToken(t *testing.T) {
 		t.Fatalf("token=%q expires=%s err=%v", token, expiresAt, err)
 	}
 }
+
+func TestCursorKeyRotationDecodesPreviousKeyAndIssuesCurrentKey(t *testing.T) {
+	oldSecret := []byte("old-0123456789abcdef0123456789abcdef")
+	newSecret := []byte("new-0123456789abcdef0123456789abcdef")
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	scope := CursorScope{WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1"}
+	oldCodec, err := NewCursorCodec(oldSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCursor, _, err := oldCodec.Encode(scope, "old-page", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rotated, err := NewCursorCodec(newSecret, oldSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token, _, err := rotated.Decode(oldCursor, scope, now.Add(time.Hour)); err != nil || token != "old-page" {
+		t.Fatalf("token=%q err=%v", token, err)
+	}
+	newCursor, _, err := rotated.Encode(scope, "new-page", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := oldCodec.Decode(newCursor, scope, now); err == nil {
+		t.Fatal("old key unexpectedly decoded a cursor issued by the rotated current key")
+	}
+}

@@ -315,9 +315,11 @@ type ExposureStore interface {
 }
 
 type ExposureMutation func(context.Context, pgx.Tx, ExposureReservation) error
+type ExposureSettlementMutation func(context.Context, pgx.Tx) error
 
 type AtomicExposureStore interface {
 	ReserveExposureWithMutation(context.Context, StoreExposureReservationRequest, ExposureMutation) (ExposureReservation, error)
+	FinalizeExposureWithMutation(context.Context, string, int64, ExposureSettlementMutation) error
 }
 
 type Service struct {
@@ -579,6 +581,19 @@ func (s *Service) FinalizeExposure(ctx context.Context, id string, actualUnits i
 		return errors.New("X exposure reservation store is not configured")
 	}
 	return store.FinalizeExposure(ctx, id, actualUnits)
+}
+
+func (s *Service) FinalizeExposureWithMutation(
+	ctx context.Context,
+	id string,
+	actualUnits int64,
+	mutation ExposureSettlementMutation,
+) error {
+	store, ok := s.store.(AtomicExposureStore)
+	if !ok {
+		return errors.New("X exposure atomic store is not configured")
+	}
+	return store.FinalizeExposureWithMutation(ctx, id, actualUnits, mutation)
 }
 
 func (s *Service) MarkExposureReadStarted(ctx context.Context, id string) error {
