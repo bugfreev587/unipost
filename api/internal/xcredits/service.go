@@ -20,6 +20,18 @@ const (
 	UsageStatusBypassed    = "bypassed"
 )
 
+const (
+	ExposurePurposeInboxBackfill      = "inbox_backfill"
+	ExposurePurposeAccountProfile     = "account_profile"
+	ExposurePurposeAccountPostHistory = "account_post_history"
+
+	ExposureSafetyInboundDailyCap = "inbound_daily_cap"
+	ExposureSafetyRequestLimits   = "request_limits"
+
+	ExposureBypassFeatureDisabled = "feature_disabled"
+	ExposureBypassCustomerXApp    = "customer_x_app"
+)
+
 var (
 	ErrMonthlyLimitExceeded                   = errors.New("x_monthly_usage_limit_exceeded: managed X usage has reached this billing period's allowance")
 	ErrAllowanceNotConfigured                 = errors.New("x_monthly_usage_limit_not_configured: contact UniPost to configure the workspace X allowance")
@@ -207,8 +219,10 @@ type InboundCapSetting struct {
 type ExposureReservationRequest struct {
 	WorkspaceID        string
 	SocialAccountID    string
+	ExternalUserID     string
 	AppMode            string
 	OperationKey       string
+	Purpose            string
 	IdempotencyKey     string
 	RequestedResources int
 	MinimumResources   int
@@ -218,23 +232,31 @@ type ExposureReservationRequest struct {
 
 type StoreExposureReservationRequest struct {
 	ExposureReservationRequest
-	MonthlyAllowance  int64
-	InboundDailyLimit int64
-	PeriodStart       time.Time
-	PeriodEnd         time.Time
-	UTCDate           time.Time
-	AccountingEnabled bool
+	MonthlyAllowance       int64
+	InboundDailyLimit      int64
+	PeriodStart            time.Time
+	PeriodEnd              time.Time
+	UTCDate                time.Time
+	AccountingEnabled      bool
+	SafetyPolicy           string
+	ReconciliationDeadline time.Time
+	CatalogVersion         string
+	BypassReason           string
 }
 
 type ExposureReservation struct {
-	ID                 string
-	RequestedResources int
-	ReservedResources  int
-	ReservedUnits      int64
-	ActualUnits        int64
-	Status             string
-	Duplicate          bool
-	Bypassed           bool
+	ID                     string
+	RequestedResources     int
+	ReservedResources      int
+	ReservedUnits          int64
+	ActualUnits            int64
+	Status                 string
+	Duplicate              bool
+	Bypassed               bool
+	AccountingEnabled      bool
+	BypassReason           string
+	CatalogVersion         string
+	ReconciliationDeadline time.Time
 }
 
 type ExposureReleaseReconcileStats struct {
@@ -427,24 +449,38 @@ func (s *Service) reserveExposure(
 	req ExposureReservationRequest,
 	accountingEnabled bool,
 ) (ExposureReservation, error) {
+	if req.Now.IsZero() {
+		req.Now = time.Now().UTC()
+	}
+	if req.Purpose == "" {
+		req.Purpose = ExposurePurposeInboxBackfill
+	}
+	accountRead := req.Purpose == ExposurePurposeAccountProfile ||
+		req.Purpose == ExposurePurposeAccountPostHistory
+	if accountRead {
+		req.MinimumResources = req.RequestedResources
+	}
 	mode, err := xinbox.NormalizePersistedAppMode(req.AppMode)
 	if err != nil {
 		return ExposureReservation{}, err
 	}
 	if mode != xinbox.AppModeUniPostManaged {
-		return ExposureReservation{
-			RequestedResources: req.RequestedResources,
-			ReservedResources:  req.RequestedResources,
-			Status:             "bypassed",
-			Bypassed:           true,
-		}, nil
+		if accountRead {
+			accountingEnabled = false
+		} else {
+			return ExposureReservation{
+				RequestedResources: req.RequestedResources,
+				ReservedResources:  req.RequestedResources,
+				Status:             "bypassed",
+				Bypassed:           true,
+				BypassReason:       ExposureBypassCustomerXApp,
+				CatalogVersion:     CatalogVersion,
+			}, nil
+		}
 	}
 	store, ok := s.store.(ExposureStore)
 	if !ok {
 		return ExposureReservation{}, errors.New("X exposure reservation store is not configured")
-	}
-	if req.Now.IsZero() {
-		req.Now = time.Now().UTC()
 	}
 	period, err := s.store.ResolveWorkspacePeriod(ctx, req.WorkspaceID, req.Now)
 	if err != nil {
@@ -454,18 +490,34 @@ func (s *Service) reserveExposure(
 	if period.MonthlyAllowance != nil {
 		allowance, configured = *period.MonthlyAllowance, true
 	}
-	if !configured {
+	if accountingEnabled && !configured {
 		return ExposureReservation{}, ErrAllowanceNotConfigured
 	}
-	dailyLimit, dailyConfigured := InboundDailyLimit(period.PlanID)
-	if period.InboundDailyLimit != nil {
-		dailyLimit, dailyConfigured = *period.InboundDailyLimit, true
-	}
-	if !dailyConfigured {
-		return ExposureReservation{}, ErrInboundDailyCapExceeded
+	safetyPolicy := ExposureSafetyRequestLimits
+	deadline := req.Now.Add(24 * time.Hour)
+	dailyLimit := int64(0)
+	if !accountRead {
+		safetyPolicy = ExposureSafetyInboundDailyCap
+		deadline = req.Now.Add(30 * time.Minute)
+		var dailyConfigured bool
+		dailyLimit, dailyConfigured = InboundDailyLimit(period.PlanID)
+		if period.InboundDailyLimit != nil {
+			dailyLimit, dailyConfigured = *period.InboundDailyLimit, true
+		}
+		if !dailyConfigured {
+			return ExposureReservation{}, ErrInboundDailyCapExceeded
+		}
 	}
 	utc := req.Now.UTC()
-	return store.ReserveExposure(ctx, StoreExposureReservationRequest{
+	bypassReason := ""
+	if !accountingEnabled {
+		if mode == xinbox.AppModeUniPostManaged {
+			bypassReason = ExposureBypassFeatureDisabled
+		} else {
+			bypassReason = ExposureBypassCustomerXApp
+		}
+	}
+	reservation, err := store.ReserveExposure(ctx, StoreExposureReservationRequest{
 		ExposureReservationRequest: req,
 		MonthlyAllowance:           allowance,
 		InboundDailyLimit:          dailyLimit,
@@ -473,7 +525,24 @@ func (s *Service) reserveExposure(
 		PeriodEnd:                  period.End,
 		UTCDate:                    time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC),
 		AccountingEnabled:          accountingEnabled,
+		SafetyPolicy:               safetyPolicy,
+		ReconciliationDeadline:     deadline,
+		CatalogVersion:             CatalogVersion,
+		BypassReason:               bypassReason,
 	})
+	if err != nil {
+		return ExposureReservation{}, err
+	}
+	reservation.AccountingEnabled = accountingEnabled
+	reservation.Bypassed = !accountingEnabled
+	reservation.BypassReason = bypassReason
+	reservation.CatalogVersion = CatalogVersion
+	reservation.ReconciliationDeadline = deadline
+	if !accountingEnabled {
+		reservation.ReservedUnits = 0
+		reservation.Status = "bypassed"
+	}
+	return reservation, nil
 }
 
 func (s *Service) FinalizeExposure(ctx context.Context, id string, actualUnits int64) error {

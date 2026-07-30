@@ -46,6 +46,36 @@ func TestXInboxDurableOperationsMigrationIsRollingSafeAndExecutable(t *testing.T
 	}
 }
 
+func TestXAccountReadsMigrationGeneralizesExposureAndAddsReceipts(t *testing.T) {
+	source, err := os.ReadFile("migrations/135_x_account_reads.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"ALTER TABLE x_inbox_backfill_exposure_reservations RENAME TO x_read_exposures",
+		"purpose",
+		"external_user_id",
+		"safety_policy",
+		"reconciliation_deadline",
+		"CREATE TABLE x_read_receipts",
+		"operation_id",
+		"idempotency_key_hash",
+		"request_fingerprint",
+		"encrypted_request",
+		"response_json",
+		"execution_lease_expires_at",
+		"expires_at",
+		"UNIQUE (workspace_id, idempotency_key_hash)",
+		"REFERENCES x_read_exposures(id)",
+		"ON DELETE CASCADE",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("X account reads migration missing %q", want)
+		}
+	}
+}
+
 func TestXInboxOutboundCompletionUsesConflictLookupAndAtomicSettlement(t *testing.T) {
 	source, err := os.ReadFile("../handler/inbox_x_outbound.go")
 	if err != nil {

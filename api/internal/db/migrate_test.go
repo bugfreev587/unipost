@@ -225,8 +225,8 @@ func TestLatestEmbeddedMigrationVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 134 {
-		t.Fatalf("latest embedded migration version = %d, want 134", version)
+	if version != 135 {
+		t.Fatalf("latest embedded migration version = %d, want 135", version)
 	}
 }
 
