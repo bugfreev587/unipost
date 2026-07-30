@@ -14,12 +14,15 @@
 
 **Files:**
 - Modify: `api/internal/xcredits/exposure_postgres.go`
+- Modify: `.github/workflows/ci.yml`
 - Test: `api/internal/xcredits/exposure_postgres_test.go`
+- Test: `api/internal/handler/x_account_read_exposure_postgres_integration_test.go`
 
 - [ ] Add a failing test that reads the recovery SQL and requires `purpose = 'inbox_backfill'`, while preserving the terminal settlement mutation behavior used to complete an account-read receipt after another worker finalized its exposure.
 - [ ] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/xcredits -run 'TestPostgresExposureRecoveryScopesInboxPurpose|TestFinalizedExposureRunsMatchingMutation' -count=1` and verify the purpose assertion fails.
 - [ ] Add the explicit purpose predicate to `ReconcilePendingExposures`; do not split the unified ledger or change exposure idempotency.
 - [ ] Re-run the focused tests and verify they pass.
+- [ ] Add a PostgreSQL integration test that seeds Inbox and account-read purposes, proves the Inbox worker ignores account reads, and races both finalize paths to verify one financial settlement plus durable receipt mutation; include it in the CI PostgreSQL selector.
 
 ### Task 2: Fail malformed authored-post pages atomically
 
