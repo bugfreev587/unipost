@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AccountDestinationIcon } from "@/components/account-destination-icon";
+import { YouTubeSourceLink } from "@/components/youtube/youtube-source-link";
 import {
   getSocialPostQueue,
   retrySocialPostResult,
@@ -14,6 +15,7 @@ import {
   type ApiFetchError,
 } from "@/lib/api";
 import { describePostResultFailure } from "@/lib/post-result-errors";
+import { normalizeYouTubeContentUrl } from "@/lib/youtube-source";
 import {
   PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE,
   describePublishingRestrictionRetry,
@@ -162,11 +164,13 @@ function PostResultCard({
     }
   }, [getToken, onRetryComplete, post.id, result.id, retrying]);
 
+  const platform = result.platform || "";
   const url = result.url
     ? result.url
-    : result.external_id && result.platform
-      ? postUrlFor(result.platform, result.external_id)
+    : result.external_id && platform
+      ? postUrlFor(platform, result.external_id)
       : null;
+  const youtubeUrl = platform === "youtube" ? normalizeYouTubeContentUrl(url) : null;
   const failure = result.status === "failed" ? describePostResultFailure(result) : null;
   const publishingRestrictionFailure = result.error_code === "plan_platform_publishing_restricted";
   const publishingRestrictionRetry = publishingRestrictionFailure
@@ -177,11 +181,18 @@ function PostResultCard({
     <div className="posts-result-card">
       <div className="posts-result-head">
         <div className="posts-result-title">
-          <AccountDestinationIcon platform={result.platform || ""} size={15} />
-          <span className="posts-result-name">{result.account_name || result.platform || "Unknown"}</span>
+          <AccountDestinationIcon platform={platform} size={15} />
+          <span className="posts-result-name">{result.account_name || platform || "Unknown"}</span>
           <InlineStatusPill status={result.status} />
         </div>
-        {url ? (
+        {youtubeUrl ? (
+          <YouTubeSourceLink
+            href={youtubeUrl}
+            label={result.account_name || "published video"}
+            disclosure="View on YouTube"
+            onClick={(event) => event.stopPropagation()}
+          />
+        ) : platform !== "youtube" && url ? (
           <a
             href={url}
             target="_blank"

@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { ArrowLeft, Unplug, Mail, Calendar } from "lucide-react";
 import { AccountDestinationIcon } from "@/components/account-destination-icon";
+import { YouTubeChannelIdentity } from "@/components/youtube/youtube-channel-identity";
 import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ManagedUserDetailPage() {
@@ -124,17 +125,28 @@ export default function ManagedUserDetailPage() {
             key={acc.id}
             className="flex items-center gap-4 rounded-lg border border-[var(--dborder)] bg-[var(--surface)] p-4"
           >
-            <AccountDestinationIcon platform={acc.platform} size={24} />
             <div className="flex-1 min-w-0">
-              <div className="truncate font-medium text-[var(--dtext)]">
-                {acc.account_name || acc.id}
-              </div>
-              <div className="mt-0.5 text-xs text-[var(--dmuted)]">
-                {acc.platform} · {acc.connection_type} ·{" "}
+              {acc.platform === "youtube" ? (
+                <YouTubeChannelIdentity account={acc} compact disclosure="Source: YouTube" />
+              ) : (
+                <div className="flex items-center gap-3">
+                  <AccountDestinationIcon platform={acc.platform} size={24} />
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-[var(--dtext)]">
+                      {acc.account_name || acc.id}
+                    </div>
+                    <div className="mt-0.5 text-xs text-[var(--dmuted)]">
+                      {acc.platform}
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="mt-1 text-xs text-[var(--dmuted)]">
+                UniPost-managed · {acc.connection_type} ·{" "}
                 {new Date(acc.connected_at).toLocaleDateString()}
               </div>
             </div>
-            <div>
+            <div data-unipost-account-status>
               {acc.status === "active" ? (
                 <span className="rounded px-2 py-1 text-xs text-[var(--success)]" style={{ background: "var(--success-soft)" }}>
                   Active

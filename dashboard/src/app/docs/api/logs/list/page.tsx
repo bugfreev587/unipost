@@ -24,12 +24,12 @@ const QUERY_FIELDS: ApiFieldItem[] = [
   { name: "from?", type: "string", description: "RFC3339 timestamp. Inclusive lower bound. Defaults to 7 days ago — set it explicitly to backfill further." },
   { name: "to?", type: "string", description: "RFC3339 timestamp. Inclusive upper bound." },
   { name: "limit?", type: "integer", description: "Page size. Default 100, maximum 500." },
-  { name: "cursor?", type: "string", description: "Opaque cursor from the previous response's meta.next_cursor." },
+  { name: "cursor?", type: "string", description: "Opaque cursor from the previous response's meta.next_cursor. Do not parse or construct cursor values." },
 ];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
-  { name: "data", type: "array", description: "Log rows, newest first. Never includes request_payload or response_payload." },
-  { name: "data[].id", type: "integer", description: "Numeric log id. Use it as after_id when switching to the stream." },
+  { name: "data", type: "array", description: "Metadata-only log rows in global order, newest first. Never includes request_payload or response_payload." },
+  { name: "data[].id", type: "integer", description: "Positive numeric log ID returned by the current REST API and published SDKs." },
   { name: "data[].workspace_id", type: "string", description: "Owning workspace. Always your authenticated workspace." },
   { name: "data[].ts", type: "string", description: "RFC3339 event timestamp." },
   { name: "data[].level", type: "string", description: "Severity level." },
@@ -42,7 +42,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data[].error_code", type: "string", description: "Normalized error code when the log represents a failure." },
   { name: "meta.limit", type: "integer", description: "Echoed page size." },
   { name: "meta.has_more", type: "boolean", description: "True when another page exists." },
-  { name: "meta.next_cursor", type: "string | null", description: "Cursor for the next page, or null on the last page. meta.total is intentionally omitted." },
+  { name: "meta.next_cursor", type: "string | null", description: "Opaque cursor for the next page, or null on the last page. The service applies a stable global order when timestamps tie; cursor internals and storage keys are intentionally hidden. meta.total is intentionally omitted." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
@@ -185,7 +185,7 @@ export default function ListLogsPage() {
     <SingleEndpointReferencePage
       section="logs"
       title="List logs"
-      description="Returns workspace logs newest-first with cursor pagination. List rows never include raw request or response payloads. Follow meta.next_cursor to backfill every retained log."
+      description="Returns metadata-only workspace logs in a stable global order, newest-first, with opaque cursor pagination. List rows never include raw request or response payloads. Follow meta.next_cursor exactly as returned to backfill every retained log."
       method="GET"
       path="/v1/logs"
       requestSections={[

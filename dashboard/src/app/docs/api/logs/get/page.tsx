@@ -8,11 +8,11 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const PATH_FIELDS: ApiFieldItem[] = [
-  { name: "id", type: "integer", description: "Numeric log id, for example 110966." },
+  { name: "id", type: "integer", description: "Positive numeric ID returned by List logs." },
 ];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
-  { name: "data.id", type: "integer", description: "Numeric log id." },
+  { name: "data.id", type: "integer", description: "Positive numeric log ID." },
   { name: "data.workspace_id", type: "string", description: "Owning workspace. Always your authenticated workspace." },
   { name: "data.ts", type: "string", description: "RFC3339 event timestamp." },
   { name: "data.level", type: "string", description: "Severity level." },
@@ -22,8 +22,10 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data.source", type: "string", description: "Origin of the log." },
   { name: "data.message", type: "string", description: "Human-readable summary." },
   { name: "data.metadata", type: "object", description: "Structured, log-specific context." },
-  { name: "data.request_payload", type: "object | null", description: "Redacted captured request. Sensitive keys are replaced with [REDACTED]." },
-  { name: "data.response_payload", type: "object | null", description: "Redacted captured response." },
+  { name: "data.has_error_detail", type: "boolean", description: "For canonical API request events, indicates whether bounded failure detail was captured. Omitted for other log types." },
+  { name: "data.detail_status", type: '"available" | "expired"', description: "Failure-detail lifecycle for a canonical API request event. expired means the metadata remains available but its bounded detail is no longer retained." },
+  { name: "data.request_payload", type: "object | string | null", description: "Optional, redacted, bounded request detail. Canonical API requests save it only on failure; it may be omitted or truncated." },
+  { name: "data.response_payload", type: "object | string | null", description: "Optional, redacted, bounded response detail. Canonical API requests save it only on failure; it may be omitted or truncated." },
   { name: "request_id", type: "string", description: "Request identifier for this API call." },
 ];
 
@@ -139,7 +141,7 @@ export default function GetLogPage() {
     <SingleEndpointReferencePage
       section="logs"
       title="Get log"
-      description="Returns one log for your workspace, including redacted request and response payloads. A log id that belongs to another workspace returns 404 NOT_FOUND."
+      description="Returns one authorized log. Canonical API request events retain bounded, redacted details only for failed requests; successful requests remain metadata-only, and expired failure detail reports detail_status=expired. Other integration logs keep their existing source-specific detail behavior. A log id that belongs to another workspace returns 404 NOT_FOUND."
       method="GET"
       path="/v1/logs/:id"
       requestSections={[

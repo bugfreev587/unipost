@@ -99,6 +99,7 @@ func seedMigration123State(t *testing.T, database *sql.DB) {
 	t.Helper()
 	seedMigrationGateSchema(t, database, 123)
 	seedMigrationGateFailedRecipient(t, database)
+	seedMigrationGateRetentionUsage(t, database)
 }
 
 func seedMigrationGateSchema(t *testing.T, database *sql.DB, through int) {
@@ -147,6 +148,28 @@ func seedMigrationGateFailedRecipient(t *testing.T, database *sql.DB) {
 	`)
 	if err != nil {
 		t.Fatalf("seed migration gate failed recipient: %v", err)
+	}
+}
+
+func seedMigrationGateRetentionUsage(t *testing.T, database *sql.DB) {
+	t.Helper()
+	_, err := database.ExecContext(context.Background(), `
+		INSERT INTO workspaces (id, user_id, name)
+		VALUES ('workspace-1', 'canonical-user', 'Migration Gate Workspace');
+		INSERT INTO social_posts (id, workspace_id, status)
+		VALUES ('active-post', 'workspace-1', 'publishing');
+		INSERT INTO media (id, workspace_id, storage_key, content_type, status)
+		VALUES ('active-media', 'workspace-1', 'migration-gate/active-media', 'image/png', 'uploaded');
+		INSERT INTO media_post_usages (
+			id, workspace_id, media_id, post_id, post_status,
+			cleanup_after_at, retention_reason
+		) VALUES (
+			'active-usage', 'workspace-1', 'active-media', 'active-post',
+			'publishing', NULL, 'plan_status'
+		);
+	`)
+	if err != nil {
+		t.Fatalf("seed migration gate retention usage: %v", err)
 	}
 }
 
@@ -202,7 +225,70 @@ func successfulGateClient(config MigrationGateConfig, affected []AffectedMigrati
 	}
 }
 
-func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues131(t *testing.T) {
+func freshPreviewGateConfig() MigrationGateConfig {
+	config := testMigrationGateConfig()
+	config.EnvironmentName = "unipost-pr-301"
+	config.ServicePublicDomain = "preview-api-unipost-pr-301.up.railway.app"
+	return config
+}
+
+func TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	config := freshPreviewGateConfig()
+
+	if err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil); err != nil {
+		t.Fatalf("fresh disposable Preview migration gate: %v", err)
+	}
+	var version int64
+	if err := database.QueryRowContext(context.Background(), `
+		SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 138 {
+		t.Fatalf("fresh disposable Preview final version = %d, want 138", version)
+	}
+}
+
+func TestMigrationGatePostgresDisposablePreviewWithExistingTableStillRequiresBackup(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	if _, err := database.ExecContext(context.Background(), `CREATE TABLE existing_preview_data (id BIGINT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	config := freshPreviewGateConfig()
+
+	err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil)
+	if err == nil || !strings.Contains(err.Error(), "backup client is missing") {
+		t.Fatalf("dirty disposable Preview gate error = %v", err)
+	}
+	var exists bool
+	if err := database.QueryRowContext(context.Background(), `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("dirty disposable Preview must remain unmigrated")
+	}
+}
+
+func TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	config := freshPreviewGateConfig()
+	config.ServicePublicDomain = "preview-api-unipost-pr-302.up.railway.app"
+
+	err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil)
+	if err == nil || !strings.Contains(err.Error(), "backup client is missing") {
+		t.Fatalf("mismatched disposable Preview gate error = %v", err)
+	}
+	var exists bool
+	if err := database.QueryRowContext(context.Background(), `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("mismatched disposable Preview must remain unmigrated")
+	}
+}
+
+func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues138(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 	config := testMigrationGateConfig()
@@ -231,9 +317,9 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues131(t *t
 	`).Scan(&retryable, &ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 131 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 138 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"version=%d retryable=%v owner_user_ids=%v, want version=131 retryable=false canonical owner backfill",
+			"version=%d retryable=%v owner_user_ids=%v, want version=138 retryable=false canonical owner backfill",
 			version, retryable, ownerUserIDs,
 		)
 	}
@@ -262,8 +348,8 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues131(t *t
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 131 {
-		t.Fatalf("zero-row pending irreversible migration final version = %d, want 131", version)
+	if version != 138 {
+		t.Fatalf("zero-row pending irreversible migration final version = %d, want 138", version)
 	}
 }
 
@@ -521,6 +607,14 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
+	var retentionReason string
+	if err := database.QueryRowContext(ctx, `
+		SELECT retention_reason
+		FROM media_post_usages
+		WHERE id = 'active-usage'
+	`).Scan(&retentionReason); err != nil {
+		t.Fatal(err)
+	}
 	var migration124Columns int
 	if err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*)
@@ -531,10 +625,11 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&migration124Columns); err != nil {
 		t.Fatal(err)
 	}
-	if version != 123 || migration124Columns != 0 {
+	if version != 123 || retentionReason != "plan_status" || migration124Columns != 0 {
 		t.Errorf(
-			"before backup readiness release version=%d migration_124_columns=%d, want version=123 migration_124_columns=0",
+			"before backup readiness release version=%d retention_reason=%q migration_124_columns=%d, want version=123 retention_reason=plan_status migration_124_columns=0",
 			version,
+			retentionReason,
 			migration124Columns,
 		)
 	}
@@ -569,6 +664,13 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.QueryRowContext(ctx, `
+		SELECT retention_reason
+		FROM media_post_usages
+		WHERE id = 'active-usage'
+	`).Scan(&retentionReason); err != nil {
+		t.Fatal(err)
+	}
 	var retryable bool
 	if err := database.QueryRowContext(ctx, `
 		SELECT retryable
@@ -585,10 +687,11 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 131 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 138 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retryable=%v owner_user_ids=%v, want version=131 retryable=false canonical owner backfill",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=138 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
+			retentionReason,
 			retryable,
 			ownerUserIDs,
 		)
@@ -689,8 +792,8 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 131 {
-		t.Fatalf("final migration version = %d, want 131", version)
+	if version != 138 {
+		t.Fatalf("final migration version = %d, want 138", version)
 	}
 }
 
@@ -748,17 +851,17 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 131 {
-		t.Fatalf("replacement runner final migration version = %d, want 131", version)
+	if version != 138 {
+		t.Fatalf("replacement runner final migration version = %d, want 138", version)
 	}
 }
 
-func TestRequireCurrentSchemaRejects124AndAccepts131(t *testing.T) {
+func TestRequireCurrentSchemaRejects124AndAccepts138(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 
 	err := RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 131") {
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 138") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 
@@ -781,14 +884,142 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO goose_db_version (version_id, is_applied) VALUES (132, TRUE);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (139, TRUE);
 	`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	err = RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 131") || !strings.Contains(err.Error(), "rollback is unsafe") {
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 138") || !strings.Contains(err.Error(), "rollback is unsafe") {
 		t.Fatalf("schema-ahead guard error = %v", err)
+	}
+}
+
+func TestMigration133UpgradeAndGuardedDown(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	if err := RunMigrations(databaseURL); err != nil {
+		t.Fatalf("apply current migrations before testing migration 133 Down: %v", err)
+	}
+
+	ctx := context.Background()
+	for week := 33; week <= 40; week++ {
+		eventPartition := fmt.Sprintf("api_request_events_2026w%d", week)
+		detailPartition := fmt.Sprintf("api_request_error_details_2026w%d", week)
+		for _, relation := range []struct {
+			child  string
+			parent string
+		}{
+			{child: eventPartition, parent: "api_request_events"},
+			{child: detailPartition, parent: "api_request_error_details"},
+		} {
+			var attached bool
+			if err := database.QueryRowContext(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM pg_inherits AS inheritance
+					JOIN pg_class AS child ON child.oid = inheritance.inhrelid
+					JOIN pg_class AS parent ON parent.oid = inheritance.inhparent
+					JOIN pg_namespace AS namespace ON namespace.oid = child.relnamespace
+					WHERE namespace.nspname = current_schema()
+					  AND child.relname = $1
+					  AND parent.relname = $2
+				)
+			`, relation.child, relation.parent).Scan(&attached); err != nil {
+				t.Fatalf("inspect attachment for %s: %v", relation.child, err)
+			}
+			if !attached {
+				t.Fatalf("partition %s is not attached to %s", relation.child, relation.parent)
+			}
+		}
+
+		var manifestAligned bool
+		if err := database.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM api_request_partition_manifest
+				WHERE event_partition = $1
+				  AND detail_partition = $2
+				  AND EXTRACT(EPOCH FROM (week_end - week_start)) = 604800
+			)
+		`, eventPartition, detailPartition).Scan(&manifestAligned); err != nil {
+			t.Fatalf("inspect manifest for week %d: %v", week, err)
+		}
+		if !manifestAligned {
+			t.Fatalf("manifest is not aligned for week %d", week)
+		}
+	}
+
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO api_request_events (
+			occurred_at, id, workspace_id, api_key_id, method, route_pattern,
+			status_code, duration_ms, outcome
+		) VALUES (
+			'2026-08-10 01:00:00+00', 'bridge-event', 'bridge-workspace',
+			'bridge-api-key', 'GET', '/v1/bridge', 200, 0, 'success'
+		)
+	`); err != nil {
+		t.Fatalf("insert W33 fixture: %v", err)
+	}
+
+	body, err := fs.ReadFile(migrations, "migrations/133_api_request_event_partition_bridge.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(body), "-- +goose Down")
+	if len(parts) != 2 {
+		t.Fatal("migration 133 must have exactly one Down section")
+	}
+	down := parts[1]
+	if _, err := database.ExecContext(ctx, down); err == nil || !strings.Contains(err.Error(), "bridge partition contains data") {
+		t.Fatalf("guarded Down error = %v, want bridge partition contains data", err)
+	}
+
+	if _, err := database.ExecContext(ctx, `DELETE FROM api_request_events WHERE id = 'bridge-event'`); err != nil {
+		t.Fatalf("delete W33 fixture: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, down); err != nil {
+		t.Fatalf("run guarded Down after emptying bridge: %v", err)
+	}
+
+	for week := 33; week <= 40; week++ {
+		for _, partition := range []string{
+			fmt.Sprintf("api_request_events_2026w%d", week),
+			fmt.Sprintf("api_request_error_details_2026w%d", week),
+		} {
+			var relation sql.NullString
+			if err := database.QueryRowContext(ctx, `SELECT to_regclass(current_schema() || '.' || $1)::TEXT`, partition).Scan(&relation); err != nil {
+				t.Fatalf("inspect dropped partition %s: %v", partition, err)
+			}
+			if relation.Valid {
+				t.Fatalf("partition %s still exists after guarded Down", partition)
+			}
+		}
+	}
+	var bridgeManifestRows int
+	if err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM api_request_partition_manifest
+		WHERE week_start >= '2026-08-10 00:00:00+00'
+		  AND week_start < '2026-10-05 00:00:00+00'
+	`).Scan(&bridgeManifestRows); err != nil {
+		t.Fatalf("count bridge manifest rows after Down: %v", err)
+	}
+	if bridgeManifestRows != 0 {
+		t.Fatalf("bridge manifest rows after Down = %d, want 0", bridgeManifestRows)
+	}
+	var foreignKeyCount int
+	if err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM pg_constraint
+		WHERE conrelid = 'api_request_error_details'::REGCLASS
+		  AND confrelid = 'api_request_events'::REGCLASS
+		  AND contype = 'f'
+		  AND confdeltype = 'c'
+	`).Scan(&foreignKeyCount); err != nil {
+		t.Fatalf("inspect request-detail foreign key after Down: %v", err)
+	}
+	if foreignKeyCount != 1 {
+		t.Fatalf("request-detail cascading foreign keys after Down = %d, want 1", foreignKeyCount)
 	}
 }

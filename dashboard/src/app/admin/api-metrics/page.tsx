@@ -15,10 +15,12 @@ import {
   type APIMetricsStatusCodeRow,
   type APIMetricsSummaryRow,
   type APIMetricsTrendRow,
+  type MetricsFreshness,
 } from "@/lib/api";
 
 import { AdminShell, StatCard, fmtNumber } from "../_components/admin-ui";
 import { SearchHistoryInput } from "../_components/search-history-input";
+import { combineMetricsFreshness } from "./freshness";
 
 const DAY_OPTIONS = [1, 7, 30, 90] as const;
 const METHOD_OPTIONS = ["all", "GET", "POST", "PUT", "PATCH", "DELETE"] as const;
@@ -38,6 +40,7 @@ export default function AdminAPIMetricsPage() {
   const [trend, setTrend] = useState<APIMetricsTrendRow[]>([]);
   const [workspaces, setWorkspaces] = useState<AdminAPIMetricsWorkspaceRow[]>([]);
   const [statusCodes, setStatusCodes] = useState<APIMetricsStatusCodeRow[]>([]);
+  const [metricsFreshness, setMetricsFreshness] = useState<MetricsFreshness | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,6 +69,7 @@ export default function AdminAPIMetricsPage() {
   const loadMetrics = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setMetricsFreshness(null);
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
@@ -82,6 +86,13 @@ export default function AdminAPIMetricsPage() {
       setTrend(trendRes.data || []);
       setWorkspaces(workspacesRes.data || []);
       setStatusCodes(statusRes.data || []);
+      setMetricsFreshness(combineMetricsFreshness([
+        overallRes.freshness,
+        summaryRes.freshness,
+        trendRes.freshness,
+        workspacesRes.freshness,
+        statusRes.freshness,
+      ]));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load API metrics");
     } finally {
@@ -101,6 +112,24 @@ export default function AdminAPIMetricsPage() {
       {error && (
         <div style={{ background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 22%, transparent)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
           {error}
+        </div>
+      )}
+
+      {metricsFreshness?.data_state === "delayed" && (
+        <div style={{ background: "var(--warning-soft)", border: "1px solid color-mix(in srgb, var(--warning) 24%, transparent)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--dtext)", fontSize: 13 }}>
+          <strong>Metrics data delayed.</strong>{" "}
+          {metricsFreshness.missing_rollup_hours
+            ? `${metricsFreshness.missing_rollup_hours} hourly rollup${metricsFreshness.missing_rollup_hours === 1 ? " is" : "s are"} not available yet.`
+            : "Some hourly rollups are not available yet."}{" "}
+          Recent raw requests are still included where available.
+          {metricsFreshness.percentiles_approximate && " Percentile latency values are approximate histogram bounds."}
+        </div>
+      )}
+
+      {metricsFreshness?.data_state === "approximate" && (
+        <div style={{ background: "var(--surface1)", border: "1px solid var(--dborder)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--dmuted)", fontSize: 13 }}>
+          <strong style={{ color: "var(--dtext)" }}>Approximate percentiles.</strong>{" "}
+          Latency percentiles that use hourly rollups are reported from histogram bucket bounds.
         </div>
       )}
 

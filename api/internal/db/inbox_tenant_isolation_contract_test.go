@@ -168,7 +168,7 @@ func TestInboxConnectionDiscoveryDeduplicatesSiblingBindings(t *testing.T) {
 }
 
 func TestInboxPhysicalConnectionDeduplicationContract(t *testing.T) {
-	migration := compactInboxTenantIsolationSQL(readInboxTenantIsolationContractFile(t, "migrations/130_inbox_connection_deduplication.sql"))
+	migration := compactInboxTenantIsolationSQL(readInboxTenantIsolationContractFile(t, "migrations/137_inbox_connection_deduplication.sql"))
 	for _, want := range []string{
 		"add column connection_id text",
 		"partition by sa.connection_id, i.source, i.external_id",
@@ -858,7 +858,20 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		t.Fatalf("seed profiles: %v", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO social_accounts (
+		CREATE TEMP TABLE inbox_isolation_account_fixtures (
+		  id TEXT PRIMARY KEY,
+		  profile_id TEXT NOT NULL,
+		  platform TEXT NOT NULL,
+		  access_token TEXT NOT NULL,
+		  external_account_id TEXT,
+		  metadata JSONB NOT NULL,
+		  connection_type TEXT NOT NULL,
+		  external_user_id TEXT,
+		  status TEXT NOT NULL,
+		  disconnected_at TIMESTAMPTZ
+		) ON COMMIT DROP;
+
+		INSERT INTO inbox_isolation_account_fixtures (
 		  id, profile_id, platform, access_token, external_account_id, metadata,
 		  connection_type, external_user_id, status, disconnected_at
 		)
@@ -938,7 +951,56 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		    'inbox-isolation-account-2', 'inbox-isolation-profile-2', 'instagram',
 		    'token-2', 'external-2', '{"instagram_webhook_user_id":"webhook-user-2"}'::jsonb,
 		    'managed', 'managed-other', 'active', NULL
-		  )
+		  );
+
+		INSERT INTO social_connections (
+		  id, workspace_id, platform, provider_identity, access_token, metadata,
+		  status, connection_type, external_user_id, disconnected_at
+		)
+		SELECT
+		  'inbox-isolation-connection-' || fixture.id,
+		  profile.workspace_id,
+		  fixture.platform,
+		  CASE
+		    WHEN fixture.platform = 'instagram'
+		      THEN fixture.metadata->>'instagram_webhook_user_id'
+		    ELSE fixture.external_account_id
+		  END,
+		  fixture.access_token,
+		  fixture.metadata,
+		  fixture.status,
+		  fixture.connection_type,
+		  fixture.external_user_id,
+		  fixture.disconnected_at
+		FROM inbox_isolation_account_fixtures fixture
+		JOIN profiles profile ON profile.id = fixture.profile_id
+		WHERE fixture.id <> 'inbox-isolation-account-byo';
+
+		INSERT INTO social_accounts (
+		  id, profile_id, platform, access_token, external_account_id, metadata,
+		  connection_type, external_user_id, status, disconnected_at, connection_id
+		)
+		SELECT
+		  fixture.id, fixture.profile_id, fixture.platform, fixture.access_token,
+		  fixture.external_account_id, fixture.metadata, fixture.connection_type,
+		  fixture.external_user_id, fixture.status, fixture.disconnected_at,
+		  'inbox-isolation-connection-' || fixture.id
+		FROM inbox_isolation_account_fixtures fixture
+		WHERE fixture.id <> 'inbox-isolation-account-byo';
+
+		-- Preserve the deliberately anomalous legacy BYO row as a quarantined,
+		-- connection-less migration fixture. New application writes cannot create it.
+		SET LOCAL session_replication_role = replica;
+		INSERT INTO social_accounts (
+		  id, profile_id, platform, access_token, external_account_id, metadata,
+		  connection_type, external_user_id, status, disconnected_at, connection_id
+		)
+		SELECT
+		  id, profile_id, platform, access_token, external_account_id, metadata,
+		  connection_type, external_user_id, status, disconnected_at, NULL
+		FROM inbox_isolation_account_fixtures
+		WHERE id = 'inbox-isolation-account-byo';
+		SET LOCAL session_replication_role = origin;
 	`); err != nil {
 		t.Fatalf("seed social accounts: %v", err)
 	}

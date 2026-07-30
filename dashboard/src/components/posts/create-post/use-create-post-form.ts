@@ -138,7 +138,7 @@ export const PLATFORM_BRAND_COLORS: Record<string, string> = {
   facebook: "#1877f2",
   pinterest: "#e60023",
   tiktok: "#ff0050",
-  youtube: "#ff0000",
+  youtube: "#64748b",
 };
 
 // Defaults chosen to satisfy TikTok's audit UX rules:

@@ -1337,7 +1337,9 @@ func TestScheduledQuotaHoldIdempotencyPhaseAUsesLegacyIndexAndNewLookup(t *testi
 		SELECT pg_get_expr(index.indpred, index.indrelid)
 		FROM pg_index index
 		JOIN pg_class relation ON relation.oid=index.indexrelid
+		JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
 		WHERE relation.relname='social_posts_workspace_scheduled_idempotency_uniq'
+		  AND namespace.nspname=current_schema()
 	`).Scan(&predicate); err != nil {
 		t.Fatal(err)
 	}

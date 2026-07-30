@@ -24,6 +24,7 @@ func (s *PostgresStore) List(ctx context.Context) ([]Flag, error) {
 		ORDER BY CASE key
 			WHEN 'x_dms_v1' THEN 1
 			WHEN 'x_credits_billing_v1' THEN 2
+			WHEN 'observability_reads_v2' THEN 3
 			ELSE 99
 		END
 	`)
@@ -38,15 +39,16 @@ func (s *PostgresStore) List(ctx context.Context) ([]Flag, error) {
 		if err := rows.Scan(&flag.Key, &flag.Enabled, &flag.Description, &flag.UpdatedBy, &flag.UpdatedAt); err != nil {
 			return nil, err
 		}
-		if _, ok := DefinitionFor(flag.Key); ok {
-			result = append(result, flag)
+		if authoritative, ok := flagWithDefinitionMetadata(flag); ok {
+			result = append(result, authoritative)
 		}
 	}
 	return result, rows.Err()
 }
 
 func (s *PostgresStore) Set(ctx context.Context, key string, enabled bool, actor string) (Flag, error) {
-	if _, ok := DefinitionFor(key); !ok {
+	definition, ok := DefinitionFor(key)
+	if !ok {
 		return Flag{}, fmt.Errorf("%w: %s", ErrUnknownFlag, key)
 	}
 	if actor == "" {
@@ -83,6 +85,7 @@ func (s *PostgresStore) Set(ctx context.Context, key string, enabled bool, actor
 	); err != nil {
 		return Flag{}, err
 	}
+	flag.Description = definition.Description
 	if previous != enabled {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO feature_flag_changes (

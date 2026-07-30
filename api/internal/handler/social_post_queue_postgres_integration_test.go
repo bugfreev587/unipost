@@ -4122,6 +4122,98 @@ func TestDispatchFailureParentUpdateErrorRollsBackEntireTerminalTransition(t *te
 	}
 }
 
+func TestDispatchFailureDiagnosticPanicCannotChangeBusinessOutcome(t *testing.T) {
+	type outcome struct {
+		jobState     string
+		resultStatus string
+		parentStatus string
+		retryCount   int
+		failureCount int
+		legacyDebug  pgtype.Text
+	}
+	run := func(t *testing.T, withPanickingSink bool) outcome {
+		t.Helper()
+		pool := openRestrictedDeliveryIntegrationPool(t)
+		setupRestrictedDeliveryIntegrationSchema(t, pool)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO social_posts(id,status,workspace_id)
+			VALUES('post_observability_fault','publishing','workspace_observability_fault');
+			INSERT INTO social_post_results(id,post_id,social_account_id,status)
+			VALUES('result_observability_fault','post_observability_fault','account_observability_fault','processing');
+			INSERT INTO post_delivery_jobs(
+				id,post_id,social_post_result_id,workspace_id,social_account_id,
+				platform,kind,state,attempts,max_attempts,lease_owner,last_attempt_at
+			) VALUES(
+				'job_observability_fault','post_observability_fault','result_observability_fault',
+				'workspace_observability_fault','account_observability_fault','tiktok',
+				'dispatch','running',1,5,'observability_fault_owner',NOW()
+			)
+		`); err != nil {
+			t.Fatal(err)
+		}
+		queries := db.New(pool)
+		job, err := queries.GetPostDeliveryJobByIDAndWorkspace(ctx, db.GetPostDeliveryJobByIDAndWorkspaceParams{
+			ID: "job_observability_fault", WorkspaceID: "workspace_observability_fault",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := queries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{
+			ID: job.SocialPostResultID, PostID: job.PostID,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		post, err := queries.GetSocialPostByID(ctx, job.PostID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := NewSocialPostHandler(queries, nil, nil, events.NoopBus{}, nil, nil, nil)
+		if withPanickingSink {
+			h.SetPostFailureDebugSink(panickingPostFailureDebugSink{})
+		}
+		if err := h.handleJobDispatchFailure(ctx, post, result, job, publishOneOutcome{
+			platform:  "tiktok",
+			err:       errors.New("generic provider rejection"),
+			debugCurl: "safe diagnostic that must not enter the business transaction",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var got outcome
+		if err := pool.QueryRow(ctx, `
+			SELECT job.state, result.status, parent.status,
+			  (SELECT COUNT(*)::int FROM post_delivery_jobs WHERE post_id=parent.id AND id<>job.id),
+			  (SELECT COUNT(*)::int FROM post_failures WHERE post_id=parent.id),
+			  result.debug_curl
+			FROM post_delivery_jobs job
+			JOIN social_post_results result ON result.id=job.social_post_result_id
+			JOIN social_posts parent ON parent.id=job.post_id
+			WHERE job.id='job_observability_fault'
+		`).Scan(
+			&got.jobState,
+			&got.resultStatus,
+			&got.parentStatus,
+			&got.retryCount,
+			&got.failureCount,
+			&got.legacyDebug,
+		); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	baseline := run(t, false)
+	withFault := run(t, true)
+	if !reflect.DeepEqual(withFault, baseline) {
+		t.Fatalf("observability panic changed business outcome:\n baseline=%#v\n with fault=%#v", baseline, withFault)
+	}
+	if baseline.legacyDebug.Valid {
+		t.Fatalf("legacy business debug column was populated: %#v", baseline.legacyDebug)
+	}
+}
+
 func TestFacebookProviderPollDefinitiveFailureAndPublishedRace(t *testing.T) {
 	pool := openRestrictedDeliveryIntegrationPool(t)
 	setupRestrictedDeliveryIntegrationSchema(t, pool)

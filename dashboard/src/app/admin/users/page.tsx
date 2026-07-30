@@ -14,7 +14,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { PlatformIcon } from "@/components/platform-icons";
+import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import {
   getAdminUserSignups,
   getAdminUser,
@@ -377,7 +377,7 @@ export default function AdminUsersPage() {
                       {u.platforms.length > 0 ? (
                         <div className="ad-plat-icons">
                           {u.platforms.map((p) => (
-                            <div key={p} className="ad-plat-dot" title={p}><PlatformIcon platform={p} size={14} /></div>
+                            <div key={p} className="ad-plat-dot" title={p}><AccountDestinationIcon platform={p} size={14} /></div>
                           ))}
                         </div>
                       ) : (
@@ -501,7 +501,7 @@ export default function AdminUsersPage() {
                   <PanelRow k="API Keys" v={String(detail.api_key_count)} />
                   <PanelRow
                     k="Connected platforms"
-                    v={detail.platforms.length > 0 ? <span style={{ display: "inline-flex", gap: 4 }}>{detail.platforms.map((p) => <PlatformIcon key={p} platform={p} size={14} />)}</span> : "—"}
+                    v={detail.platforms.length > 0 ? <span style={{ display: "inline-flex", gap: 4 }}>{detail.platforms.map((p) => <AccountDestinationIcon key={p} platform={p} size={14} />)}</span> : "—"}
                   />
                   <PanelRow k="Total posts (all time)" v={fmtNumber(detail.total_posts)} />
                   <PanelRow k="Failed posts (30d)" v={<span style={{ color: detail.failed_posts_30d > 0 ? "var(--warning)" : undefined }}>{fmtNumber(detail.failed_posts_30d)}</span>} />
@@ -640,7 +640,7 @@ export default function AdminUsersPage() {
                         <div className="au-scheduled-platforms" aria-label="Platforms">
                           {post.platforms.length > 0 ? (
                             post.platforms.map((platform) => (
-                              <PlatformIcon key={platform} platform={platform} size={14} />
+                              <AccountDestinationIcon key={platform} platform={platform} size={14} />
                             ))
                           ) : (
                             <span className="au-scheduled-no-platform">—</span>

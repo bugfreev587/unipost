@@ -5,7 +5,7 @@ import { ApiReferencePage, MethodBadge } from "../_components/doc-components";
 
 const ENDPOINTS = [
   { label: "List logs", method: "GET" as const, path: "/v1/logs", href: "/docs/api/logs/list", description: "Cursor-paginated search and backfill across retained logs." },
-  { label: "Get log", method: "GET" as const, path: "/v1/logs/{id}", href: "/docs/api/logs/get", description: "Fetch one log, including redacted request and response payloads." },
+  { label: "Get log", method: "GET" as const, path: "/v1/logs/{id}", href: "/docs/api/logs/get", description: "Fetch one log and any authorized, retained failure detail." },
   { label: "Stream logs", method: "GET" as const, path: "/v1/logs/stream", href: "/docs/api/logs/stream", description: "Server-Sent Events stream for near real-time ingestion, with replay." },
 ];
 
@@ -75,6 +75,14 @@ export default function LogsOverviewPage() {
         </Card>
 
         <Card>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 10 }}>IDs and pagination</div>
+          <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8, fontSize: 14, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+            <li>Current REST and SDK responses return a positive integer log ID. Pass that numeric value back unchanged when fetching one log.</li>
+            <li>List results use a stable global order, newest first. Pass the opaque cursor from <code>meta.next_cursor</code> back unchanged; its internal tie-breakers and storage layout are intentionally not part of the API contract.</li>
+          </ul>
+        </Card>
+
+        <Card>
           <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 10 }}>Hosted Connect outcomes</div>
           <div style={{ fontSize: 14, lineHeight: 1.7, color: "var(--docs-text-soft)", marginBottom: 12 }}>
             Every Hosted Connect attempt that UniPost can associate with your workspace produces one result event. Filter with <code>category=oauth</code>, then use the action and status to distinguish the outcome.
@@ -93,7 +101,10 @@ export default function LogsOverviewPage() {
         <Card>
           <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 10 }}>Redaction and payloads</div>
           <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8, fontSize: 14, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
-            <li>The list endpoint never returns raw payloads. The detail endpoint includes redacted <code>request_payload</code> and <code>response_payload</code>.</li>
+            <li>The list endpoint is metadata-only and never returns raw payloads.</li>
+            <li>Canonical API request events retain bounded, redacted detail only for failed requests. Successful request events remain metadata-only.</li>
+            <li>If retained failure detail expires, the base log remains available and the detail endpoint returns <code>detail_status=expired</code> without payload fields.</li>
+            <li>Other integration log types keep their existing source-specific detail behavior.</li>
             <li>Redaction runs before logs are persisted. Any object key whose lowercased name contains <code>token</code>, <code>secret</code>, <code>authorization</code>, <code>cookie</code>, <code>password</code>, <code>refresh_token</code>, <code>access_token</code>, or <code>client_secret</code> is replaced with <code>[REDACTED]</code>.</li>
             <li>Payloads are truncated to keep log rows bounded.</li>
             <li>Use the <code>request_id</code> field to correlate API responses with their logs.</li>

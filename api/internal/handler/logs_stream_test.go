@@ -16,6 +16,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/requestevents"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
 
@@ -110,6 +111,18 @@ func TestResolveReplayStart_Precedence(t *testing.T) {
 	}
 }
 
+func TestDecodeLiveEnvelopeRejectsSourceQualifiedIDsFromLegacySSE(t *testing.T) {
+	if _, _, _, ok := decodeLiveEnvelope([]byte(`{"type":"logs.new","workspace_id":"ws_1","log":{"id":"integration:42","category":"oauth"}}`)); ok {
+		t.Fatal("source-qualified integration event was accepted by numeric SSE")
+	}
+}
+
+func TestDecodeLiveEnvelopeDoesNotLeakCanonicalRequestEventsIntoLegacyNumericSSE(t *testing.T) {
+	if _, _, _, ok := decodeLiveEnvelope([]byte(`{"type":"logs.new","workspace_id":"ws_1","log":{"id":"request:event-1"}}`)); ok {
+		t.Fatal("canonical request event was accepted by the numeric SSE stream")
+	}
+}
+
 // streamIDs scans an SSE body and forwards each event id.
 func streamIDs(body io.Reader, out chan<- int64) {
 	sc := bufio.NewScanner(body)
@@ -127,6 +140,47 @@ func broadcastLog(h *ws.Hub, workspaceID string, id int64) {
 	row := sampleLog(id, workspaceID, time.Now())
 	payload, _ := json.Marshal(ws.LogEnvelope(row))
 	h.Broadcast(workspaceID, payload)
+}
+
+func TestStreamLiveAPIRequestStaysNumericWhileV2WebSocketEventsShareHub(t *testing.T) {
+	hub := ws.NewHub()
+	h := NewLogsStreamHandler(hub, &fakeStreamStore{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.Stream(w, r.WithContext(auth.SetWorkspaceID(r.Context(), "ws_1")))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/v1/logs/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	ids := make(chan int64, 2)
+	go streamIDs(resp.Body, ids)
+
+	legacyRow := sampleLog(88, "ws_1", time.Now())
+	legacyRow.Category = "api_request"
+	legacy, _ := json.Marshal(ws.LogEnvelope(legacyRow))
+	canonical, _ := json.Marshal(ws.RequestEventLogEnvelope(requestevents.Event{ID: "event-88", WorkspaceID: "ws_1"}))
+	hub.Broadcast("ws_1", legacy)
+	hub.Broadcast("ws_1", canonical)
+
+	select {
+	case id := <-ids:
+		if id != 88 {
+			t.Fatalf("SSE id = %d, want 88", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for numeric SSE api_request event")
+	}
+	select {
+	case id := <-ids:
+		t.Fatalf("SSE leaked canonical duplicate id %d", id)
+	case <-time.After(25 * time.Millisecond):
+	}
 }
 
 // TestStream_ReplayThenLive exercises the full no-gap path: replay of

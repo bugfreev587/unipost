@@ -31,6 +31,7 @@ import (
 	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailuredebug"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -73,6 +74,7 @@ type SocialPostHandler struct {
 	holdReconciler         paidquota.HoldReconciler
 	paidQuotaEvaluator     paidQuotaEvaluationService
 	publishingRestrictions publishingRestrictionEvaluator
+	postFailureDebug       postFailureDebugSink
 	appBaseURL             string
 }
 
@@ -88,6 +90,10 @@ type xUsageService interface {
 
 type paidQuotaEvaluationService interface {
 	Evaluate(context.Context, string, string) error
+}
+
+type postFailureDebugSink interface {
+	Enqueue(postfailuredebug.Detail)
 }
 
 func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client, limiter ratelimit.Limiter, ilog *integrationlogs.Logger) *SocialPostHandler {
@@ -189,6 +195,33 @@ func (h *SocialPostHandler) SetHoldReconciler(reconciler paidquota.HoldReconcile
 func (h *SocialPostHandler) SetPaidQuotaEvaluator(evaluator paidQuotaEvaluationService) *SocialPostHandler {
 	h.paidQuotaEvaluator = evaluator
 	return h
+}
+
+func (h *SocialPostHandler) SetPostFailureDebugSink(sink postFailureDebugSink) *SocialPostHandler {
+	h.postFailureDebug = sink
+	return h
+}
+
+func (h *SocialPostHandler) recordPostFailureDebug(resultID, workspaceID, debugText string) {
+	if h == nil || h.postFailureDebug == nil || resultID == "" || workspaceID == "" || debugText == "" {
+		return
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Warn("post_failure_debug_enqueue_panic",
+				"workspace_id", workspaceID,
+				"social_post_result_id", resultID,
+				"panic_type", fmt.Sprintf("%T", recovered),
+			)
+		}
+	}()
+	h.postFailureDebug.Enqueue(postfailuredebug.Detail{
+		SocialPostResultID: resultID,
+		WorkspaceID:        workspaceID,
+		DebugText:          debugText,
+		CapturedAt:         time.Now().UTC(),
+		RedactionVersion:   1,
+	})
 }
 
 func (h *SocialPostHandler) maybeEvaluatePaidQuota(ctx context.Context, workspaceID, period string) {
@@ -1797,15 +1830,6 @@ func (h *SocialPostHandler) executePublishLoop(
 			}
 		}
 
-		// Only store the debug curl dump on failed rows — successful
-		// publishes don't need diagnostic data and it'd bloat the row
-		// unnecessarily. Nil-valued when the recorder was empty
-		// (every request 2xx'd, or nothing made an HTTP call).
-		var debugCurl pgtype.Text
-		if status == "failed" && oc.debugCurl != "" {
-			debugCurl = pgtype.Text{String: oc.debugCurl, Valid: true}
-		}
-
 		// Persist the Facebook mediaType choice so the status worker can
 		// tell an intentional Reel (expected /reel/ permalink) apart
 		// from an accidental reclassification (fast-fail at 10 min).
@@ -1837,9 +1861,11 @@ func (h *SocialPostHandler) executePublishLoop(
 				Valid:  oc.dailyReservationOperationKey != "",
 			},
 			DailyReservationReleasePending: oc.dailyReservationReleasePending,
-			DebugCurl:                      debugCurl,
-			FbMediaType:                    fbMediaType,
-			XCreditsCounted:                oc.xCreditsCounted,
+			// Publishing diagnostics are persisted asynchronously after this
+			// business write succeeds. The legacy business column remains empty.
+			DebugCurl:       pgtype.Text{},
+			FbMediaType:     fbMediaType,
+			XCreditsCounted: oc.xCreditsCounted,
 			XCreditOperation: pgtype.Text{
 				String: oc.xCreditOperation,
 				Valid:  oc.xCreditOperation != "",
@@ -1878,6 +1904,9 @@ func (h *SocialPostHandler) executePublishLoop(
 				dbErr.Error(),
 			))
 			continue
+		}
+		if status == "failed" {
+			h.recordPostFailureDebug(dbResult.ID, workspaceID, oc.debugCurl)
 		}
 
 		var failureDetails *db.CreatePostFailureParams

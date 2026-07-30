@@ -1,12 +1,163 @@
 package ws
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/inboxaccess"
+	"github.com/xiaoboyu/unipost-api/internal/requestevents"
 )
+
+func TestHubV2LogConnectionReceivesExactlyOneCanonicalRequestEvent(t *testing.T) {
+	h := NewHub()
+	h.WithLogReadSelector(staticLogReadSelector(true))
+	connection := &Conn{send: make(chan []byte, 4)}
+	h.RegisterLog("ws_1", connection)
+	defer h.Unregister("ws_1", connection)
+
+	legacy, _ := json.Marshal(LogEnvelope(db.IntegrationLog{ID: 42, WorkspaceID: "ws_1", Category: "api_request"}))
+	canonical, _ := json.Marshal(RequestEventLogEnvelope(requestevents.Event{ID: "event-1", WorkspaceID: "ws_1"}))
+	h.Broadcast("ws_1", legacy)
+	h.Broadcast("ws_1", canonical)
+
+	select {
+	case payload := <-connection.send:
+		var envelope struct {
+			Log struct {
+				ID string `json:"id"`
+			} `json:"log"`
+		}
+		if err := json.Unmarshal(payload, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if envelope.Log.ID != "request:event-1" {
+			t.Fatalf("id = %q", envelope.Log.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for canonical request event")
+	}
+	select {
+	case payload := <-connection.send:
+		t.Fatalf("v2 connection received duplicate request event: %s", payload)
+	case <-time.After(25 * time.Millisecond):
+	}
+}
+
+type staticLogReadSelector bool
+
+func (s staticLogReadSelector) UseV2(context.Context) bool { return bool(s) }
+
+type mutableCountingLogReadSelector struct {
+	enabled atomic.Bool
+	calls   atomic.Int64
+}
+
+func (s *mutableCountingLogReadSelector) UseV2(context.Context) bool {
+	s.calls.Add(1)
+	return s.enabled.Load()
+}
+
+func TestHubOpenLogConnectionsUseOneDynamicModeReadPerEnvelope(t *testing.T) {
+	selector := &mutableCountingLogReadSelector{}
+	selector.enabled.Store(true)
+	h := NewHub().WithLogReadSelector(selector)
+	first := &Conn{send: make(chan []byte, 2)}
+	second := &Conn{send: make(chan []byte, 2)}
+	h.RegisterLog("ws_1", first)
+	h.RegisterLog("ws_1", second)
+	defer h.Unregister("ws_1", first)
+	defer h.Unregister("ws_1", second)
+
+	canonical, _ := json.Marshal(RequestEventLogEnvelope(requestevents.Event{ID: "event-1", WorkspaceID: "ws_1"}))
+	h.Broadcast("ws_1", canonical)
+	assertHubLogID(t, first.send, "request:event-1")
+	assertHubLogID(t, second.send, "request:event-1")
+	if got := selector.calls.Load(); got != 1 {
+		t.Fatalf("mode reads after first envelope = %d, want 1", got)
+	}
+
+	selector.enabled.Store(false)
+	legacyAPI, _ := json.Marshal(LogEnvelope(db.IntegrationLog{ID: 42, WorkspaceID: "ws_1", Category: "api_request"}))
+	h.Broadcast("ws_1", legacyAPI)
+	assertHubLogID(t, first.send, int64(42))
+	assertHubLogID(t, second.send, int64(42))
+	if got := selector.calls.Load(); got != 2 {
+		t.Fatalf("mode reads after second envelope = %d, want 2", got)
+	}
+}
+
+func TestHubProjectsOneLogEnvelopePerBroadcast(t *testing.T) {
+	h := NewHub().WithLogReadSelector(staticLogReadSelector(true))
+	var calls atomic.Int64
+	project := func(payload []byte, useV2 bool) ([]byte, bool) {
+		calls.Add(1)
+		return ProjectLogEnvelope(payload, useV2)
+	}
+	first := &Conn{send: make(chan []byte, 1), project: project}
+	second := &Conn{send: make(chan []byte, 1), project: project}
+	h.Register("ws_1", first)
+	h.Register("ws_1", second)
+	defer h.Unregister("ws_1", first)
+	defer h.Unregister("ws_1", second)
+
+	canonical, _ := json.Marshal(RequestEventLogEnvelope(requestevents.Event{ID: "event-1", WorkspaceID: "ws_1"}))
+	h.Broadcast("ws_1", canonical)
+
+	assertHubLogID(t, first.send, "request:event-1")
+	assertHubLogID(t, second.send, "request:event-1")
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("projection calls = %d, want 1 per workspace broadcast", got)
+	}
+}
+
+func TestHubLogSelectorCanBeReplacedDuringBroadcast(t *testing.T) {
+	h := NewHub().WithLogReadSelector(staticLogReadSelector(false))
+	connection := &Conn{send: make(chan []byte, 256)}
+	h.RegisterLog("ws_1", connection)
+	defer h.Unregister("ws_1", connection)
+	payload, _ := json.Marshal(LogEnvelope(db.IntegrationLog{ID: 42, WorkspaceID: "ws_1", Category: "oauth"}))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			h.WithLogReadSelector(staticLogReadSelector(i%2 == 0))
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		h.Broadcast("ws_1", payload)
+	}
+	<-done
+}
+
+func assertHubLogID(t *testing.T, messages <-chan []byte, want any) {
+	t.Helper()
+	select {
+	case payload := <-messages:
+		var envelope struct {
+			Log map[string]any `json:"log"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(payload))
+		decoder.UseNumber()
+		if err := decoder.Decode(&envelope); err != nil {
+			t.Fatal(err)
+		}
+		got := envelope.Log["id"]
+		if number, ok := got.(json.Number); ok {
+			got, _ = number.Int64()
+		}
+		if got != want {
+			t.Fatalf("log id = %#v, want %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for log envelope")
+	}
+}
 
 func TestHubSubscribe_ReceivesBroadcast(t *testing.T) {
 	h := NewHub()

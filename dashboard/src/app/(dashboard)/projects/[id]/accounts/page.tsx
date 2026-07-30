@@ -20,6 +20,7 @@ import { ProfileBindings } from "@/components/accounts/profile-bindings";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { AccountDestinationIcon } from "@/components/account-destination-icon";
+import { YouTubeChannelIdentity } from "@/components/youtube/youtube-channel-identity";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { ConnectionStats } from "@/components/dashboard/connection-stats";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
@@ -579,17 +580,21 @@ export default function AccountsPage() {
                 return (
                 <tr key={a.id}>
                   <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div className="platform-icon-wrap" style={{ color: a.platform === "youtube" ? "var(--dmuted)" : undefined }}>
-                        <AccountDestinationIcon platform={a.platform} />
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{a.account_name || a.id}</div>
-                        <div className="dt-micro" style={{ color: "var(--dmuted2)", marginTop: 2, textTransform: "none", letterSpacing: 0 }}>
-                          {accountSourceLabel(a.platform)}
+                    {a.platform === "youtube" ? (
+                      <YouTubeChannelIdentity account={a} compact disclosure="Source: YouTube" />
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div className="platform-icon-wrap">
+                          <AccountDestinationIcon platform={a.platform} />
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 500 }}>{a.account_name || a.id}</div>
+                          <div className="dt-micro" style={{ color: "var(--dmuted2)", marginTop: 2, textTransform: "none", letterSpacing: 0 }}>
+                            {accountSourceLabel(a.platform)}
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </td>
                   <td style={{ color: "var(--dmuted)", fontSize: 13, fontWeight: 500 }}>
                     {profiles.find((p) => p.id === a.profile_id)?.name || "—"}
@@ -598,7 +603,7 @@ export default function AccountsPage() {
                   <td style={{ color: "var(--dmuted)", fontWeight: 500 }}>
                     {new Date(a.connected_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                   </td>
-                  <td>
+                  <td data-unipost-account-status>
                     <span className={`dbadge ${
                       a.status === "active"
                         ? "dbadge-green"

@@ -11,13 +11,17 @@ const publishingRestrictionScript =
   "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts";
 const postgresTestsByPackage = {
   "./internal/db": [
-    "TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues131",
+    "TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup",
+    "TestMigrationGatePostgresDisposablePreviewWithExistingTableStillRequiresBackup",
+    "TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup",
+    "TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues138",
     "TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged",
     "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
     "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
     "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
-    "TestRequireCurrentSchemaRejects124AndAccepts131",
+    "TestRequireCurrentSchemaRejects124AndAccepts138",
     "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
+    "TestMigration133UpgradeAndGuardedDown",
     "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
     "TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown",
     "TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord",
@@ -180,6 +184,10 @@ function assertPublishingRestrictionCIContracts({ packageJson, workflow }) {
     postgresJob.env?.PUBLISHING_RESTRICTION_TEST_DATABASE_URL,
     "postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable",
   );
+  assert.equal(
+    postgresJob.env?.REQUEST_EVENTS_TEST_DATABASE_URL,
+    "postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable",
+  );
 
   const postgresStep = requiredStep(
     postgresJob,
@@ -189,6 +197,10 @@ function assertPublishingRestrictionCIContracts({ packageJson, workflow }) {
   const selectorMatch = postgresStep.run.match(/^test_selector='([^']+)'$/m);
   assert.ok(selectorMatch, "PostgreSQL step must assign one literal test_selector");
   assert.equal(selectorMatch[1], postgresTestSelector);
+  assert.doesNotMatch(
+    postgresStep.run,
+    /TestRequireCurrentSchemaRejects124AndAccepts132/,
+  );
   assert.match(postgresStep.run, /^set -euo pipefail$/m);
   assert.match(
     postgresStep.run,
@@ -209,6 +221,31 @@ function assertPublishingRestrictionCIContracts({ packageJson, workflow }) {
   assert.match(
     postgresStep.run,
     /go test -tags=integration \.\/internal\/db \.\/internal\/handler \.\/internal\/paidquota \.\/internal\/testdbguard \.\/internal\/worker \\\n\s+-run "\$test_selector" -count=1 -v/,
+  );
+  const postgresCommands = postgresStep.run.split("\n");
+  assert.ok(
+    postgresCommands.includes(
+      "GOOSE_MIGRATION_TEST_DATABASE_URL=\"$REQUEST_EVENTS_TEST_DATABASE_URL\" go test ./internal/db -run '^TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose$' -count=1",
+    ),
+    "PostgreSQL step must initialize the isolated database with every embedded migration",
+  );
+  assert.ok(
+    postgresCommands.includes(
+      "go test -tags=integration ./internal/observabilityreads -count=1",
+    ),
+    "PostgreSQL step must run the complete observability reads integration package",
+  );
+  assert.ok(
+    postgresCommands.includes(
+      "go test -tags=integration ./internal/requestevents -count=1",
+    ),
+    "PostgreSQL step must run the complete request events integration package",
+  );
+  assert.ok(
+    postgresCommands.includes(
+      "go test -tags=integration ./internal/requesteventpartitions -count=1",
+    ),
+    "PostgreSQL step must run the complete request-event partition integration package",
   );
 }
 
@@ -298,6 +335,30 @@ test("publishing restriction CI guard rejects semantic workflow mutations", asyn
     "unanchored PostgreSQL selector": (source) => source.replace(
       "test_selector='^(?:",
       "test_selector='(?:",
+    ),
+    "stale schema selector": (source) => source.replaceAll(
+      "TestRequireCurrentSchemaRejects124AndAccepts138",
+      "TestRequireCurrentSchemaRejects124AndAccepts137",
+    ),
+    "missing request events database URL": (source) => source.replace(
+      "      REQUEST_EVENTS_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable\n",
+      "",
+    ),
+    "missing Goose schema bootstrap": (source) => source.replace(
+      "          GOOSE_MIGRATION_TEST_DATABASE_URL=\"$REQUEST_EVENTS_TEST_DATABASE_URL\" go test ./internal/db -run '^TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose$' -count=1\n",
+      "",
+    ),
+    "missing observability reads integration command": (source) => source.replace(
+      "          go test -tags=integration ./internal/observabilityreads -count=1\n",
+      "",
+    ),
+    "missing request events integration command": (source) => source.replace(
+      "          go test -tags=integration ./internal/requestevents -count=1\n",
+      "",
+    ),
+    "missing request-event partitions integration command": (source) => source.replace(
+      "          go test -tags=integration ./internal/requesteventpartitions -count=1\n",
+      "",
     ),
   };
 

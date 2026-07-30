@@ -8,32 +8,44 @@ import (
 )
 
 const (
-	XDMSV1            = "x_dms_v1"
-	XCreditsBillingV1 = "x_credits_billing_v1"
+	XDMSV1               = "x_dms_v1"
+	XCreditsBillingV1    = "x_credits_billing_v1"
+	ObservabilityReadsV2 = "observability_reads_v2"
 )
 
 var ErrUnknownFlag = errors.New("unknown feature flag")
 
 type Definition struct {
-	Key            string `json:"key"`
-	Label          string `json:"label"`
-	Description    string `json:"description"`
-	OwnerArea      string `json:"owner_area"`
-	DefaultEnabled bool   `json:"default_enabled"`
+	Key             string `json:"key"`
+	Label           string `json:"label"`
+	Description     string `json:"description"`
+	OwnerArea       string `json:"owner_area"`
+	DefaultEnabled  bool   `json:"default_enabled"`
+	Internal        bool   `json:"-"`
+	ActivationReady bool   `json:"-"`
 }
 
 var definitions = []Definition{
 	{
-		Key:         XDMSV1,
-		Label:       "X DMs",
-		Description: "Makes X direct messages available to regular users.",
-		OwnerArea:   "X Inbox",
+		Key:             XDMSV1,
+		Label:           "X DMs",
+		Description:     "Makes X direct messages available to regular users.",
+		OwnerArea:       "X Inbox",
+		ActivationReady: true,
 	},
 	{
-		Key:         XCreditsBillingV1,
-		Label:       "X Credits billing",
-		Description: "Counts managed X API operations against customer X Credits.",
-		OwnerArea:   "Billing",
+		Key:             XCreditsBillingV1,
+		Label:           "X Credits billing",
+		Description:     "Counts managed X API operations against customer X Credits.",
+		OwnerArea:       "Billing",
+		ActivationReady: true,
+	},
+	{
+		Key:         ObservabilityReadsV2,
+		Label:       "Observability reads v2",
+		Description: "Uses the canonical request-event model for Logs and API Metrics reads; activation is locked pending SDK, canonical live-publisher, historical Metrics coverage/parity, retention safety, and exact-SHA prerequisites.",
+		OwnerArea:   "API / Admin Observability",
+		Internal:    true,
 	},
 }
 
@@ -58,6 +70,15 @@ type Flag struct {
 	Description string    `json:"description"`
 	UpdatedBy   string    `json:"updated_by"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func flagWithDefinitionMetadata(flag Flag) (Flag, bool) {
+	definition, ok := DefinitionFor(flag.Key)
+	if !ok {
+		return Flag{}, false
+	}
+	flag.Description = definition.Description
+	return flag, true
 }
 
 type Store interface {
@@ -102,8 +123,12 @@ func (e *Evaluator) ForWorkspace(ctx context.Context, workspaceID, key string) (
 }
 
 func (e *Evaluator) Public(ctx context.Context, key string) (bool, error) {
-	if _, ok := DefinitionFor(key); !ok {
+	definition, ok := DefinitionFor(key)
+	if !ok {
 		return false, fmt.Errorf("%w: %s", ErrUnknownFlag, key)
+	}
+	if !definition.ActivationReady {
+		return false, nil
 	}
 	if e == nil || e.store == nil {
 		return false, errors.New("feature flag evaluator is not configured")
@@ -114,6 +139,9 @@ func (e *Evaluator) Public(ctx context.Context, key string) (bool, error) {
 func (e *Evaluator) WorkspaceFlags(ctx context.Context, workspaceID string) (map[string]bool, error) {
 	flags := make(map[string]bool, len(definitions))
 	for _, definition := range definitions {
+		if definition.Internal {
+			continue
+		}
 		enabled, err := e.ForWorkspace(ctx, workspaceID, definition.Key)
 		if err != nil {
 			return nil, err
@@ -126,6 +154,9 @@ func (e *Evaluator) WorkspaceFlags(ctx context.Context, workspaceID string) (map
 func (e *Evaluator) PublicFlags(ctx context.Context) (map[string]bool, error) {
 	flags := make(map[string]bool, len(definitions))
 	for _, definition := range definitions {
+		if definition.Internal {
+			continue
+		}
 		enabled, err := e.Public(ctx, definition.Key)
 		if err != nil {
 			return nil, err

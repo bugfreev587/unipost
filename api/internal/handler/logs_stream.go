@@ -296,12 +296,12 @@ func decodeLiveEnvelope(msg []byte) (workspaceID string, logObj map[string]any, 
 	if env.Type != "logs.new" || env.Log == nil {
 		return "", nil, 0, false
 	}
-	num, ok := env.Log["id"].(json.Number)
+	rawID, ok := env.Log["id"].(json.Number)
 	if !ok {
 		return "", nil, 0, false
 	}
-	parsed, err := num.Int64()
-	if err != nil {
+	parsed, err := rawID.Int64()
+	if err != nil || parsed <= 0 {
 		return "", nil, 0, false
 	}
 	return env.WorkspaceID, env.Log, parsed, true

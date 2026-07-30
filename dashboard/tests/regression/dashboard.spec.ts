@@ -31,6 +31,9 @@ const publicRoutes = [
   { path: "/docs/api/api-metrics/summary", marker: /Summary|GET\s+\/v1\/api-metrics\/summary/i },
   { path: "/docs/api/api-metrics/trend", marker: /Trend|GET\s+\/v1\/api-metrics\/trend/i },
   { path: "/docs/api/api-metrics/status-codes", marker: /Status-Code|GET\s+\/v1\/api-metrics\/status-codes/i },
+  { path: "/docs/api/logs", marker: /Logs|IDs and pagination/i },
+  { path: "/docs/api/logs/list", marker: /List logs|GET\s+\/v1\/logs/i },
+  { path: "/docs/api/logs/get", marker: /Get log|GET\s+\/v1\/logs\/:id/i },
 ];
 
 const controlledDocsRoutes = [

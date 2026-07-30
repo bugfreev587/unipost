@@ -58,6 +58,12 @@ export interface WebhookCreateResponse extends WebhookSubscription {
   secret: string;
 }
 
+export interface MetricsFreshness {
+  data_state: "exact" | "approximate" | "delayed";
+  percentiles_approximate: boolean;
+  missing_rollup_hours?: number;
+}
+
 export interface ApiResponse<T> {
   data: T;
   meta?: {
@@ -66,6 +72,7 @@ export interface ApiResponse<T> {
     has_more?: boolean;
     next_cursor?: string;
   };
+  freshness?: MetricsFreshness;
   request_id?: string;
 }
 
@@ -268,7 +275,7 @@ export interface PlatformCapabilitiesEnvelope {
 }
 
 export interface IntegrationLog {
-  id: number;
+  id: number | string;
   workspace_id: string;
   ts: string;
   level: "debug" | "info" | "warn" | "error";
@@ -293,8 +300,10 @@ export interface IntegrationLog {
   duration_ms?: number;
   error_code?: string;
   metadata?: Record<string, unknown> | null;
-  request_payload?: Record<string, unknown> | null;
-  response_payload?: Record<string, unknown> | null;
+  has_error_detail?: boolean;
+  detail_status?: "available" | "expired";
+  request_payload?: unknown;
+  response_payload?: unknown;
 }
 
 export interface IntegrationLogListParams {
@@ -1825,6 +1834,7 @@ export interface XCreditsAllowance {
 }
 
 export type UniPostFeatureFlagKey = "x_dms_v1" | "x_credits_billing_v1";
+export type AdminFeatureFlagKey = UniPostFeatureFlagKey | "observability_reads_v2";
 
 export interface WorkspaceFeatureFlags {
   environment: string;
@@ -1838,10 +1848,12 @@ export interface PublicFeatureFlags {
 }
 
 export interface AdminFeatureFlag {
-  key: UniPostFeatureFlagKey;
+  key: AdminFeatureFlagKey;
   label: string;
   description: string;
   owner_area: string;
+  internal: boolean;
+  activation_ready: boolean;
   enabled: boolean;
   updated_by: string;
   updated_at: string;
@@ -2020,7 +2032,7 @@ export async function listAdminFeatureFlags(
 
 export async function updateAdminFeatureFlag(
   token: string,
-  key: UniPostFeatureFlagKey,
+  key: AdminFeatureFlagKey,
   enabled: boolean,
 ): Promise<ApiResponse<AdminFeatureFlag>> {
   return request(`/v1/admin/feature-flags/${encodeURIComponent(key)}`, token, {
@@ -2106,7 +2118,7 @@ export async function getIntegrationLog(
   token: string,
   id: number | string
 ): Promise<ApiResponse<IntegrationLog>> {
-  return request(`/v1/logs/${id}`, token);
+  return request(`/v1/logs/${encodeURIComponent(String(id))}`, token);
 }
 
 export async function listAdminIntegrationLogs(
@@ -2126,7 +2138,7 @@ export async function getAdminIntegrationLog(
   token: string,
   id: number | string
 ): Promise<ApiResponse<AdminIntegrationLog>> {
-  return request(`/v1/admin/logs/${id}`, token);
+  return request(`/v1/admin/logs/${encodeURIComponent(String(id))}`, token);
 }
 
 export async function listAdminSearchHistory(
@@ -3051,9 +3063,14 @@ export interface AdminUserPostFailure {
   platform_error_code?: string;
   is_retriable?: boolean;
   next_action?: string;
-  // Curl dump of every failing HTTP request the adapter made. Server
-  // redacts Authorization header + token query params before sending.
-  debug_curl?: string;
+}
+
+export interface AdminPostFailureDebugDetail {
+  debug_curl: string | null;
+  original_bytes: number;
+  stored_bytes: number;
+  truncated: boolean;
+  source_kind: "bounded" | "legacy" | "none";
 }
 
 export type ErrorTriageClassification =
@@ -3878,6 +3895,13 @@ export async function listAdminPostFailures(
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();
   return request(`/v1/admin/post-failures${s ? `?${s}` : ""}`, token);
+}
+
+export async function getAdminPostFailureDebug(
+  token: string,
+  id: string,
+): Promise<ApiResponse<AdminPostFailureDebugDetail>> {
+  return request(`/v1/admin/post-failures/${encodeURIComponent(id)}/debug`, token);
 }
 
 export async function listAdminErrorTriageRuns(

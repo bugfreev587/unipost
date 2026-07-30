@@ -58,15 +58,18 @@ func TestFeatureFlagsHandlerListAndUpdate(t *testing.T) {
 	}
 	var listBody struct {
 		Data []struct {
-			Key     string `json:"key"`
-			Label   string `json:"label"`
-			Enabled bool   `json:"enabled"`
+			Key             string `json:"key"`
+			Label           string `json:"label"`
+			Enabled         bool   `json:"enabled"`
+			Internal        bool   `json:"internal"`
+			ActivationReady bool   `json:"activation_ready"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(listRec.Body.Bytes(), &listBody); err != nil {
 		t.Fatal(err)
 	}
-	if len(listBody.Data) != 2 || listBody.Data[0].Key != featureflags.XDMSV1 || listBody.Data[0].Label != "X DMs" {
+	if len(listBody.Data) != 3 || listBody.Data[0].Key != featureflags.XDMSV1 || listBody.Data[0].Label != "X DMs" ||
+		listBody.Data[2].Key != featureflags.ObservabilityReadsV2 || listBody.Data[2].Label != "Observability reads v2" || listBody.Data[2].Enabled || !listBody.Data[2].Internal || listBody.Data[2].ActivationReady {
 		t.Fatalf("unexpected list response: %s", listRec.Body.String())
 	}
 
@@ -131,6 +134,9 @@ func TestFeatureFlagsHandlerPublicReturnsOnlyGlobalValues(t *testing.T) {
 	}
 	if len(body.Data.Flags) != 2 || body.Data.Flags[featureflags.XDMSV1] || !body.Data.Flags[featureflags.XCreditsBillingV1] {
 		t.Fatalf("unexpected public response: %s", rec.Body.String())
+	}
+	if _, exposed := body.Data.Flags[featureflags.ObservabilityReadsV2]; exposed {
+		t.Fatalf("public response exposes internal observability flag: %s", rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "updated_by") {
 		t.Fatalf("public response leaks admin metadata: %s", rec.Body.String())
