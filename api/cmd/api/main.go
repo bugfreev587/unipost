@@ -53,6 +53,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/railwaybackup"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
+	"github.com/xiaoboyu/unipost-api/internal/requesteventpartitions"
 	"github.com/xiaoboyu/unipost-api/internal/requestevents"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
@@ -91,6 +92,7 @@ func main() {
 		os.Getenv,
 		func(token string) railwaybackup.Client { return railwaybackup.New(token) },
 		db.RunMigrationsWithBackupGate,
+		requesteventpartitions.EnsureDatabaseReady,
 	); handled {
 		if commandErr != nil {
 			slog.Error("migration command failed", "error", commandErr)
@@ -251,6 +253,8 @@ func main() {
 		requestevents.NewPostgresStore(pool),
 		requestevents.Config{},
 	)
+	partitionStore := requesteventpartitions.NewPostgresStore(pool)
+	requestEventPartitionWorker := requesteventpartitions.NewWorker(partitionStore)
 
 	// Build the Stripe billing manager now that the DB is ready. The
 	// SUPER_ADMINS list may contain email addresses, which the manager
@@ -300,6 +304,9 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 
+	if processMode == processModeAPI {
+		go requestEventPartitionWorker.Start(workerCtx)
+	}
 	if processMode == processModeAPI {
 		observabilityRollupStore := observabilityreads.NewPostgresRollupStore(pool)
 		observabilityRollupWorker := observabilityreads.NewRollupWorker(observabilityRollupStore)
@@ -1050,6 +1057,8 @@ func main() {
 			Patch("/v1/admin/feature-flags/{key}", featureFlagsHandler.UpdateAdmin)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Request-event telemetry is restricted to super admins")).
 			Get("/v1/admin/observability/request-events", requestevents.StatsHandler(requestEventRecorder))
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Request-event partition health is restricted to super admins")).
+			Get("/v1/admin/observability/request-event-partitions", requesteventpartitions.StatusHandler(partitionStore, requestEventPartitionWorker))
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
 			Get("/v1/admin/publishing-restrictions", publishingRestrictionHandler.AdminList)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).

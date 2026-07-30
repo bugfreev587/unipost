@@ -19,8 +19,9 @@ const postgresTestsByPackage = {
     "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
     "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
     "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
-    "TestRequireCurrentSchemaRejects124AndAccepts132",
+    "TestRequireCurrentSchemaRejects124AndAccepts133",
     "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
+    "TestMigration133UpgradeAndGuardedDown",
     "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
     "TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown",
     "TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord",
@@ -198,7 +199,7 @@ function assertPublishingRestrictionCIContracts({ packageJson, workflow }) {
   assert.equal(selectorMatch[1], postgresTestSelector);
   assert.doesNotMatch(
     postgresStep.run,
-    /TestRequireCurrentSchemaRejects124AndAccepts130/,
+    /TestRequireCurrentSchemaRejects124AndAccepts132/,
   );
   assert.match(postgresStep.run, /^set -euo pipefail$/m);
   assert.match(
@@ -233,6 +234,18 @@ function assertPublishingRestrictionCIContracts({ packageJson, workflow }) {
       "go test -tags=integration ./internal/observabilityreads -count=1",
     ),
     "PostgreSQL step must run the complete observability reads integration package",
+  );
+  assert.ok(
+    postgresCommands.includes(
+      "go test -tags=integration ./internal/requestevents -count=1",
+    ),
+    "PostgreSQL step must run the complete request events integration package",
+  );
+  assert.ok(
+    postgresCommands.includes(
+      "go test -tags=integration ./internal/requesteventpartitions -count=1",
+    ),
+    "PostgreSQL step must run the complete request-event partition integration package",
   );
 }
 
@@ -324,8 +337,8 @@ test("publishing restriction CI guard rejects semantic workflow mutations", asyn
       "test_selector='(?:",
     ),
     "stale schema selector": (source) => source.replaceAll(
+      "TestRequireCurrentSchemaRejects124AndAccepts133",
       "TestRequireCurrentSchemaRejects124AndAccepts132",
-      "TestRequireCurrentSchemaRejects124AndAccepts130",
     ),
     "missing request events database URL": (source) => source.replace(
       "      REQUEST_EVENTS_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable\n",
@@ -337,6 +350,14 @@ test("publishing restriction CI guard rejects semantic workflow mutations", asyn
     ),
     "missing observability reads integration command": (source) => source.replace(
       "          go test -tags=integration ./internal/observabilityreads -count=1\n",
+      "",
+    ),
+    "missing request events integration command": (source) => source.replace(
+      "          go test -tags=integration ./internal/requestevents -count=1\n",
+      "",
+    ),
+    "missing request-event partitions integration command": (source) => source.replace(
+      "          go test -tags=integration ./internal/requesteventpartitions -count=1\n",
       "",
     ),
   };

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/railwaybackup"
@@ -43,6 +45,12 @@ func TestHandleMigrationCommandBuildsEnvironmentScopedGate(t *testing.T) {
 			}
 			return nil
 		},
+		func(_ context.Context, databaseURL string) error {
+			if databaseURL != environment["DATABASE_URL"] {
+				t.Fatalf("partition database URL = %q", databaseURL)
+			}
+			return nil
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +74,10 @@ func TestHandleMigrationCommandAllowsServeModeWithoutRunningMigration(t *testing
 		mapEnvironment(nil),
 		func(string) railwaybackup.Client { return &commandBackupClient{} },
 		func(context.Context, string, db.MigrationGateConfig, railwaybackup.Client) error {
+			runnerCalled = true
+			return nil
+		},
+		func(context.Context, string) error {
 			runnerCalled = true
 			return nil
 		},
@@ -93,6 +105,7 @@ func TestHandleMigrationCommandRejectsMissingDatabaseAndUnknownCommand(t *testin
 				context.Background(), test.args, mapEnvironment(nil),
 				func(string) railwaybackup.Client { return &commandBackupClient{} },
 				func(context.Context, string, db.MigrationGateConfig, railwaybackup.Client) error { return nil },
+				func(context.Context, string) error { return nil },
 			)
 			if !handled || err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("handled=%v error=%v, want %q", handled, err, test.wantError)
@@ -115,12 +128,96 @@ func TestHandleMigrationCommandDefersBackupConfigurationUntilAffectedRowsExist(t
 			gotClient = client
 			return nil
 		},
+		func(context.Context, string) error { return nil },
 	)
 	if err != nil || !handled {
 		t.Fatalf("handled=%v error=%v", handled, err)
 	}
 	if gotClient != nil {
 		t.Fatalf("backup client = %#v, want nil", gotClient)
+	}
+}
+
+func TestHandleMigrationCommandRunsPartitionReadinessAfterMigrations(t *testing.T) {
+	order := make([]string, 0, 2)
+	handled, err := handleMigrationCommand(
+		context.Background(),
+		[]string{"api", "migrate"},
+		mapEnvironment(map[string]string{"DATABASE_URL": "postgresql://isolated/test"}),
+		func(string) railwaybackup.Client { return &commandBackupClient{} },
+		func(context.Context, string, db.MigrationGateConfig, railwaybackup.Client) error {
+			order = append(order, "migrations")
+			return nil
+		},
+		func(context.Context, string) error {
+			order = append(order, "partitions")
+			return nil
+		},
+	)
+	if err != nil || !handled {
+		t.Fatalf("handled=%v error=%v", handled, err)
+	}
+	if strings.Join(order, ",") != "migrations,partitions" {
+		t.Fatalf("order = %v", order)
+	}
+}
+
+func TestHandleMigrationCommandSkipsPartitionReadinessWhenMigrationFails(t *testing.T) {
+	want := context.Canceled
+	partitionCalled := false
+	_, err := handleMigrationCommand(
+		context.Background(),
+		[]string{"api", "migrate"},
+		mapEnvironment(map[string]string{"DATABASE_URL": "postgresql://isolated/test"}),
+		func(string) railwaybackup.Client { return &commandBackupClient{} },
+		func(context.Context, string, db.MigrationGateConfig, railwaybackup.Client) error { return want },
+		func(context.Context, string) error {
+			partitionCalled = true
+			return nil
+		},
+	)
+	if !errors.Is(err, want) || partitionCalled {
+		t.Fatalf("error=%v partitionCalled=%v", err, partitionCalled)
+	}
+}
+
+func TestHandleMigrationCommandFailsWhenPartitionReadinessFails(t *testing.T) {
+	want := errors.New("default occupied")
+	_, err := handleMigrationCommand(
+		context.Background(),
+		[]string{"api", "migrate"},
+		mapEnvironment(map[string]string{"DATABASE_URL": "postgresql://isolated/test"}),
+		func(string) railwaybackup.Client { return &commandBackupClient{} },
+		func(context.Context, string, db.MigrationGateConfig, railwaybackup.Client) error { return nil },
+		func(context.Context, string) error { return want },
+	)
+	if !errors.Is(err, want) || !strings.Contains(err.Error(), "partition readiness") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestHandleMigrationCommandBoundsPartitionReadinessAtFortyFiveSeconds(t *testing.T) {
+	var deadlineDelta time.Duration
+	_, err := handleMigrationCommand(
+		context.Background(),
+		[]string{"api", "migrate"},
+		mapEnvironment(map[string]string{"DATABASE_URL": "postgresql://isolated/test"}),
+		func(string) railwaybackup.Client { return &commandBackupClient{} },
+		func(context.Context, string, db.MigrationGateConfig, railwaybackup.Client) error { return nil },
+		func(ctx context.Context, _ string) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				return errors.New("partition readiness context has no deadline")
+			}
+			deadlineDelta = time.Until(deadline)
+			return context.DeadlineExceeded
+		},
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
+	if deadlineDelta < 44*time.Second || deadlineDelta > 45*time.Second {
+		t.Fatalf("deadline delta = %v, want approximately 45s", deadlineDelta)
 	}
 }
 
