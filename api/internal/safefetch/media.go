@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -122,10 +123,7 @@ func detectMediaType(prefix []byte) string {
 		return "image/webp"
 	}
 	if len(prefix) >= 12 && string(prefix[4:8]) == "ftyp" {
-		if string(prefix[8:12]) == "qt  " {
-			return "video/quicktime"
-		}
-		return "video/mp4"
+		return detectISOBaseMediaType(prefix)
 	}
 	if len(prefix) >= 4 && prefix[0] == 0x1a && prefix[1] == 0x45 && prefix[2] == 0xdf && prefix[3] == 0xa3 {
 		return "video/webm"
@@ -136,6 +134,34 @@ func detectMediaType(prefix []byte) string {
 		return ""
 	}
 	return normalized
+}
+
+func detectISOBaseMediaType(prefix []byte) string {
+	if len(prefix) < 16 || string(prefix[4:8]) != "ftyp" {
+		return ""
+	}
+	boxSize := binary.BigEndian.Uint32(prefix[:4])
+	if boxSize < 16 || boxSize%4 != 0 {
+		return ""
+	}
+	majorBrand := string(prefix[8:12])
+	if majorBrand == "qt  " {
+		return "video/quicktime"
+	}
+	if isMP4VideoBrand(majorBrand) {
+		return "video/mp4"
+	}
+	return ""
+}
+
+func isMP4VideoBrand(brand string) bool {
+	switch brand {
+	case "isom", "iso2", "iso3", "iso4", "iso5", "iso6", "iso7", "iso8", "iso9",
+		"avc1", "dash", "M4V ", "M4VH", "M4VP", "mp41", "mp42", "mp71", "MSNV":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeDeclaredMediaType(raw string) (string, error) {

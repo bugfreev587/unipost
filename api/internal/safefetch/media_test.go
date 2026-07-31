@@ -138,6 +138,9 @@ func TestMediaRejectsEmptyAndTypeConfusedBodies(t *testing.T) {
 		{name: "svg as png", header: "image/png", body: []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`), allowed: []string{"image/png"}, wantKind: ErrorUnsupportedMedia},
 		{name: "executable as jpeg", header: "image/jpeg", body: append([]byte("MZ"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"image/jpeg"}, wantKind: ErrorUnsupportedMedia},
 		{name: "header mismatch", header: "image/png", body: append([]byte{0xff, 0xd8, 0xff, 0xe0}, bytes.Repeat([]byte{0}, 64)...), allowed: []string{"image/jpeg", "image/png"}, wantKind: ErrorUnsupportedMedia},
+		{name: "heic is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
+		{name: "avif is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypavif\x00\x00\x00\x00mif1avif"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
+		{name: "unknown bmff brand is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypzzzz\x00\x00\x00\x00zzzzzzzz"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
 	}
 
 	for _, tt := range tests {
