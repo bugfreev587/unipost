@@ -235,7 +235,15 @@ func TestPinterestPostStagesEphemeralImageURL(t *testing.T) {
 	var gotMediaURL string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v5/pins" {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1", "username": pinterestTestOwner})
+			return
+		case "/v5/boards/1151725373397121465":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "1151725373397121465", "owner": map[string]any{"username": pinterestTestOwner}})
+			return
+		case "/v5/pins":
+		default:
 			http.Error(w, "unexpected path", http.StatusBadRequest)
 			return
 		}
@@ -286,7 +294,15 @@ func TestPinterestPostStagesKnownTemporaryFileHosts(t *testing.T) {
 	var gotMediaURL string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v5/pins" {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1", "username": pinterestTestOwner})
+			return
+		case "/v5/boards/1151725373397121465":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "1151725373397121465", "owner": map[string]any{"username": pinterestTestOwner}})
+			return
+		case "/v5/pins":
+		default:
 			http.Error(w, "unexpected path", http.StatusBadRequest)
 			return
 		}

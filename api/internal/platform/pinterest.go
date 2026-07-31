@@ -38,6 +38,8 @@ type PinterestAdapter struct {
 	client       *http.Client
 	mediaProxy   *storage.Client
 	stageFromURL func(context.Context, string) (string, error)
+	boardCache   pinterestBoardCache
+	now          func() time.Time
 }
 
 type PinterestBoard struct {
@@ -144,7 +146,7 @@ func (a *PinterestAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 		return nil, fmt.Errorf("pinterest token exchange returned empty access_token")
 	}
 
-	profile, err := a.fetchUserAccount(ctx, tokenResp.AccessToken)
+	profile, err := a.fetchUserAccount(ctx, tokenResp.AccessToken, "account_validation")
 	if err != nil {
 		return nil, err
 	}
@@ -206,6 +208,9 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 				IsRetriable: false,
 			},
 		)
+	}
+	if err := a.preflightBoard(ctx, accessToken, boardID); err != nil {
+		return nil, err
 	}
 
 	title := strings.TrimSpace(optString(opts, "title"))
@@ -300,23 +305,28 @@ func pinterestProviderFailure(operation string, status int, body []byte, stage s
 	isTransient := false
 	isRetriable := false
 
+	operation = strings.ToLower(strings.TrimSpace(operation))
 	switch {
 	case status == http.StatusUnauthorized || providerBody.Code == 2:
 		reason = "token_invalid"
 		errorCode = "auth_token_invalid"
 		message = "Pinterest rejected this connection. Reconnect the account, then try again."
+	case status == http.StatusForbidden && (operation == "board collection" || operation == "user account"):
+		reason = "missing_permission"
+		errorCode = "missing_permission"
+		message = "Pinterest denied a required account permission. Reconnect the account and update its permissions."
 	case providerBody.Code == 29:
 		reason = "board_not_accessible"
 		errorCode = "target_not_found"
 		message = "The selected Pinterest board is unavailable for this connected account."
-		if strings.EqualFold(strings.TrimSpace(operation), "create pin") {
+		if operation == "create pin" {
 			stage = "destination_preflight"
 		}
 	case providerBody.Code == 40:
 		reason = "board_not_found"
 		errorCode = "target_not_found"
 		message = "The selected Pinterest board is unavailable for this connected account."
-		if strings.EqualFold(strings.TrimSpace(operation), "create pin") {
+		if operation == "create pin" {
 			stage = "destination_preflight"
 		}
 	case status == http.StatusTooManyRequests:
@@ -600,7 +610,7 @@ type pinterestUserAccount struct {
 	ProfileImage string `json:"profile_image"`
 }
 
-func (a *PinterestAdapter) fetchUserAccount(ctx context.Context, accessToken string) (*pinterestUserAccount, error) {
+func (a *PinterestAdapter) fetchUserAccount(ctx context.Context, accessToken, stage string) (*pinterestUserAccount, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBaseURL()+"/user_account", nil)
 	if err != nil {
 		return nil, err
@@ -609,21 +619,21 @@ func (a *PinterestAdapter) fetchUserAccount(ctx context.Context, accessToken str
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("pinterest user_account: %w", err)
+		return nil, pinterestTransportFailure("user account", err, stage)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("pinterest user_account (%d): %s", resp.StatusCode, string(body))
+		return nil, pinterestProviderFailure("user account", resp.StatusCode, body, stage)
 	}
 
 	var raw pinterestUserAccount
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("pinterest user_account decode: %w", err)
+		return nil, pinterestTransportFailure("user account", err, stage)
 	}
 	if raw.ID == "" {
-		return nil, fmt.Errorf("pinterest user_account returned empty id")
+		return nil, pinterestTransportFailure("user account", fmt.Errorf("empty account id"), stage)
 	}
 	return &raw, nil
 }
