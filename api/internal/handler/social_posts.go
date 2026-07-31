@@ -2432,20 +2432,21 @@ func (h *SocialPostHandler) publishOneContext(
 		}
 	}
 
-	// Resolve any media_ids to presigned download URLs and append
-	// them to the URL list. The adapter doesn't care about the
-	// distinction — both halves end up in the same MediaItem slice.
+	// Resolve media_ids to presigned download URLs while retaining media
+	// provenance. Adapters use the distinction to avoid treating UniPost-
+	// managed objects as untrusted request-supplied remote URLs.
 	// Errors here are fatal for the post (we can't dispatch without
 	// the media), so we surface them as the post's err.
-	mediaURLs := append([]string(nil), pp.MediaURLs...)
+	var managedMediaURLs []string
 	if len(pp.MediaIDs) > 0 {
 		extra, mediaErr := h.resolveMediaIDsToURLs(ctx, acc.Platform, pp.MediaIDs)
 		if mediaErr != nil {
 			oc.err = mediaErr
 			return
 		}
-		mediaURLs = append(mediaURLs, extra...)
+		managedMediaURLs = extra
 	}
+	media := mediaForDispatch(pp.MediaURLs, managedMediaURLs)
 
 	// Per-platform routing log — emitted at INFO so smoke-tests can
 	// verify each PlatformPostInput is reaching the right adapter
@@ -2455,7 +2456,7 @@ func (h *SocialPostHandler) publishOneContext(
 		"account_id", acc.ID,
 		"platform", acc.Platform,
 		"caption_preview", truncateForLog(pp.Caption, 40),
-		"media_urls", len(mediaURLs))
+		"media_urls", len(media))
 
 	// Attach a debugrt recorder so the shared RoundTripper captures
 	// failing HTTP requests into a curl dump we can persist on the
@@ -2491,7 +2492,7 @@ func (h *SocialPostHandler) publishOneContext(
 		dispatchCtx,
 		accessToken,
 		pp.Caption,
-		platform.MediaFromURLs(mediaURLs),
+		media,
 		pp.PlatformOptions,
 	)
 	oc.result = postResult
@@ -2546,6 +2547,11 @@ func (h *SocialPostHandler) publishOneContext(
 		}
 	}
 	return
+}
+
+func mediaForDispatch(externalURLs, managedURLs []string) []platform.MediaItem {
+	media := platform.MediaFromURLs(externalURLs)
+	return append(media, platform.MediaFromURLsWithOrigin(managedURLs, platform.MediaOriginManaged)...)
 }
 
 func (h *SocialPostHandler) refreshSocialAccountToken(ctx context.Context, account db.SocialAccount, adapter platform.PlatformAdapter, refreshToken string) (string, string, time.Time, error) {
