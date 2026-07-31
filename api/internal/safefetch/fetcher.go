@@ -88,8 +88,6 @@ func normalizeConfig(config Config) Config {
 	return config
 }
 
-// Fetch remains fail-closed until bounded media verification is applied in
-// media.go. No caller can accidentally retrieve unverified response bytes.
 func (f *fetcher) Fetch(ctx context.Context, rawURL string, policy Policy) (*Result, error) {
 	if f == nil {
 		return nil, newFetchStatusError(ErrorSourceTemporary, 0, true)
@@ -100,8 +98,8 @@ func (f *fetcher) Fetch(ctx context.Context, rawURL string, policy Policy) (*Res
 	if err != nil {
 		return nil, err
 	}
-	_ = response.Body.Close()
-	return nil, newFetchError(ErrorUnsupportedMedia)
+	defer response.Body.Close()
+	return storeVerifiedMedia(operationCtx, response, policy, f.config.TempDir)
 }
 
 func (f *fetcher) fetchResponse(ctx context.Context, rawURL string, policy Policy) (*http.Response, error) {
