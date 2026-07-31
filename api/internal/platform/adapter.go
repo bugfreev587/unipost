@@ -25,13 +25,25 @@ const (
 	MediaKindUnknown MediaKind = ""
 )
 
+// MediaOrigin identifies whether a media URL came directly from the API
+// request or was resolved from an object already managed by UniPost. Adapters
+// can use the distinction to apply remote-fetch protections only to external
+// input without restaging trusted, managed media.
+type MediaOrigin string
+
+const (
+	MediaOriginExternal MediaOrigin = "external"
+	MediaOriginManaged  MediaOrigin = "managed"
+)
+
 // MediaItem is one piece of media to publish. The handler builds these from
 // the request payload (which still accepts a flat media_urls []string for
 // backward compatibility) and passes them to the adapter, which is then free
 // to interpret them per platform conventions.
 type MediaItem struct {
-	URL  string    `json:"url"`
-	Kind MediaKind `json:"kind"`
+	URL    string      `json:"url"`
+	Kind   MediaKind   `json:"kind"`
+	Origin MediaOrigin `json:"origin,omitempty"`
 	// Alt text / caption for accessibility (Bluesky alt, IG alt, etc.).
 	// Optional — adapters may ignore.
 	Alt string `json:"alt,omitempty"`
@@ -64,12 +76,19 @@ func SniffMediaKind(rawURL string) MediaKind {
 // existing API consumers (which send media_urls as []string) keep working
 // without having to specify a kind.
 func MediaFromURLs(urls []string) []MediaItem {
+	return MediaFromURLsWithOrigin(urls, MediaOriginExternal)
+}
+
+// MediaFromURLsWithOrigin builds MediaItems while retaining where the URLs
+// came from. Callers resolving UniPost media IDs should pass
+// MediaOriginManaged; request-supplied URLs should remain external.
+func MediaFromURLsWithOrigin(urls []string, origin MediaOrigin) []MediaItem {
 	if len(urls) == 0 {
 		return nil
 	}
 	out := make([]MediaItem, 0, len(urls))
 	for _, u := range urls {
-		out = append(out, MediaItem{URL: u, Kind: SniffMediaKind(u)})
+		out = append(out, MediaItem{URL: u, Kind: SniffMediaKind(u), Origin: origin})
 	}
 	return out
 }

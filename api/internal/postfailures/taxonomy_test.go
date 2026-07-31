@@ -1,6 +1,24 @@
 package postfailures
 
-import "testing"
+import (
+	"testing"
+)
+
+type pinterestContractTestError struct {
+	message  string
+	provider map[string]any
+	failure  map[string]any
+}
+
+func (e pinterestContractTestError) Error() string { return e.message }
+
+func (e pinterestContractTestError) ProviderErrorFields() map[string]any {
+	return e.provider
+}
+
+func (e pinterestContractTestError) FailureContractFields() map[string]any {
+	return e.failure
+}
 
 func TestClassifyKnownPublishFailures(t *testing.T) {
 	tests := []struct {
@@ -324,5 +342,130 @@ func TestShouldMarkReconnectRequired(t *testing.T) {
 	}
 	if ShouldMarkReconnectRequired(`refresh failed (500): {"error":{"message":"temporarily unavailable"}}`) {
 		t.Fatal("temporary platform refresh failure should not require reconnect")
+	}
+}
+
+func TestBuildParamsFromErrorUsesTypedPinterestContract(t *testing.T) {
+	tests := []struct {
+		name             string
+		err              error
+		wantCode         string
+		wantProviderCode string
+		wantReason       string
+		wantHTTPStatus   int
+		wantRetriable    bool
+		wantTemporality  string
+		wantNextAction   string
+	}{
+		{
+			name: "destination code 29",
+			err: pinterestContractTestError{
+				message: "The selected Pinterest board is unavailable for this connected account.",
+				provider: map[string]any{
+					"provider": "pinterest", "http_status": 403, "code": "29",
+					"reason": "board_not_accessible", "is_transient": false,
+				},
+				failure: map[string]any{
+					"error_code": "target_not_found", "failure_stage": "destination_preflight", "is_retriable": false,
+				},
+			},
+			wantCode: "target_not_found", wantProviderCode: "29", wantReason: "board_not_accessible",
+			wantHTTPStatus: 403, wantRetriable: false, wantTemporality: ErrorTemporalityPermanent,
+			wantNextAction: "select_valid_target",
+		},
+		{
+			name: "rate limit",
+			err: pinterestContractTestError{
+				message: "Pinterest is rate limiting this request.",
+				provider: map[string]any{
+					"provider": "pinterest", "http_status": 429, "code": "8", "reason": "rate_limited", "is_transient": true,
+				},
+				failure: map[string]any{
+					"error_code": "rate_limit", "failure_stage": "destination_preflight", "is_retriable": true,
+				},
+			},
+			wantCode: "rate_limit", wantProviderCode: "8", wantReason: "rate_limited", wantHTTPStatus: 429,
+			wantRetriable: true, wantTemporality: ErrorTemporalityTemporary, wantNextAction: "wait_and_retry",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := BuildParamsFromError("post_1", "result_1", "ws_1", "sa_1", "pinterest", "dispatch", tt.err, "")
+			if params.ErrorCode != tt.wantCode {
+				t.Fatalf("ErrorCode = %q, want %q", params.ErrorCode, tt.wantCode)
+			}
+			if params.PlatformErrorCode.String != tt.wantProviderCode {
+				t.Fatalf("PlatformErrorCode = %q, want %q", params.PlatformErrorCode.String, tt.wantProviderCode)
+			}
+			if params.IsRetriable != tt.wantRetriable {
+				t.Fatalf("IsRetriable = %v, want %v", params.IsRetriable, tt.wantRetriable)
+			}
+			if params.ErrorSource.String != ErrorSourcePlatform {
+				t.Fatalf("ErrorSource = %q, want %q", params.ErrorSource.String, ErrorSourcePlatform)
+			}
+			if params.ErrorTemporality.String != tt.wantTemporality {
+				t.Fatalf("ErrorTemporality = %q, want %q", params.ErrorTemporality.String, tt.wantTemporality)
+			}
+			if got := NextActionForErrorCode(params.ErrorCode); got != tt.wantNextAction {
+				t.Fatalf("next action = %q, want %q", got, tt.wantNextAction)
+			}
+			provider := ParseProviderErrorJSON(params.ProviderError)
+			if provider == nil {
+				t.Fatal("ProviderError = nil")
+			}
+			if provider.Provider != "pinterest" || provider.HTTPStatus != tt.wantHTTPStatus || provider.Code != tt.wantProviderCode || provider.Reason != tt.wantReason {
+				t.Fatalf("ProviderError = %#v", provider)
+			}
+		})
+	}
+}
+
+func TestClassifyLegacyPinterestFailures(t *testing.T) {
+	tests := []struct {
+		name             string
+		raw              string
+		wantCode         string
+		wantProviderCode string
+		wantReason       string
+		wantRetriable    bool
+	}{
+		{
+			name:     "board inaccessible",
+			raw:      "pinterest destination_preflight failed status=403 code=29 provider_reason=board_not_accessible",
+			wantCode: "target_not_found", wantProviderCode: "29", wantReason: "board_not_accessible",
+		},
+		{
+			name:     "stored create pin code 29 incident",
+			raw:      `pinterest create pin (403): {"code":29,"message":"You are not permitted to access that resource."}`,
+			wantCode: "target_not_found", wantProviderCode: "29", wantReason: "board_not_accessible",
+		},
+		{
+			name:     "board not found",
+			raw:      "pinterest destination_preflight failed status=404 code=40 provider_reason=board_not_found",
+			wantCode: "target_not_found", wantProviderCode: "40", wantReason: "board_not_found",
+		},
+		{
+			name:     "token invalid",
+			raw:      "pinterest user_account failed status=401 code=2 provider_reason=token_invalid",
+			wantCode: "auth_token_invalid", wantProviderCode: "2", wantReason: "token_invalid",
+		},
+		{
+			name:     "rate limited",
+			raw:      "pinterest destination_preflight failed status=429 provider_reason=rate_limited",
+			wantCode: "rate_limit", wantProviderCode: "rate_limited", wantReason: "rate_limited", wantRetriable: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Classify(tt.raw)
+			if got.ErrorCode != tt.wantCode || got.PlatformErrorCode != tt.wantProviderCode || got.IsRetriable != tt.wantRetriable {
+				t.Fatalf("classification = %#v", got)
+			}
+			if got.ProviderError == nil || got.ProviderError.Provider != "pinterest" || got.ProviderError.Reason != tt.wantReason {
+				t.Fatalf("ProviderError = %#v", got.ProviderError)
+			}
+		})
 	}
 }

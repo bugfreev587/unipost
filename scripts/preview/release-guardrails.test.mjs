@@ -8,7 +8,7 @@ const requireFromDashboard = createRequire(new URL("../../dashboard/package.json
 const { load: parseYaml } = requireFromDashboard("js-yaml");
 
 const publishingRestrictionScript =
-  "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts";
+  "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/posts-calendar-create-hydration-source.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts";
 const postgresTestsByPackage = {
   "./internal/db": [
     "TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup",
@@ -19,7 +19,7 @@ const postgresTestsByPackage = {
     "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
     "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
     "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
-    "TestRequireCurrentSchemaRejects124AndAccepts135",
+    "TestRequireCurrentSchemaRejects124AndAccepts136",
     "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
     "TestMigration133UpgradeAndGuardedDown",
     "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
@@ -338,8 +338,8 @@ test("publishing restriction CI guard rejects semantic workflow mutations", asyn
       "test_selector='(?:",
     ),
     "stale schema selector": (source) => source.replaceAll(
+      "TestRequireCurrentSchemaRejects124AndAccepts136",
       "TestRequireCurrentSchemaRejects124AndAccepts135",
-      "TestRequireCurrentSchemaRejects124AndAccepts134",
     ),
     "missing request events database URL": (source) => source.replace(
       "      REQUEST_EVENTS_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable\n",

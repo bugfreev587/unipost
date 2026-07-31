@@ -42,14 +42,15 @@ type postMetadataV2 struct {
 }
 
 type postMetadataPlatformPostV2 struct {
-	AccountID       string         `json:"account_id"`
-	Caption         string         `json:"caption"`
-	MediaURLs       []string       `json:"media_urls,omitempty"`
-	MediaIDs        []string       `json:"media_ids,omitempty"`
-	PlatformOptions map[string]any `json:"platform_options,omitempty"`
-	InReplyTo       string         `json:"in_reply_to,omitempty"`
-	ThreadPosition  int            `json:"thread_position,omitempty"`
-	FirstComment    string         `json:"first_comment,omitempty"` // Sprint 4 PR3
+	AccountID           string         `json:"account_id"`
+	Caption             string         `json:"caption"`
+	MediaURLs           []string       `json:"media_urls,omitempty"`
+	MediaIDs            []string       `json:"media_ids,omitempty"`
+	PlatformOptions     map[string]any `json:"platform_options,omitempty"`
+	DispatchEnvironment string         `json:"dispatch_environment,omitempty"`
+	InReplyTo           string         `json:"in_reply_to,omitempty"`
+	ThreadPosition      int            `json:"thread_position,omitempty"`
+	FirstComment        string         `json:"first_comment,omitempty"` // Sprint 4 PR3
 }
 
 // EncodePostMetadata serializes a parsed request's posts into the v2
@@ -63,14 +64,15 @@ func EncodePostMetadata(posts []PlatformPostInput) ([]byte, error) {
 	}
 	for _, p := range posts {
 		out.PlatformPosts = append(out.PlatformPosts, postMetadataPlatformPostV2{
-			AccountID:       p.AccountID,
-			Caption:         p.Caption,
-			MediaURLs:       p.MediaURLs,
-			MediaIDs:        p.MediaIDs,
-			PlatformOptions: p.PlatformOptions,
-			InReplyTo:       p.InReplyTo,
-			ThreadPosition:  p.ThreadPosition,
-			FirstComment:    p.FirstComment,
+			AccountID:           p.AccountID,
+			Caption:             p.Caption,
+			MediaURLs:           p.MediaURLs,
+			MediaIDs:            p.MediaIDs,
+			PlatformOptions:     p.PlatformOptions,
+			DispatchEnvironment: p.DispatchEnvironment,
+			InReplyTo:           p.InReplyTo,
+			ThreadPosition:      p.ThreadPosition,
+			FirstComment:        p.FirstComment,
 		})
 	}
 	return json.Marshal(out)
@@ -103,14 +105,15 @@ func DecodePostMetadata(raw []byte, fallbackCaption string) ([]PlatformPostInput
 		out := make([]PlatformPostInput, 0, len(v2.PlatformPosts))
 		for _, p := range v2.PlatformPosts {
 			out = append(out, PlatformPostInput{
-				AccountID:       p.AccountID,
-				Caption:         p.Caption,
-				MediaURLs:       p.MediaURLs,
-				MediaIDs:        p.MediaIDs,
-				PlatformOptions: p.PlatformOptions,
-				InReplyTo:       p.InReplyTo,
-				ThreadPosition:  p.ThreadPosition,
-				FirstComment:    p.FirstComment,
+				AccountID:           p.AccountID,
+				Caption:             p.Caption,
+				MediaURLs:           p.MediaURLs,
+				MediaIDs:            p.MediaIDs,
+				PlatformOptions:     p.PlatformOptions,
+				DispatchEnvironment: p.DispatchEnvironment,
+				InReplyTo:           p.InReplyTo,
+				ThreadPosition:      p.ThreadPosition,
+				FirstComment:        p.FirstComment,
 			})
 		}
 		return out, nil
