@@ -19,7 +19,7 @@ const postgresTestsByPackage = {
     "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
     "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
     "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
-    "TestRequireCurrentSchemaRejects124AndAccepts135",
+    "TestRequireCurrentSchemaRejects124AndAccepts136",
     "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
     "TestMigration133UpgradeAndGuardedDown",
     "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
@@ -338,8 +338,8 @@ test("publishing restriction CI guard rejects semantic workflow mutations", asyn
       "test_selector='(?:",
     ),
     "stale schema selector": (source) => source.replaceAll(
+      "TestRequireCurrentSchemaRejects124AndAccepts136",
       "TestRequireCurrentSchemaRejects124AndAccepts135",
-      "TestRequireCurrentSchemaRejects124AndAccepts134",
     ),
     "missing request events database URL": (source) => source.replace(
       "      REQUEST_EVENTS_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable\n",
