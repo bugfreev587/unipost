@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import os
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 
 SDK_PATH = os.environ.get("UNIPOST_PYTHON_SDK_PATH", "/Users/xiaoboyu/unipost-dev/sdk-python")
@@ -11,7 +12,11 @@ if SDK_PATH:
 from unipost import UniPost, UniPostError, verify_webhook_signature
 
 API_KEY = os.environ.get("UNIPOST_API_KEY", "")
+BASE_URL = os.environ.get("BASE_URL", "https://api.unipost.dev")
 TEST_ACCOUNT_ID = os.environ.get("TEST_ACCOUNT_ID", "")
+TEST_X_ACCOUNT_ID = os.environ.get("TEST_X_ACCOUNT_ID", "")
+TEST_EXTERNAL_USER_ID = os.environ.get("TEST_EXTERNAL_USER_ID", "")
+REQUIRE_X_ACCOUNT_READ_ACCEPTANCE = os.environ.get("REQUIRE_X_ACCOUNT_READ_ACCEPTANCE") == "true"
 TEST_PUBLISH_NOW = os.environ.get("TEST_PUBLISH_NOW") == "true"
 TEST_PLATFORM_CREDENTIALS_PLATFORM = os.environ.get("TEST_PLATFORM_CREDENTIALS_PLATFORM", "").strip().lower()
 SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS = (
@@ -196,8 +201,15 @@ def main():
     if not API_KEY:
         print("❌ Please set UNIPOST_API_KEY")
         sys.exit(1)
+    if REQUIRE_X_ACCOUNT_READ_ACCEPTANCE and (
+        not TEST_X_ACCOUNT_ID or not TEST_EXTERNAL_USER_ID
+    ):
+        raise ValueError(
+            "Required X account-read acceptance fixture is missing: "
+            "set TEST_X_ACCOUNT_ID and TEST_EXTERNAL_USER_ID"
+        )
 
-    client = UniPost(api_key=API_KEY)
+    client = UniPost(api_key=API_KEY, base_url=BASE_URL)
 
     section("1. Public catalogs")
 
@@ -243,6 +255,38 @@ def main():
         skip("accounts.get()", "No accounts available")
         skip("accounts.health()", "No accounts available")
         skip("accounts.capabilities()", "No accounts available")
+
+    section("3b. X account reads and Credits")
+    if TEST_X_ACCOUNT_ID and TEST_EXTERNAL_USER_ID:
+        run_key = os.environ.get("GITHUB_RUN_ID") or str(uuid.uuid4())
+        profile = test(
+            "accounts.get_profile() + exact replay",
+            lambda: _test_x_profile(client, run_key),
+        )
+        posts = test(
+            "accounts.list_posts() + cursor contract + exact replay",
+            lambda: _test_x_posts(client, run_key),
+        )
+        if posts and posts.meta.next_cursor:
+            test(
+                "accounts.list_posts() continuation page",
+                lambda: _test_x_posts_continuation(
+                    client,
+                    run_key,
+                    posts.meta.next_cursor,
+                ),
+            )
+        else:
+            skip("accounts.list_posts() continuation page", "First page has no next_cursor")
+        test(
+            "billing.get_x_credits() and billing.list_x_credit_events()",
+            lambda: _test_x_billing(client, profile),
+        )
+    else:
+        skip("accounts.get_profile() + exact replay", "No X account-read fixture configured")
+        skip("accounts.list_posts() + cursor contract + exact replay", "No X account-read fixture configured")
+        skip("accounts.list_posts() continuation page", "No X account-read fixture configured")
+        skip("billing.get_x_credits() and billing.list_x_credit_events()", "No X account-read fixture configured")
 
     if tiktok_account:
         test("accounts.tiktok_creator_info()", lambda: _test_tiktok_creator_info(client, tiktok_account.id))
@@ -508,6 +552,78 @@ def _test_tiktok_creator_info(client, account_id):
         raise
     assert_true("creator_username" in payload or "creator_nickname" in payload, "Expected TikTok creator info")
     return payload
+
+
+def _test_x_profile(client, run_key):
+    profile_key = f"sdk-python-profile-{run_key}"
+    request = {
+        "external_user_id": TEST_EXTERNAL_USER_ID,
+        "idempotency_key": profile_key,
+    }
+    first = client.accounts.get_profile(TEST_X_ACCOUNT_ID, **request)
+    replay = client.accounts.get_profile(TEST_X_ACCOUNT_ID, **request)
+    assert_true(bool(first.request_id), "Expected profile request_id")
+    assert_true(bool(first.meta.credits.operation_id), "Expected profile Credits receipt")
+    assert_true(replay.meta.replayed is True, "Expected exact profile replay")
+    assert_true(
+        replay.meta.credits.operation_id == first.meta.credits.operation_id,
+        "Expected replay to preserve the profile operation",
+    )
+    return first
+
+
+def _test_x_posts(client, run_key):
+    posts_key = f"sdk-python-posts-{run_key}-page-1"
+    request = {
+        "external_user_id": TEST_EXTERNAL_USER_ID,
+        "idempotency_key": posts_key,
+        "limit": 5,
+    }
+    first = client.accounts.list_posts(TEST_X_ACCOUNT_ID, **request)
+    replay = client.accounts.list_posts(TEST_X_ACCOUNT_ID, **request)
+    assert_true(bool(first.request_id), "Expected posts request_id")
+    assert_true(isinstance(first.data, list), "Expected posts data list")
+    assert_true(bool(first.meta.credits.operation_id), "Expected posts Credits receipt")
+    assert_true(replay.meta.replayed is True, "Expected exact posts replay")
+    if first.meta.has_more:
+        assert_true(bool(first.meta.next_cursor), "Expected next_cursor when has_more is true")
+    return first
+
+
+def _test_x_posts_continuation(client, run_key, cursor):
+    page = client.accounts.list_posts(
+        TEST_X_ACCOUNT_ID,
+        external_user_id=TEST_EXTERNAL_USER_ID,
+        idempotency_key=f"sdk-python-posts-{run_key}-page-2",
+        limit=5,
+        cursor=cursor,
+    )
+    assert_true(bool(page.request_id), "Expected continuation request_id")
+    return page
+
+
+def _test_x_billing(client, profile):
+    try:
+        allowance = client.billing.get_x_credits()
+        events = client.billing.list_x_credit_events(
+            account_id=TEST_X_ACCOUNT_ID,
+            external_user_id=TEST_EXTERNAL_USER_ID,
+            limit=10,
+        )
+        assert_true(bool(allowance.request_id), "Expected allowance request_id")
+        assert_true(
+            isinstance(allowance.data.monthly_remaining, int),
+            "Expected monthly_remaining",
+        )
+        assert_true(bool(events.request_id), "Expected events request_id")
+        assert_true(isinstance(events.data, list), "Expected Credits event data")
+    except UniPostError as exc:
+        if exc.code != "FEATURE_NOT_AVAILABLE":
+            raise
+        assert_true(
+            profile is not None and profile.meta.credits.accounting_enabled is False,
+            "Feature-off profile receipt must bypass accounting",
+        )
 
 
 def _test_facebook_page_insights(client, account_id):

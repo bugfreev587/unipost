@@ -189,6 +189,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
         { label: "List Inbox API", href: "/docs/api/inbox/list", description: "Filter x_reply and x_dm items." },
         { label: "Reply API", href: "/docs/api/inbox/reply", description: "Send an idempotent public reply or direct message." },
         { label: "Sync API", href: "/docs/api/inbox/sync", description: "Run bounded reply and DM backfills." },
+        { label: "X profile and post history guide", href: "/docs/guides/x/profile-and-post-history", description: "Read profiles and safely traverse authored posts." },
         { label: "X comments guide", href: "/docs/guides/x/comments", description: "Receive, list, reply, and backfill public replies." },
         { label: "X direct messages guide", href: "/docs/guides/x/direct-messages", description: "Operate private legacy DM threads safely." },
         { label: "Reconnect X permissions", href: "/docs/guides/x/reconnect-permissions", description: "Restore scopes and workspace-app delivery credentials." },

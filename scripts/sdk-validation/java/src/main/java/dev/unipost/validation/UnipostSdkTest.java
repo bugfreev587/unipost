@@ -22,6 +22,10 @@ import java.util.Objects;
 public final class UnipostSdkTest {
     private static final String API_KEY = env("UNIPOST_API_KEY", "");
     private static final String BASE_URL = env("BASE_URL", "https://api.unipost.dev");
+    private static final String TEST_X_ACCOUNT_ID = env("TEST_X_ACCOUNT_ID", "");
+    private static final String TEST_EXTERNAL_USER_ID = env("TEST_EXTERNAL_USER_ID", "");
+    private static final boolean REQUIRE_X_ACCOUNT_READ_ACCEPTANCE =
+            "true".equalsIgnoreCase(env("REQUIRE_X_ACCOUNT_READ_ACCEPTANCE", "false"));
     private static final boolean TEST_PUBLISH_NOW = "true".equalsIgnoreCase(env("TEST_PUBLISH_NOW", "false"));
     private static final String TEST_PLATFORM_CREDENTIALS_PLATFORM =
             env("TEST_PLATFORM_CREDENTIALS_PLATFORM", "").trim().toLowerCase(Locale.ROOT);
@@ -53,6 +57,14 @@ public final class UnipostSdkTest {
         banner();
         if (API_KEY.isBlank()) {
             System.err.println("❌ Please set UNIPOST_API_KEY");
+            System.exit(1);
+        }
+        if (REQUIRE_X_ACCOUNT_READ_ACCEPTANCE
+                && (TEST_X_ACCOUNT_ID.isBlank() || TEST_EXTERNAL_USER_ID.isBlank())) {
+            System.err.println(
+                    "❌ Required X account-read acceptance fixture is missing: "
+                            + "set TEST_X_ACCOUNT_ID and TEST_EXTERNAL_USER_ID"
+            );
             System.exit(1);
         }
 
@@ -155,6 +167,112 @@ public final class UnipostSdkTest {
             skip("accounts.health()", "No accounts available");
             skip("accounts.capabilities()", "No accounts available");
         }
+
+        section("3b. X account reads and Credits");
+        if (!TEST_X_ACCOUNT_ID.isBlank() && !TEST_EXTERNAL_USER_ID.isBlank()) {
+            String runKey = env("GITHUB_RUN_ID", String.valueOf(Instant.now().toEpochMilli()));
+            JsonNode[] xProfile = new JsonNode[1];
+            JsonNode[] xPosts = new JsonNode[1];
+
+            test("accounts().profile() + exact replay", () -> {
+                Map<String, Object> params = map(
+                        "external_user_id", TEST_EXTERNAL_USER_ID,
+                        "idempotency_key", "sdk-java-profile-" + runKey
+                );
+                JsonNode first = client.accounts().profile(TEST_X_ACCOUNT_ID, params);
+                JsonNode replay = client.accounts().profile(TEST_X_ACCOUNT_ID, params);
+                assertTrue(first.path("request_id").isTextual(), "Expected profile request_id");
+                assertTrue(
+                        first.path("meta").path("credits").path("operation_id").isTextual(),
+                        "Expected profile Credits receipt"
+                );
+                assertTrue(
+                        replay.path("meta").path("replayed").asBoolean(false),
+                        "Expected exact profile replay"
+                );
+                assertEquals(
+                        first.path("meta").path("credits").path("operation_id").asText(),
+                        replay.path("meta").path("credits").path("operation_id").asText(),
+                        "Expected replay to preserve the profile operation"
+                );
+                xProfile[0] = first;
+            });
+
+            test("accounts().listPosts() + cursor contract + exact replay", () -> {
+                Map<String, Object> params = map(
+                        "external_user_id", TEST_EXTERNAL_USER_ID,
+                        "idempotency_key", "sdk-java-posts-" + runKey + "-page-1",
+                        "limit", 5
+                );
+                JsonNode first = client.accounts().listPosts(TEST_X_ACCOUNT_ID, params);
+                JsonNode replay = client.accounts().listPosts(TEST_X_ACCOUNT_ID, params);
+                assertTrue(first.path("request_id").isTextual(), "Expected posts request_id");
+                assertTrue(first.path("data").isArray(), "Expected posts data array");
+                assertTrue(
+                        first.path("meta").path("credits").path("operation_id").isTextual(),
+                        "Expected posts Credits receipt"
+                );
+                assertTrue(
+                        replay.path("meta").path("replayed").asBoolean(false),
+                        "Expected exact posts replay"
+                );
+                if (first.path("meta").path("has_more").asBoolean(false)) {
+                    assertTrue(
+                            first.path("meta").path("next_cursor").isTextual(),
+                            "Expected next_cursor when has_more is true"
+                    );
+                }
+                xPosts[0] = first;
+            });
+
+            if (xPosts[0] != null && xPosts[0].path("meta").path("next_cursor").isTextual()) {
+                test("accounts().listPosts() continuation page", () -> {
+                    JsonNode page = client.accounts().listPosts(TEST_X_ACCOUNT_ID, map(
+                            "external_user_id", TEST_EXTERNAL_USER_ID,
+                            "idempotency_key", "sdk-java-posts-" + runKey + "-page-2",
+                            "limit", 5,
+                            "cursor", xPosts[0].path("meta").path("next_cursor").asText()
+                    ));
+                    assertTrue(page.path("request_id").isTextual(), "Expected continuation request_id");
+                });
+            } else {
+                skip("accounts().listPosts() continuation page", "First page has no next_cursor");
+            }
+
+            test("billing().getXCredits() and billing().listXCreditEvents()", () -> {
+                try {
+                    JsonNode allowance = client.billing().getXCredits();
+                    JsonNode events = client.billing().listXCreditEvents(map(
+                            "account_id", TEST_X_ACCOUNT_ID,
+                            "external_user_id", TEST_EXTERNAL_USER_ID,
+                            "limit", 10
+                    ));
+                    assertTrue(allowance.path("request_id").isTextual(), "Expected allowance request_id");
+                    assertTrue(
+                            allowance.path("data").path("monthly_remaining").isIntegralNumber(),
+                            "Expected monthly_remaining"
+                    );
+                    assertTrue(events.path("request_id").isTextual(), "Expected events request_id");
+                    assertTrue(events.path("data").isArray(), "Expected Credits event data");
+                } catch (APIError error) {
+                    if (!matchesCode(error, "FEATURE_NOT_AVAILABLE", "feature_not_available")) {
+                        throw error;
+                    }
+                    assertTrue(
+                            xProfile[0] != null
+                                    && !xProfile[0].path("meta").path("credits")
+                                    .path("accounting_enabled").asBoolean(true),
+                            "Feature-off profile receipt must bypass accounting"
+                    );
+                }
+            });
+        } else {
+            skip("accounts().profile() + exact replay", "No X account-read fixture configured");
+            skip("accounts().listPosts() + cursor contract + exact replay", "No X account-read fixture configured");
+            skip("accounts().listPosts() continuation page", "No X account-read fixture configured");
+            skip("billing().getXCredits() and billing().listXCreditEvents()", "No X account-read fixture configured");
+        }
+
         if (tikTokAccount != null) {
             JsonNode finalTikTokAccount = tikTokAccount;
             test("accounts.tikTokCreatorInfo()", () -> {
