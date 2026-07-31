@@ -32,7 +32,7 @@ func TestPhysicalTargetAllowsThreadAndRejectsSibling(t *testing.T) {
 	}
 	defer tx.Rollback()
 	requireEmptyPublicSchemaForTest(t, ctx, tx)
-	applyMigrationRangeForTest(t, ctx, tx, 1, 137)
+	applyMigrationRangeForTest(t, ctx, tx, 1, 138)
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO users (id, email) VALUES ('target-user', 'target@example.com');
@@ -202,7 +202,7 @@ func TestPhysicalTargetSerializesConcurrentSameBindingThreadJobs(t *testing.T) {
 
 	ctx := context.Background()
 	requireEmptyPublicSchemaForTest(t, ctx, database)
-	applyMigrationRangeForTest(t, ctx, database, 1, 137)
+	applyMigrationRangeForTest(t, ctx, database, 1, 138)
 	t.Cleanup(func() {
 		if _, err := database.ExecContext(context.Background(), `
 			DROP SCHEMA public CASCADE;

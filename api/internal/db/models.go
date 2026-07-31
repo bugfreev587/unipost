@@ -1081,6 +1081,29 @@ type Profile struct {
 	BrandingLogoStorageKey pgtype.Text        `json:"branding_logo_storage_key"`
 }
 
+type PublishingPullObject struct {
+	ObjectKey    string             `json:"object_key"`
+	ContentType  string             `json:"content_type"`
+	SizeBytes    int64              `json:"size_bytes"`
+	CleanupState string             `json:"cleanup_state"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PublishingPullObjectUsage struct {
+	ID                   string             `json:"id"`
+	ObjectKey            string             `json:"object_key"`
+	WorkspaceID          string             `json:"workspace_id"`
+	PostID               string             `json:"post_id"`
+	PostStatus           string             `json:"post_status"`
+	CleanupAfterAt       pgtype.Timestamptz `json:"cleanup_after_at"`
+	RetentionReason      string             `json:"retention_reason"`
+	UploadState          string             `json:"upload_state"`
+	UploadLeaseExpiresAt pgtype.Timestamptz `json:"upload_lease_expires_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ReviewAgentToken struct {
 	ID          string             `json:"id"`
 	ReviewJobID string             `json:"review_job_id"`

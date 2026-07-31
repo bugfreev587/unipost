@@ -94,6 +94,26 @@ func TestParsedRequestResolveLegacyPlatformOptions(t *testing.T) {
 	}
 }
 
+func TestStampPinterestDispatchEnvironmentsOnlyTouchesPinterest(t *testing.T) {
+	t.Setenv("PINTEREST_USE_SANDBOX", "true")
+	posts := []platform.PlatformPostInput{
+		{AccountID: "pin_1"},
+		{AccountID: "ig_1"},
+		{AccountID: "missing"},
+	}
+	stampPinterestDispatchEnvironments(posts, map[string]platform.ValidateAccount{
+		"pin_1": {Platform: "pinterest"},
+		"ig_1":  {Platform: "instagram"},
+	})
+
+	if posts[0].DispatchEnvironment != "sandbox" {
+		t.Fatalf("Pinterest environment = %q, want sandbox", posts[0].DispatchEnvironment)
+	}
+	if posts[1].DispatchEnvironment != "" || posts[2].DispatchEnvironment != "" {
+		t.Fatalf("non-Pinterest markers changed: %#v", posts)
+	}
+}
+
 func TestParsePublishRequestRejectsPlatformScopedOptionsInPlatformPosts(t *testing.T) {
 	body := publishRequestBody{
 		PlatformPosts: []platformPostBody{

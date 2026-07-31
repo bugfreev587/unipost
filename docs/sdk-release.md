@@ -1,271 +1,152 @@
 # SDK Release Guide
 
-This guide documents the current release flow for UniPost SDKs after source changes land in this repo.
+UniPost publishes four independent SDK repositories. Feature work is reviewed
+and merged in each repository before any version-only release commit or tag is
+created.
 
-## Fast path
+## Repositories and current 0.7.0 feature baselines
 
-After one-time GitHub secret setup, the release path for JavaScript, Python, Go, and Java can be nearly one command:
+| SDK | Public source | X account-read feature baseline |
+| --- | --- | --- |
+| JavaScript | `github.com/unipost-dev/sdk-js` | `c6c1559bf5787011e49cdcd2b5c314b9026255fa` |
+| Python | `github.com/unipost-dev/sdk-python` | `05ccc9b9c9c46e31a7a54e333540cf8e59164823` |
+| Go | `github.com/unipost-dev/sdk-go` | `8a728fa429d034f813b27b91acc54b926bf13b8d` |
+| Java | `github.com/unipost-dev/sdk-java` | `38e64a7cabb7f2ed3fdd97306c7fa85f1a472987` |
+
+The Go module is publicly resolved at
+`github.com/unipost-dev/sdk-go`; a `v0.7.0` tag in that repository is the Go
+module release.
+
+## Isolation requirement
+
+Set `UNIPOST_DEV_ROOT` to an explicit release-owned directory containing
+`sdk-js`, `sdk-python`, `sdk-go`, and `sdk-java`. Never point a release at a
+shared checkout or another task's worktree.
 
 ```bash
+export UNIPOST_DEV_ROOT=/absolute/path/to/release-owned-sdk-root
+```
+
+Every repository must be on `main`, clean, and contain the merged account-read
+and Billing feature source. `create-sdk-release.sh` fails before a version bump
+if any required public symbol is absent or if a target `v0.7.0` tag already
+exists.
+
+## Required acceptance inputs
+
+The release gate requires:
+
+- `UNIPOST_API_KEY`: Workspace API key for the target environment.
+- `BASE_URL`: exact API environment, such as `https://dev-api.unipost.dev`.
+- `TEST_X_ACCOUNT_ID`: connected X account owned by the acceptance workspace.
+- `TEST_EXTERNAL_USER_ID`: Managed User bound to that account.
+- `REQUIRE_X_ACCOUNT_READ_ACCEPTANCE=true`: turns missing fixtures into a hard
+  failure rather than a skip.
+- `TEST_ACCOUNT_ID`: existing general SDK fixture, when available.
+
+The X fixture must have `users.read`, `tweet.read`, and `offline.access`, and
+must preserve the X app identity used when it was connected. Validation performs
+one live profile read, one minimum-size authored-post read, exact idempotent
+replays, an optional cursor continuation, and the Credits snapshot/events path.
+`GET /v1/accounts` intentionally does not expose the Managed User ownership
+identifier, so the source-validation runner never guesses this pair. Release
+jobs must set both values explicitly and use a dedicated Hosted Connect fixture;
+a workspace-owned BYO connection is not a valid substitute.
+
+When `x_credits_billing_v1` is off, account reads must remain available with
+`meta.credits.accounting_enabled=false`, while the dedicated Billing endpoints
+return `FEATURE_NOT_AVAILABLE`. When the flag is on, the same reads and Billing
+inspection paths must succeed. Run acceptance in both states before release.
+
+## Feature PR gate
+
+For `0.7.0`, first push the four SDK feature branches and open pull requests to
+their respective `main` branches. Do not bump versions in those feature PRs.
+
+Run the main repository's `SDK Source Validation` workflow with:
+
+- `sdk_js_ref`
+- `sdk_python_ref`
+- `sdk_go_ref`
+- `sdk_java_ref`
+
+Set each input to the exact feature branch or SHA. The workflow records all four
+resolved SHAs in its artifact. Required SDK CI is:
+
+- JavaScript: Node 18, 20, and 22; tests, typecheck, build, and package dry-run.
+- Python: Python 3.9 through 3.12; pytest, mypy, and build.
+- Go: Go 1.21 through 1.23; test and vet.
+- Java: Java 17 and 21; Gradle test and build.
+
+A failed, skipped, cancelled, timed-out, or missing required result blocks the
+release. Merge the feature PRs only after their own CI and exact-head central
+validation pass, then verify each merged `main` SHA.
+
+## Create the 0.7.0 release commits and tags
+
+After all feature PRs are merged:
+
+```bash
+UNIPOST_DEV_ROOT=/absolute/path/to/release-owned-sdk-root \
 UNIPOST_API_KEY=up_live_xxx \
-TEST_ACCOUNT_ID=sa_xxx \
-scripts/release/create-sdk-release.sh 0.2.1 --push
+BASE_URL=https://dev-api.unipost.dev \
+TEST_ACCOUNT_ID=sa_general_fixture \
+TEST_X_ACCOUNT_ID=sa_x_fixture \
+TEST_EXTERNAL_USER_ID=user_fixture \
+REQUIRE_X_ACCOUNT_READ_ACCEPTANCE=true \
+scripts/release/create-sdk-release.sh 0.7.0
 ```
 
-That command:
+This command:
 
-- bumps all SDK version strings
-- auto-cleans leftover version/dist changes from a previously failed release attempt
-- rebuilds the JS dist bundle
-- force-stages the ignored `sdk-js/dist/` release artifacts before commit
-- runs lightweight local validation
-- runs all source-validation suites against the updated SDK source
-- creates the release commit
-- creates the git tag
-- pushes `main`
-- pushes `v0.2.1`
+1. validates repository, branch, cleanliness, tag, and required feature symbols;
+2. updates every maintained version-bearing file;
+3. rebuilds the JavaScript `dist` package;
+4. runs all four source and live validation suites;
+5. creates one focused `Release v0.7.0` commit and `v0.7.0` tag per repository.
 
-Once the tags land on GitHub:
-
-- `sdk-js` publishes through `/Users/xiaoboyu/unipost-dev/sdk-js/.github/workflows/publish.yml`
-- `sdk-python` publishes through `/Users/xiaoboyu/unipost-dev/sdk-python/.github/workflows/publish.yml`
-- `sdk-java` publishes through `/Users/xiaoboyu/unipost-dev/sdk-java/.github/workflows/publish.yml`
-
-Go still needs a separate release step unless you later align the public module path with this repo.
-
-## Current release model
-
-- JavaScript SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-js`
-- Python SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-python`
-- Go SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-go`
-- Java SDK source lives in `/Users/xiaoboyu/unipost-dev/sdk-java`
-
-That means:
-
-- JavaScript can be published directly from this repo
-- Python can now be packaged and published directly from this repo
-- Java can be packaged and published directly from its dedicated SDK repo
-- Go should be released through the repo that actually serves `github.com/unipost-dev/sdk-go`, or the module path must be changed before public release
-
-## 1. Bump the SDK version
-
-Update the version string in these files:
-
-- `/Users/xiaoboyu/unipost-dev/sdk-js/package.json`
-- `/Users/xiaoboyu/unipost-dev/sdk-js/src/http.ts`
-- `/Users/xiaoboyu/unipost-dev/sdk-python/pyproject.toml`
-- `/Users/xiaoboyu/unipost-dev/sdk-python/unipost/__init__.py`
-- `/Users/xiaoboyu/unipost-dev/sdk-go/unipost/client.go`
-- `/Users/xiaoboyu/unipost-dev/sdk-java/build.gradle.kts`
-- `/Users/xiaoboyu/unipost-dev/sdk-java/src/main/java/dev/unipost/UniPost.java`
-
-Example target version:
-
-- `0.2.1`
-
-## 2. Run validation before release
-
-From repo root:
+Inspect all four commits and tags before adding `--push`. The push form is:
 
 ```bash
-scripts/sdk-source-validation/run-suite.sh sdk-js
-scripts/sdk-source-validation/run-suite.sh sdk-python
-scripts/sdk-source-validation/run-suite.sh sdk-go
-scripts/sdk-source-validation/run-suite.sh sdk-java
-```
-
-Recommended extra safety check:
-
-```bash
-scripts/regression/run-suite.sh smoke
-```
-
-## 3. Simplest release command
-
-If your SDK repos are either clean or only contain leftover release-state changes from a previously failed run, and your npm / PyPI secrets are already configured in GitHub, use:
-
-```bash
+UNIPOST_DEV_ROOT=/absolute/path/to/release-owned-sdk-root \
 UNIPOST_API_KEY=up_live_xxx \
-TEST_ACCOUNT_ID=sa_xxx \
-scripts/release/create-sdk-release.sh 0.2.1 --push
+BASE_URL=https://dev-api.unipost.dev \
+TEST_X_ACCOUNT_ID=sa_x_fixture \
+TEST_EXTERNAL_USER_ID=user_fixture \
+REQUIRE_X_ACCOUNT_READ_ACCEPTANCE=true \
+scripts/release/create-sdk-release.sh 0.7.0 --push
 ```
 
-If you want to stop before pushing:
+## Registry publication and verification
+
+Tags trigger the repository release workflows:
+
+- JavaScript publishes `@unipost/sdk@0.7.0` to npm.
+- Python publishes `unipost==0.7.0` to PyPI.
+- Java publishes `dev.unipost:sdk-java:0.7.0` to Maven Central.
+- Go resolves directly from `github.com/unipost-dev/sdk-go@v0.7.0`.
+
+Java publishing requires the repository's Maven Central credentials and signing
+secrets. JavaScript and Python publishing require their configured trusted
+publisher or registry credentials.
+
+Verify from fresh temporary consumers, not the release worktrees:
 
 ```bash
-UNIPOST_API_KEY=up_live_xxx \
-TEST_ACCOUNT_ID=sa_xxx \
-scripts/release/create-sdk-release.sh 0.2.1
-```
-
-`UNIPOST_API_KEY` is required because the release script hard-gates on the source-validation suites before it will commit or tag a release.
-
-## 4. Manual release steps
-
-If you prefer the manual path, here is the equivalent flow.
-
-### Commit the release bump
-
-Example:
-
-```bash
-git -C /Users/xiaoboyu/unipost-dev/sdk-js status
-git -C /Users/xiaoboyu/unipost-dev/sdk-python status
-git -C /Users/xiaoboyu/unipost-dev/sdk-go status
-git -C /Users/xiaoboyu/unipost-dev/sdk-java status
-```
-
-### Create and push the Git tag
-
-If you are using one shared SDK version across languages, create a repo tag after the release commit:
-
-```bash
-git -C /Users/xiaoboyu/unipost-dev/sdk-js tag v0.2.1
-git -C /Users/xiaoboyu/unipost-dev/sdk-python tag v0.2.1
-git -C /Users/xiaoboyu/unipost-dev/sdk-go tag v0.2.1
-git -C /Users/xiaoboyu/unipost-dev/sdk-java tag v0.2.1
-```
-
-This is useful for release history and is required if you later align the Go module release with Git tags.
-
-## 5. Source validation workflow
-
-If you want a GitHub-hosted pre-release check from the `unipost` repo, run:
-
-- `/Users/xiaoboyu/unipost/.github/workflows/sdk-source-validation.yml`
-
-That workflow checks out the `sdk-js`, `sdk-python`, `sdk-go`, and `sdk-java` repos into the runner, then runs the same source-validation suites against them before release.
-
-## 6. Publish the JavaScript SDK manually
-
-Login first if needed:
-
-```bash
-npm whoami
-npm login
-```
-
-Publish:
-
-```bash
-cd /Users/xiaoboyu/unipost-dev/sdk-js
-npm publish --access public
-```
-
-Verify:
-
-```bash
-npm view @unipost/sdk version
-```
-
-## 7. Publish the Python SDK manually
-
-Install build tools if needed:
-
-```bash
-python3 -m pip install --upgrade build twine
-```
-
-Build:
-
-```bash
-cd /Users/xiaoboyu/unipost-dev/sdk-python
-python3 -m build
-```
-
-Upload to PyPI:
-
-```bash
-python3 -m twine upload dist/*
-```
-
-Verify:
-
-```bash
+npm view @unipost/sdk@0.7.0 version
 python3 -m pip index versions unipost
+go list -m github.com/unipost-dev/sdk-go@v0.7.0
 ```
 
-## 8. Publish the Java SDK
+For Java, resolve `dev.unipost:sdk-java:0.7.0` from Maven Central and compile a
+consumer that calls both an existing API and the new account-read/Billing APIs.
+Each fresh consumer must prove the package version, User-Agent version,
+representative old calls, new public methods, full response envelopes, and
+structured error metadata.
 
-The Java SDK is configured for signed Maven publishing via Gradle.
+## Recovery rule
 
-Required repo secrets:
-
-- `MAVEN_CENTRAL_DEPLOY_URL`
-- `MAVEN_CENTRAL_USERNAME`
-- `MAVEN_CENTRAL_PASSWORD`
-- `MAVEN_SIGNING_KEY`
-- `MAVEN_SIGNING_PASSWORD`
-
-Local verification:
-
-```bash
-cd /Users/xiaoboyu/unipost-dev/sdk-java
-./gradlew test
-./gradlew publishToMavenLocal
-cd /Users/xiaoboyu/unipost
-scripts/sdk-source-validation/run-suite.sh sdk-java
-```
-
-Release:
-
-```bash
-cd /Users/xiaoboyu/unipost-dev/sdk-java
-git tag v0.2.1
-git push origin main
-git push origin v0.2.1
-```
-
-The publish workflow validates that the git tag matches the `build.gradle.kts` version and then runs `./gradlew publish`.
-
-## 9. Release the Go SDK
-
-The Go module currently declares:
-
-```go
-module github.com/unipost-dev/sdk-go
-```
-
-So the public Go release must happen from the repository that actually resolves at `github.com/unipost-dev/sdk-go`.
-
-If that repository is the same repository currently checked out at `/Users/xiaoboyu/unipost-dev/sdk-go`, the release flow is:
-
-1. Sync the latest `/sdk/go` source into the `sdk-go` repository.
-2. Commit the version bump there.
-3. Tag that repo:
-
-```bash
-git tag v0.2.1
-git push origin v0.2.1
-```
-
-4. Verify:
-
-```bash
-go list -m github.com/unipost-dev/sdk-go@v0.2.1
-```
-
-If you do not have a separate `sdk-go` repo yet, that is the missing piece before a proper public Go release.
-
-## Release checklist
-
-- Version strings updated everywhere
-- JS, Python, Go, Java regression suites green
-- Optional smoke suite green
-- Release commit pushed
-- Git tag pushed
-- npm package published
-- PyPI package built and uploaded
-- Maven Central package uploaded
-- Go module released from the correct repository
-
-## Notes
-
-- The Python distribution name in `pyproject.toml` is currently `unipost`.
-- The import path stays:
-
-```python
-from unipost import UniPost
-```
-
-- If your existing PyPI package name is different, update the `project.name` field before publishing.
+Never move or overwrite a published tag or registry version. If publication
+fails before an artifact becomes public, fix the source with a new commit and
+rerun the workflow. If any registry already accepted the version, publish a new
+patch version after all four repositories are consistent.

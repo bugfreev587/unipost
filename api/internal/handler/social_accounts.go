@@ -587,6 +587,7 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to disconnect account")
 		return
 	}
+	platform.InvalidateAccountState(disconnected.Platform, disconnected.ID)
 	armedRows, err := h.queries.ArmSocialAccountDisconnectNotification(r.Context(), disconnected.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to notify disconnect")

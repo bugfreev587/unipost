@@ -124,7 +124,7 @@ func TestPostDeliveryJobLeaseOwnershipQueryContract(t *testing.T) {
 }
 
 func TestPostDeliveryJobConnectionSnapshotMigrationContract(t *testing.T) {
-	source, err := os.ReadFile("migrations/137_delivery_job_connection_snapshot.sql")
+	source, err := os.ReadFile("migrations/138_delivery_job_connection_snapshot.sql")
 	if err != nil {
 		t.Fatalf("read connection snapshot migration: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestPostDeliveryJobConnectionSnapshotMigrationContract(t *testing.T) {
 }
 
 func TestPostDeliveryJobPhysicalTargetConstraintContract(t *testing.T) {
-	source, err := os.ReadFile("migrations/137_delivery_job_connection_snapshot.sql")
+	source, err := os.ReadFile("migrations/138_delivery_job_connection_snapshot.sql")
 	if err != nil {
 		t.Fatalf("read connection snapshot migration: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestPostDeliveryJobPhysicalTargetConstraintContract(t *testing.T) {
 }
 
 func TestPostPhysicalTargetBatchReservationContract(t *testing.T) {
-	migration, err := os.ReadFile("migrations/137_delivery_job_connection_snapshot.sql")
+	migration, err := os.ReadFile("migrations/138_delivery_job_connection_snapshot.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestPostPhysicalTargetBatchReservationContract(t *testing.T) {
 }
 
 func TestPostDeliveryDrainBlocksOnlyNewClaims(t *testing.T) {
-	source, err := os.ReadFile("migrations/137_delivery_job_connection_snapshot.sql")
+	source, err := os.ReadFile("migrations/138_delivery_job_connection_snapshot.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestDailyPublishReservationUsesPhysicalConnectionAtomically(t *testing.T) {
 			t.Fatalf("atomic physical daily reservation missing %q", want)
 		}
 	}
-	migration, err := os.ReadFile("migrations/139_physical_daily_publish_reservations.sql")
+	migration, err := os.ReadFile("migrations/140_physical_daily_publish_reservations.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

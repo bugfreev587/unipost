@@ -9,10 +9,11 @@ import "testing"
 func TestEncodeDecodeRoundTrip(t *testing.T) {
 	in := []PlatformPostInput{
 		{
-			AccountID:       "acc_a",
-			Caption:         "tweet caption",
-			MediaURLs:       []string{"https://x/y.jpg"},
-			PlatformOptions: map[string]any{"twitter_lang": "en"},
+			AccountID:           "acc_a",
+			Caption:             "tweet caption",
+			MediaURLs:           []string{"https://x/y.jpg"},
+			PlatformOptions:     map[string]any{"twitter_lang": "en"},
+			DispatchEnvironment: "sandbox",
 		},
 		{
 			AccountID: "acc_b",
@@ -38,9 +39,23 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 		if i == 0 && len(out[i].MediaURLs) != 1 {
 			t.Errorf("media urls lost on round trip")
 		}
+		if i == 0 && out[i].DispatchEnvironment != "sandbox" {
+			t.Errorf("dispatch environment lost on round trip: %q", out[i].DispatchEnvironment)
+		}
 		if i == 1 && out[i].InReplyTo != "li_post_123" {
 			t.Errorf("in_reply_to lost on round trip")
 		}
+	}
+}
+
+func TestDecodeLegacyMetadataLeavesDispatchEnvironmentEmpty(t *testing.T) {
+	raw := []byte(`{"schema_version":2,"platform_posts":[{"account_id":"pin_legacy","caption":"legacy"}]}`)
+	posts, err := DecodePostMetadata(raw, "")
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(posts) != 1 || posts[0].DispatchEnvironment != "" {
+		t.Fatalf("legacy dispatch environment = %#v, want empty", posts)
 	}
 }
 

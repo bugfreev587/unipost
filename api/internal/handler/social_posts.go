@@ -890,6 +890,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parsed.resolveLegacyPlatformOptions(accountMap)
+	stampPinterestDispatchEnvironments(parsed.Posts, accountMap)
 
 	// Load media rows referenced by the request so the validator can
 	// check ownership, status, and content type.
@@ -2286,7 +2287,7 @@ func (h *SocialPostHandler) runDispatchGroup(
 		}
 
 		usageKey := fmt.Sprintf("%s:%d", postID, postIdx)
-		oc := h.publishOne(r, workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
+		oc := h.publishOne(r, workspaceID, postID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
 		outcomes[postIdx] = oc
 
 		if oc.err != nil {
@@ -2325,6 +2326,7 @@ func (h *SocialPostHandler) runDispatchGroup(
 func (h *SocialPostHandler) publishOne(
 	r *http.Request,
 	workspaceID string,
+	postID string,
 	usageKey string,
 	pp platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
@@ -2333,12 +2335,13 @@ func (h *SocialPostHandler) publishOne(
 	dailyTracker *quota.PerPlatformDailyTracker,
 	disallowedPlatforms map[string]bool,
 ) (oc publishOneOutcome) {
-	return h.publishOneContext(r.Context(), workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms, "")
+	return h.publishOneContext(r.Context(), workspaceID, postID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms, "")
 }
 
 func (h *SocialPostHandler) publishOneContext(
 	ctx context.Context,
 	workspaceID string,
+	postID string,
 	usageKey string,
 	pp platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
@@ -2443,20 +2446,21 @@ func (h *SocialPostHandler) publishOneContext(
 		}
 	}
 
-	// Resolve any media_ids to presigned download URLs and append
-	// them to the URL list. The adapter doesn't care about the
-	// distinction — both halves end up in the same MediaItem slice.
+	// Resolve media_ids to presigned download URLs while retaining media
+	// provenance. Adapters use the distinction to avoid treating UniPost-
+	// managed objects as untrusted request-supplied remote URLs.
 	// Errors here are fatal for the post (we can't dispatch without
 	// the media), so we surface them as the post's err.
-	mediaURLs := append([]string(nil), pp.MediaURLs...)
+	var managedMediaURLs []string
 	if len(pp.MediaIDs) > 0 {
 		extra, mediaErr := h.resolveMediaIDsToURLs(ctx, acc.Platform, pp.MediaIDs)
 		if mediaErr != nil {
 			oc.err = mediaErr
 			return
 		}
-		mediaURLs = append(mediaURLs, extra...)
+		managedMediaURLs = extra
 	}
+	media := mediaForDispatch(pp.MediaURLs, managedMediaURLs)
 
 	dailyOperationKey := usageKey + ":main"
 	if !dailyTracker.Allow(physicalAccountKey(acc), acc.Platform, dailyOperationKey) {
@@ -2486,14 +2490,28 @@ func (h *SocialPostHandler) publishOneContext(
 		"account_id", acc.ID,
 		"platform", acc.Platform,
 		"caption_preview", truncateForLog(pp.Caption, 40),
-		"media_urls", len(mediaURLs))
+		"media_urls", len(media))
 
 	// Attach a debugrt recorder so the shared RoundTripper captures
 	// failing HTTP requests into a curl dump we can persist on the
 	// result row. Per-dispatch so concurrent publishes don't trample
 	// each other.
 	debugRec := debugrt.NewRecorder()
+	dispatchEventRec := platform.NewDispatchEventRecorder()
+	defer func() {
+		oc.dispatchEvents = dispatchEventRec.Snapshot()
+	}()
 	dispatchCtx := debugrt.WithRecorder(ctx, debugRec)
+	dispatchCtx = platform.WithDispatchMetadata(dispatchCtx, platform.DispatchMetadata{
+		SocialAccountID: acc.ID,
+		Environment:     pp.DispatchEnvironment,
+		Events:          dispatchEventRec,
+	})
+	dispatchCtx = storage.WithPublishingObjectLifecycle(dispatchCtx, storage.PublishingObjectContext{
+		WorkspaceID: workspaceID,
+		PostID:      postID,
+		Lifecycle:   publishingObjectLifecycleRecorder{queries: h.queries},
+	})
 
 	usageEvent, usageErr := h.reserveManagedXUsage(dispatchCtx, workspaceID, usageKey+":main", acc, pp.Caption)
 	if usageErr != nil {
@@ -2515,7 +2533,7 @@ func (h *SocialPostHandler) publishOneContext(
 		dispatchCtx,
 		accessToken,
 		pp.Caption,
-		platform.MediaFromURLs(mediaURLs),
+		media,
 		pp.PlatformOptions,
 	)
 	oc.result = postResult
@@ -2578,6 +2596,11 @@ func (h *SocialPostHandler) publishOneContext(
 		}
 	}
 	return
+}
+
+func mediaForDispatch(externalURLs, managedURLs []string) []platform.MediaItem {
+	media := platform.MediaFromURLs(externalURLs)
+	return append(media, platform.MediaFromURLsWithOrigin(managedURLs, platform.MediaOriginManaged)...)
 }
 
 func (h *SocialPostHandler) refreshSocialAccountToken(ctx context.Context, account db.SocialAccount, adapter platform.PlatformAdapter, refreshToken string) (string, string, time.Time, error) {
@@ -2801,6 +2824,9 @@ type publishOneOutcome struct {
 	// internal/debugrt). Populated whenever entries exist, but only
 	// persisted on failure — successful publishes ignore it.
 	debugCurl string
+	// dispatchEvents are bounded, URL-free adapter progress events. The
+	// worker attaches post/result/workspace identity before writing them.
+	dispatchEvents []platform.DispatchEvent
 }
 
 // resolveSource classifies the publish trigger as either "ui" (Clerk

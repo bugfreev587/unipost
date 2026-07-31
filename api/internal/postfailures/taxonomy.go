@@ -39,6 +39,7 @@ func Classify(raw string) Classification {
 		ErrorCode:   "platform_error",
 		IsRetriable: false,
 	}
+	pinterestReason := ""
 
 	if code := extractMetaCode(raw); code != "" {
 		c.PlatformErrorCode = code
@@ -57,8 +58,28 @@ func Classify(raw string) Classification {
 			c.PlatformErrorCode = reason
 		}
 	}
+	if strings.Contains(s, "pinterest") {
+		if pe := extractPinterestProviderError(raw); pe != nil {
+			pinterestReason = pe.Reason
+			if pe.Code != "" {
+				c.PlatformErrorCode = pe.Code
+			}
+		}
+	}
 
 	switch {
+	case pinterestReason == "board_not_accessible":
+		c.ErrorCode = "target_not_found"
+	case pinterestReason == "board_not_found":
+		c.ErrorCode = "target_not_found"
+	case pinterestReason == "token_invalid":
+		c.ErrorCode = "auth_token_invalid"
+	case pinterestReason == "rate_limited":
+		c.ErrorCode = "rate_limit"
+		c.IsRetriable = true
+	case pinterestReason == "provider_temporary_failure":
+		c.ErrorCode = "temporary_platform_error"
+		c.IsRetriable = true
 	case strings.Contains(s, "x_monthly_usage_limit_exceeded"):
 		c.ErrorCode = "x_monthly_usage_limit_exceeded"
 	case strings.Contains(s, "x_write_outcome_pending_reconciliation"):
