@@ -70,6 +70,13 @@ func (a *PinterestAdapter) SetMediaProxy(c *storage.Client) {
 
 func (a *PinterestAdapter) Platform() string { return "pinterest" }
 
+func PinterestEnvironment() string {
+	if pinterestUseSandbox() {
+		return "sandbox"
+	}
+	return "production"
+}
+
 func (a *PinterestAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 	clientID := os.Getenv("PINTEREST_APP_ID")
 	if clientID == "" {
@@ -184,6 +191,21 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 	}
 	if !pinterestBoardIDPattern.MatchString(boardID) {
 		return nil, fmt.Errorf("invalid pinterest platform_options.board_id: must be a numeric board ID")
+	}
+	if metadata, ok := DispatchMetadataFromContext(ctx); ok &&
+		metadata.Environment != "" && metadata.Environment != PinterestEnvironment() {
+		return nil, newProviderFailure(
+			"The selected Pinterest board belongs to a different Pinterest environment. Choose another board and publish again.",
+			map[string]any{
+				"provider": "pinterest",
+				"reason":   "board_environment_mismatch",
+			},
+			FailureContract{
+				ErrorCode:   "target_not_found",
+				Stage:       "destination_preflight",
+				IsRetriable: false,
+			},
+		)
 	}
 
 	title := strings.TrimSpace(optString(opts, "title"))

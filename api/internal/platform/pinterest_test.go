@@ -45,6 +45,17 @@ func TestPinterestEndpointsUseSandboxShortcut(t *testing.T) {
 	}
 }
 
+func TestPinterestEnvironmentMatchesActiveAPI(t *testing.T) {
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	if got := PinterestEnvironment(); got != "production" {
+		t.Fatalf("environment = %q, want production", got)
+	}
+	t.Setenv("PINTEREST_USE_SANDBOX", "true")
+	if got := PinterestEnvironment(); got != "sandbox" {
+		t.Fatalf("environment = %q, want sandbox", got)
+	}
+}
+
 func TestPinterestEndpointsHonorExplicitOverrides(t *testing.T) {
 	t.Setenv("PINTEREST_USE_SANDBOX", "true")
 	t.Setenv("PINTEREST_API_BASE_URL", "https://example.test/v5/")
@@ -434,5 +445,40 @@ func TestProviderOnlyErrorDoesNotClaimFailureContract(t *testing.T) {
 	})
 	if _, ok := err.(interface{ FailureContractFields() map[string]any }); ok {
 		t.Fatalf("legacy provider-only error unexpectedly implements failure contract: %T", err)
+	}
+}
+
+func TestPinterestPostRejectsStoredEnvironmentMismatchBeforeProviderCall(t *testing.T) {
+	providerCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls++
+		http.Error(w, "must not be called", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+	adapter := &PinterestAdapter{client: srv.Client()}
+	ctx := WithDispatchMetadata(context.Background(), DispatchMetadata{
+		SocialAccountID: "sa_pin_1",
+		Environment:     "sandbox",
+	})
+
+	_, err := adapter.Post(ctx, "token", "caption", []MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage}}, map[string]any{
+		"board_id": "1131529543818288706",
+	})
+	if err == nil {
+		t.Fatal("expected environment mismatch")
+	}
+	if providerCalls != 0 {
+		t.Fatalf("provider calls = %d, want 0", providerCalls)
+	}
+	failure := err.(interface{ FailureContractFields() map[string]any }).FailureContractFields()
+	if failure["error_code"] != "target_not_found" || failure["failure_stage"] != "destination_preflight" || failure["is_retriable"] != false {
+		t.Fatalf("failure fields = %#v", failure)
+	}
+	provider := err.(interface{ ProviderErrorFields() map[string]any }).ProviderErrorFields()
+	if provider["reason"] != "board_environment_mismatch" {
+		t.Fatalf("provider fields = %#v", provider)
 	}
 }

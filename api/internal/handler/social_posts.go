@@ -890,6 +890,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parsed.resolveLegacyPlatformOptions(accountMap)
+	stampPinterestDispatchEnvironments(parsed.Posts, accountMap)
 
 	// Load media rows referenced by the request so the validator can
 	// check ownership, status, and content type.
@@ -2462,6 +2463,10 @@ func (h *SocialPostHandler) publishOneContext(
 	// each other.
 	debugRec := debugrt.NewRecorder()
 	dispatchCtx := debugrt.WithRecorder(ctx, debugRec)
+	dispatchCtx = platform.WithDispatchMetadata(dispatchCtx, platform.DispatchMetadata{
+		SocialAccountID: acc.ID,
+		Environment:     pp.DispatchEnvironment,
+	})
 
 	usageEvent, usageErr := h.reserveManagedXUsage(dispatchCtx, workspaceID, usageKey+":main", acc, pp.Caption)
 	if usageErr != nil {
