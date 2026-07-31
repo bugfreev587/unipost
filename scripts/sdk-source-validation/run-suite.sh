@@ -30,8 +30,34 @@ if [[ "$SOURCE_ONLY" != "true" && -z "$UNIPOST_API_KEY" ]]; then
 fi
 if [[ "$SOURCE_ONLY" != "true" && "$REQUIRE_X_ACCOUNT_READ_ACCEPTANCE" == "true" ]] \
   && [[ -z "$TEST_X_ACCOUNT_ID" || -z "$TEST_EXTERNAL_USER_ID" ]]; then
-  echo "required X account-read acceptance fixture is missing: set TEST_X_ACCOUNT_ID and TEST_EXTERNAL_USER_ID" >&2
-  exit 64
+  resolver_args=()
+  if [[ -n "$TEST_X_ACCOUNT_ID" ]]; then
+    resolver_args+=(--account-id "$TEST_X_ACCOUNT_ID")
+  fi
+  if [[ -n "$TEST_EXTERNAL_USER_ID" ]]; then
+    resolver_args+=(--external-user-id "$TEST_EXTERNAL_USER_ID")
+  fi
+  if [[ -n "$TEST_ACCOUNT_ID" ]]; then
+    resolver_args+=(--preferred-account-id "$TEST_ACCOUNT_ID")
+  fi
+
+  account_response="$(
+    curl --fail-with-body --silent --show-error --get \
+      "${BASE_URL%/}/v1/accounts" \
+      -H "Authorization: Bearer ${UNIPOST_API_KEY}" \
+      --data-urlencode "platform=twitter" \
+      --data-urlencode "limit=100"
+  )"
+  resolved_fixture="$(
+    printf '%s' "$account_response" \
+      | python3 "${ROOT_DIR}/scripts/sdk-source-validation/resolve-x-fixture.py" "${resolver_args[@]}"
+  )"
+  IFS=$'\t' read -r TEST_X_ACCOUNT_ID TEST_EXTERNAL_USER_ID <<< "$resolved_fixture"
+  if [[ -z "$TEST_X_ACCOUNT_ID" || -z "$TEST_EXTERNAL_USER_ID" ]]; then
+    echo "required X account-read acceptance fixture could not be resolved" >&2
+    exit 64
+  fi
+  echo "resolved one unambiguous X account-read fixture from the regression workspace"
 fi
 
 mkdir -p "$LOG_DIR"

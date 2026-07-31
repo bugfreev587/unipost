@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -76,6 +77,8 @@ test("source validation can pin every SDK PR head and fail closed on missing X f
   assert.match(runner, /TEST_EXTERNAL_USER_ID/);
   assert.match(runner, /REQUIRE_X_ACCOUNT_READ_ACCEPTANCE/);
   assert.match(runner, /required X account-read acceptance fixture/i);
+  assert.match(runner, /resolve-x-fixture\.py/);
+  assert.match(runner, /GET|\/v1\/accounts/);
 });
 
 test("release safety requires the new SDK symbols and documents the 0.7.0 gates", async () => {
@@ -113,4 +116,41 @@ test("release safety requires the new SDK symbols and documents the 0.7.0 gates"
   assert.match(guide, /TEST_X_ACCOUNT_ID/);
   assert.match(guide, /TEST_EXTERNAL_USER_ID/);
   assert.match(guide, /github\.com\/unipost-dev\/sdk-go/);
+});
+
+test("required live acceptance can resolve only one unambiguous X fixture", () => {
+  const resolver = join(root, "scripts/sdk-source-validation/resolve-x-fixture.py");
+  const oneFixture = JSON.stringify({
+    data: [
+      { id: "sa_bluesky", platform: "bluesky", external_user_id: "user_other" },
+      { id: "sa_x_1", platform: "twitter", external_user_id: "user_42" },
+    ],
+  });
+  const resolved = spawnSync("python3", [resolver], { input: oneFixture, encoding: "utf8" });
+  assert.equal(resolved.status, 0, resolved.stderr);
+  assert.equal(resolved.stdout.trim(), "sa_x_1\tuser_42");
+
+  const ambiguous = spawnSync("python3", [resolver], {
+    input: JSON.stringify({
+      data: [
+        { id: "sa_x_1", platform: "twitter", external_user_id: "user_42" },
+        { id: "sa_x_2", platform: "twitter", external_user_id: "user_43" },
+      ],
+    }),
+    encoding: "utf8",
+  });
+  assert.equal(ambiguous.status, 64);
+  assert.match(ambiguous.stderr, /found 2 eligible connected X accounts/i);
+
+  const preferred = spawnSync("python3", [resolver, "--preferred-account-id", "sa_x_2"], {
+    input: JSON.stringify({
+      data: [
+        { id: "sa_x_1", platform: "twitter", external_user_id: "user_42" },
+        { id: "sa_x_2", platform: "twitter", external_user_id: "user_43" },
+      ],
+    }),
+    encoding: "utf8",
+  });
+  assert.equal(preferred.status, 0, preferred.stderr);
+  assert.equal(preferred.stdout.trim(), "sa_x_2\tuser_43");
 });
