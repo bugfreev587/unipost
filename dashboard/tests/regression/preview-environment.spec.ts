@@ -29,7 +29,6 @@ test("frontend and API are the same isolated preview pair", async ({ page }) => 
   const manifestResponse = await page.request.get("/__unipost-preview.json", {
     headers: {
       "x-vercel-protection-bypass": automationBypassSecret,
-      "x-vercel-set-bypass-cookie": "true",
     },
   });
   expect(manifestResponse.ok()).toBeTruthy();

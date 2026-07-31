@@ -277,7 +277,7 @@ test("browser sign-in establishes the Vercel Preview bypass cookie before naviga
     request: {
       async get(url, options) {
         requests.push({ url, options });
-        return { ok: () => true, status: () => 200 };
+        return { ok: () => false, status: () => 307 };
       },
     },
     async goto() {},
@@ -299,6 +299,7 @@ test("browser sign-in establishes the Vercel Preview bypass cookie before naviga
         "x-vercel-protection-bypass": "preview-bypass",
         "x-vercel-set-bypass-cookie": "true",
       },
+      maxRedirects: 0,
     },
   }]);
 });
