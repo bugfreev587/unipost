@@ -29,6 +29,11 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 )
 
+func quotaFixtureMonthTime(baseline time.Time, monthOffset int) time.Time {
+	baseline = baseline.UTC()
+	return time.Date(baseline.Year(), baseline.Month()+time.Month(monthOffset), 15, 12, 0, 0, 0, time.UTC)
+}
+
 func TestScheduledQuotaSnapshotPostgresCountsOnlyAdmissionAllowedTargets(t *testing.T) {
 	pool := openRestrictedDeliveryIntegrationPool(t)
 	setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
@@ -771,7 +776,7 @@ func TestDueCrossMonthPostUsesOnlyCurrentPeriodPartialHeadroom(t *testing.T) {
 	ctx := withoutPostMediaRetentionSync(context.Background())
 	now := time.Now().UTC()
 	period := quota.PeriodForTime(now)
-	priorScheduledAt := now.AddDate(0, -1, 0)
+	priorScheduledAt := quotaFixtureMonthTime(now, -1)
 	posts := []platform.PlatformPostInput{
 		{AccountID: "account_cross_headroom_0", Caption: "first current-month slot"},
 		{AccountID: "account_cross_headroom_1", Caption: "second current-month slot"},
@@ -907,8 +912,8 @@ func TestUpdateScheduledPostEnforcesFreeQuotaDeltaAtomically(t *testing.T) {
 			setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
 			ctx := context.Background()
 			now := time.Now().UTC()
-			period := quota.PeriodForTime(now)
 			scheduledAt := now.Add(24 * time.Hour)
+			period := quota.PeriodForTime(scheduledAt)
 			oldMetadata, err := encodeScheduledPostMetadataWithQuotaAccounts([]platform.PlatformPostInput{{
 				AccountID: "account_edit_one",
 				Caption:   "existing reservation",
@@ -1000,7 +1005,8 @@ func TestConcurrentFreeScheduledCreatesSerializeQuotaAdmission(t *testing.T) {
 	setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	period := quota.PeriodForTime(now)
+	scheduledAt := now.Add(24 * time.Hour)
+	period := quota.PeriodForTime(scheduledAt)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO profiles VALUES ('profile_concurrent_create', 'workspace_concurrent_create');
 		INSERT INTO social_accounts (id, profile_id, platform) VALUES ('account_concurrent_create', 'profile_concurrent_create', 'linkedin');
@@ -1021,7 +1027,6 @@ func TestConcurrentFreeScheduledCreatesSerializeQuotaAdmission(t *testing.T) {
 			queries := db.New(pool)
 			h := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
 				SetPaidScheduleCoordinator(paidquota.NewPostgresCoordinator(pool))
-			scheduledAt := now.Add(24 * time.Hour)
 			req := httptest.NewRequest(http.MethodPost, "/v1/posts", nil)
 			req = req.WithContext(withoutPostMediaRetentionSync(req.Context()))
 			rr := httptest.NewRecorder()
@@ -1556,7 +1561,7 @@ func TestConcurrentDueReservationGrowthSerializesAndCrossMonthUsesFullUnits(t *t
 		ctx := withoutPostMediaRetentionSync(context.Background())
 		now := time.Now().UTC()
 		period := quota.PeriodForTime(now)
-		priorScheduledAt := now.AddDate(0, -1, 0)
+		priorScheduledAt := quotaFixtureMonthTime(now, -1)
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO profiles VALUES ('profile_due_cross_growth', 'workspace_due_cross_growth');
 			INSERT INTO social_accounts (id, profile_id, platform) VALUES
@@ -1656,7 +1661,7 @@ func TestConcurrentDueReservationGrowthSerializesAndCrossMonthUsesFullUnits(t *t
 		if _, err := pool.Exec(ctx, `INSERT INTO usage (workspace_id,period,post_count) VALUES ('workspace_cross_month',$1,100)`, period); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO social_posts (id,workspace_id,status,scheduled_at,created_at,metadata) VALUES ('post_cross_month','workspace_cross_month','scheduled',$1,$1,$2)`, now.AddDate(0, -1, 0), metadata); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO social_posts (id,workspace_id,status,scheduled_at,created_at,metadata) VALUES ('post_cross_month','workspace_cross_month','scheduled',$1,$1,$2)`, quotaFixtureMonthTime(now, -1), metadata); err != nil {
 			t.Fatal(err)
 		}
 		q := db.New(pool)
@@ -1682,11 +1687,11 @@ func TestConcurrentDueReservationGrowthSerializesAndCrossMonthUsesFullUnits(t *t
 
 func TestAtomicMonthlySnapshotRejectsDuringTerminalReservationConversion(t *testing.T) {
 	for _, test := range []struct {
-		name        string
-		scheduledAt func(time.Time) time.Time
+		name       string
+		priorMonth bool
 	}{
-		{name: "same month", scheduledAt: func(now time.Time) time.Time { return now.Add(24 * time.Hour) }},
-		{name: "cross month execution reservation", scheduledAt: func(now time.Time) time.Time { return now.AddDate(0, -1, 0) }},
+		{name: "same month"},
+		{name: "cross month execution reservation", priorMonth: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			pool := openRestrictedDeliveryIntegrationPool(t)
@@ -1694,8 +1699,12 @@ func TestAtomicMonthlySnapshotRejectsDuringTerminalReservationConversion(t *test
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			now := time.Now().UTC()
-			period := quota.PeriodForTime(now)
-			scheduledAt := test.scheduledAt(now)
+			scheduledAt := now.Add(24 * time.Hour)
+			period := quota.PeriodForTime(scheduledAt)
+			if test.priorMonth {
+				scheduledAt = quotaFixtureMonthTime(now, -1)
+				period = quota.PeriodForTime(now)
+			}
 			metadata := fmt.Sprintf(`{"scheduled_execution_reservation_period":%q,"scheduled_quota_units":1,"platform_posts":[{"account_id":"account_terminal_snapshot"}]}`, period)
 			if _, err := pool.Exec(ctx, `
 				INSERT INTO profiles VALUES ('profile_terminal_snapshot','workspace_terminal_snapshot');
@@ -1785,7 +1794,7 @@ func TestPublishQuotaHoldUsesSamePeriodDeltaAndCrossPeriodFullUnits(t *testing.T
 			now := time.Now().UTC()
 			scheduledAt := now
 			if tc.priorMonth {
-				scheduledAt = now.AddDate(0, -1, 0)
+				scheduledAt = quotaFixtureMonthTime(now, -1)
 			}
 			period := quota.PeriodForTime(now)
 			metadata, _ := encodeScheduledPostMetadata([]platform.PlatformPostInput{{AccountID: "account_hold_publish", Caption: "publish hold"}}, 1)
@@ -1834,7 +1843,7 @@ func TestConcurrentCrossPeriodQuotaHoldPublishReservesCurrentExecutionCapacity(t
 	ctx := context.Background()
 	now := time.Now().UTC()
 	period := quota.PeriodForTime(now)
-	priorScheduledAt := now.AddDate(0, -1, 0)
+	priorScheduledAt := quotaFixtureMonthTime(now, -1)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO profiles VALUES ('profile_hold_cross_concurrent','workspace_hold_cross_concurrent');
 		INSERT INTO social_accounts (id,profile_id,platform) VALUES
