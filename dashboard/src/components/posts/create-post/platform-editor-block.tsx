@@ -19,6 +19,7 @@ import { PinterestFields } from "./platform-fields/pinterest-fields";
 import type { SocialAccount } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { SocialPostValidationIssue } from "@/lib/api";
+import type { PinterestBoardSnapshot } from "@/lib/pinterest-boards";
 import { getAccountDisplayName } from "./account-labels";
 
 interface PlatformEditorBlockProps {
@@ -58,6 +59,7 @@ interface PlatformEditorBlockProps {
   // Forwarded to TikTokFields so the drawer knows each selected
   // account's creator cap and can gate R2 uploads accordingly.
   onTiktokMaxDurationChange: (sec: number | null) => void;
+  onPinterestBoardSnapshotChange: (snapshot: PinterestBoardSnapshot | null) => void;
   onCaptionChange: (caption: string) => void;
   onFirstCommentChange: (firstComment: string) => void;
   firstCommentSupported: boolean;
@@ -89,6 +91,7 @@ export function PlatformEditorBlock({
   profileId,
   onTiktokBlockerChange,
   onTiktokMaxDurationChange,
+  onPinterestBoardSnapshotChange,
   onCaptionChange,
   onFirstCommentChange,
   firstCommentSupported,
@@ -432,6 +435,7 @@ export function PlatformEditorBlock({
               fields={pinterestFields}
               issues={issues}
               onChange={(f) => onPlatformFieldChange("pinterest", f)}
+              onSnapshotChange={onPinterestBoardSnapshotChange}
             />
           )}
         </div>

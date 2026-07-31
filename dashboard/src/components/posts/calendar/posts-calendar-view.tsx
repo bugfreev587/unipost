@@ -34,6 +34,7 @@ import {
   createMedia,
   getMedia,
   getPlatformCapabilities,
+  listPinterestBoards,
   listProfiles,
   listSocialAccounts,
   listAllSocialPosts,
@@ -47,6 +48,11 @@ import {
   type SocialPostValidationIssue,
   type SocialPostValidationResult,
 } from "@/lib/api";
+import {
+  isPinterestBoardSnapshotFresh,
+  pinterestBoardEnvironment,
+  type PinterestBoardSnapshot,
+} from "@/lib/pinterest-boards";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   buildMonthGrid,
@@ -176,6 +182,7 @@ export function PostsCalendarView() {
   const [timedOverflowTarget, setTimedOverflowTarget] = useState<TimedOverflowTarget | null>(null);
   const [editingPostTarget, setEditingPostTarget] = useState<SelectedPostTarget | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [createActionReady, setCreateActionReady] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -191,6 +198,10 @@ export function PostsCalendarView() {
 
   const calendarMode = useMemo(() => parseCalendarViewMode(searchParams.get("view")), [searchParams]);
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time", []);
+
+  useEffect(() => {
+    setCreateActionReady(true);
+  }, []);
 
   const clearCalendarSnap = useCallback(() => {
     if (wheelSnapTimerRef.current) {
@@ -1088,7 +1099,12 @@ export function PostsCalendarView() {
               List View
             </Link>
 
-            <button type="button" className="posts-calendar-create" onClick={() => setDrawerOpen(true)}>
+            <button
+              type="button"
+              className="posts-calendar-create"
+              disabled={!createActionReady}
+              onClick={() => setDrawerOpen(true)}
+            >
               <Plus size={16} />
               Create +
             </button>
@@ -1780,6 +1796,17 @@ function CalendarEditInspector({
   const [error, setError] = useState<string | null>(null);
   const [tiktokBlockers, setTiktokBlockers] = useState<Record<string, string>>({});
   const [tiktokMaxByAccount, setTiktokMaxByAccount] = useState<Record<string, number>>({});
+  const [pinterestBoardSnapshots, setPinterestBoardSnapshots] = useState<Record<string, PinterestBoardSnapshot>>({});
+  const pinterestBoardSnapshotsRef = useRef<Record<string, PinterestBoardSnapshot>>({});
+  const preservePinterestErrorRef = useRef(false);
+
+  const updatePinterestBoardSnapshot = useCallback((accountId: string, snapshot: PinterestBoardSnapshot | null) => {
+    const next = { ...pinterestBoardSnapshotsRef.current };
+    if (snapshot) next[accountId] = snapshot;
+    else delete next[accountId];
+    pinterestBoardSnapshotsRef.current = next;
+    setPinterestBoardSnapshots(next);
+  }, []);
 
   useEffect(() => {
     const key = `${post.id}:${accounts.map((account) => account.id).join(",")}`;
@@ -1827,7 +1854,11 @@ function CalendarEditInspector({
 
   useEffect(() => {
     setValidationResult(null);
-    setError(null);
+    if (preservePinterestErrorRef.current) {
+      preservePinterestErrorRef.current = false;
+    } else {
+      setError(null);
+    }
   }, [form.mainContent, form.selectedAccountIds, form.overrides, form.mediaItems, form.existingMediaItems, form.scheduledAt]);
 
   const placement = useMemo(
@@ -1873,6 +1904,22 @@ function CalendarEditInspector({
       durationSec: item.durationSec ?? null,
     };
   }, [form.mediaItems]);
+
+  const pinterestBoardBlocker = useMemo(() => {
+    for (const account of form.uniqueSelectedAccounts) {
+      if (account.platform !== "pinterest") continue;
+      const snapshot = pinterestBoardSnapshots[account.id];
+      if (!snapshot) return "Load Pinterest boards before saving this post.";
+      if (snapshot.boardIds.length === 0) {
+        return "This Pinterest account has no available boards. Create a board before publishing a Pin.";
+      }
+      const selectedBoardId = form.overrides[account.id]?.pinterest?.boardId?.trim();
+      if (!selectedBoardId || !snapshot.boardIds.includes(selectedBoardId)) {
+        return "Choose an available Pinterest board before saving this post.";
+      }
+    }
+    return null;
+  }, [form.overrides, form.uniqueSelectedAccounts, pinterestBoardSnapshots]);
 
   const setTiktokBlocker = useCallback((accountId: string, reason: string | null) => {
     setTiktokBlockers((prev) => {
@@ -1981,13 +2028,36 @@ function CalendarEditInspector({
   }
 
   async function handleSave() {
-    if (!form.canSubmit || saving || Object.keys(tiktokBlockers).length > 0 || oversizeVideos.length > 0) return;
+    if (!form.canSubmit || saving || pinterestBoardBlocker || Object.keys(tiktokBlockers).length > 0 || oversizeVideos.length > 0) return;
     setSaving(true);
     setError(null);
     try {
       const payload = form.buildPayload();
       const validation = await runValidation(payload);
       if (!validation.ok || !validation.token) return;
+      for (const account of form.uniqueSelectedAccounts) {
+        if (account.platform !== "pinterest") continue;
+        const previous = pinterestBoardSnapshotsRef.current[account.id];
+        let current = previous;
+        if (!current || !isPinterestBoardSnapshotFresh(current, Date.now())) {
+          const boardsResponse = await listPinterestBoards(validation.token, account.profile_id || profile?.id || "", account.id);
+          current = {
+            accountId: account.id,
+            environment: pinterestBoardEnvironment(!!boardsResponse.data.sandbox_mode),
+            fetchedAt: Date.now(),
+            boardIds: (boardsResponse.data.boards || []).map((board) => board.id),
+          };
+          updatePinterestBoardSnapshot(account.id, current);
+        }
+        const selectedBoardId = form.overrides[account.id]?.pinterest?.boardId?.trim() || "";
+        if ((previous && previous.environment !== current.environment) || !selectedBoardId || !current.boardIds.includes(selectedBoardId)) {
+          preservePinterestErrorRef.current = true;
+          form.updateOverridePlatformField(account.id, "pinterest", { boardId: "" });
+          form.expandBlock(account.id);
+          setError("The selected Pinterest board is no longer available for this account. Choose another board and publish again.");
+          return;
+        }
+      }
       const response = await updateSocialPost(validation.token, post.id, payload);
       await onSaved(response.data.id);
     } catch (err) {
@@ -1999,6 +2069,7 @@ function CalendarEditInspector({
 
   const runtimeBlocker = Object.values(tiktokBlockers).find(Boolean);
   const disabledReason = runtimeBlocker
+    || pinterestBoardBlocker
     || (oversizeVideos.length > 0 ? "Remove or replace videos that are too long for TikTok." : null)
     || (!form.canSubmit ? "Complete the required post fields before saving." : null);
 
@@ -2134,6 +2205,7 @@ function CalendarEditInspector({
                       profileId={account.profile_id || profile?.id || ""}
                       onTiktokBlockerChange={(reason) => setTiktokBlocker(account.id, reason)}
                       onTiktokMaxDurationChange={(sec) => setTiktokMaxDuration(account.id, sec)}
+                      onPinterestBoardSnapshotChange={(snapshot) => updatePinterestBoardSnapshot(account.id, snapshot)}
                       onCaptionChange={(caption) => form.updateOverrideCaption(account.id, caption)}
                       onFirstCommentChange={(firstComment) => form.updateOverrideFirstComment(account.id, firstComment)}
                       firstCommentSupported={supportsFirstComment(account.platform, platformCapabilities)}
@@ -2159,7 +2231,7 @@ function CalendarEditInspector({
           <div className="posts-calendar-edit-status">{error || disabledReason || "Ready to save changes."}</div>
           <div className="posts-calendar-edit-actions">
             <button type="button" className="secondary" onClick={onClose} disabled={saving}>Cancel</button>
-            <button type="button" className="primary" onClick={handleSave} disabled={!form.canSubmit || saving || !!runtimeBlocker || oversizeVideos.length > 0}>
+            <button type="button" className="primary" onClick={handleSave} disabled={!form.canSubmit || saving || !!runtimeBlocker || !!pinterestBoardBlocker || oversizeVideos.length > 0}>
               {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
               {saving ? "Saving" : "Save changes"}
             </button>

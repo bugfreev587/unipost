@@ -35,6 +35,10 @@ type providerErrorCarrier interface {
 	ProviderErrorFields() map[string]any
 }
 
+type failureContractCarrier interface {
+	FailureContractFields() map[string]any
+}
+
 var (
 	httpStatusPattern         = regexp.MustCompile(`\(([1-5][0-9]{2})\)`)
 	keyValueStatusPattern     = regexp.MustCompile(`(?i)\bstatus=([1-5][0-9]{2})\b`)
@@ -66,6 +70,15 @@ func classifyError(raw string, err error) Classification {
 				c.PlatformErrorCode = pe.Subcode
 			}
 			c.ErrorSource = ErrorSourcePlatform
+		}
+	}
+	if carrier, ok := err.(failureContractCarrier); ok {
+		fields := carrier.FailureContractFields()
+		if errorCode := stringFromAny(fields["error_code"]); errorCode != "" {
+			c.ErrorCode = errorCode
+		}
+		if retriable, ok := fields["is_retriable"].(bool); ok {
+			c.IsRetriable = retriable
 		}
 	}
 	return enrichClassification(c, raw)
@@ -135,6 +148,7 @@ func hasProviderSignal(c Classification, raw string) bool {
 	return strings.Contains(s, "provider=") ||
 		strings.Contains(s, "tiktok") ||
 		strings.Contains(s, "youtube") ||
+		strings.Contains(s, "pinterest") ||
 		strings.Contains(s, "instagram") ||
 		strings.Contains(s, "facebook") ||
 		strings.Contains(s, "threads") ||
@@ -151,9 +165,48 @@ func ExtractProviderError(raw string) *ProviderError {
 		return extractTikTokProviderError(raw)
 	case strings.Contains(s, "youtube") || strings.Contains(s, "provider=youtube"):
 		return extractYouTubeProviderError(raw)
+	case strings.Contains(s, "pinterest") || strings.Contains(s, "provider=pinterest"):
+		return extractPinterestProviderError(raw)
 	default:
 		return nil
 	}
+}
+
+func extractPinterestProviderError(raw string) *ProviderError {
+	status := extractHTTPStatus(raw)
+	code := regexpFirst(keyValueCodePattern, raw)
+	if code == "" {
+		code = trimJSONScalar(regexpFirst(metaJSONCodePattern, raw))
+	}
+	reason := regexpFirst(keyValueReasonPattern, raw)
+	if reason == "" {
+		switch {
+		case code == "2" || status == 401:
+			reason = "token_invalid"
+		case code == "29":
+			reason = "board_not_accessible"
+		case code == "40":
+			reason = "board_not_found"
+		case status == 429:
+			reason = "rate_limited"
+		case status >= 500:
+			reason = "provider_temporary_failure"
+		}
+	}
+	pe := &ProviderError{
+		Provider:   "pinterest",
+		HTTPStatus: status,
+		Code:       code,
+		Reason:     reason,
+	}
+	if status == 429 || status >= 500 {
+		transient := true
+		pe.IsTransient = &transient
+	}
+	if pe.Code == "" && pe.Reason == "" && pe.HTTPStatus == 0 {
+		return nil
+	}
+	return pe
 }
 
 func ProviderErrorJSON(pe *ProviderError) []byte {

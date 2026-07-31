@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
 func TestPinterestEndpointsDefaultToProduction(t *testing.T) {
@@ -41,6 +44,17 @@ func TestPinterestEndpointsUseSandboxShortcut(t *testing.T) {
 	}
 	if got := pinterestAuthURL(); got != pinterestOAuthEndpoint {
 		t.Fatalf("auth url = %q, want %q", got, pinterestOAuthEndpoint)
+	}
+}
+
+func TestPinterestEnvironmentMatchesActiveAPI(t *testing.T) {
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	if got := PinterestEnvironment(); got != "production" {
+		t.Fatalf("environment = %q, want production", got)
+	}
+	t.Setenv("PINTEREST_USE_SANDBOX", "true")
+	if got := PinterestEnvironment(); got != "sandbox" {
+		t.Fatalf("environment = %q, want sandbox", got)
 	}
 }
 
@@ -223,7 +237,15 @@ func TestPinterestPostStagesEphemeralImageURL(t *testing.T) {
 	var gotMediaURL string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v5/pins" {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1", "username": pinterestTestOwner})
+			return
+		case "/v5/boards/1151725373397121465":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "1151725373397121465", "owner": map[string]any{"username": pinterestTestOwner}})
+			return
+		case "/v5/pins":
+		default:
 			http.Error(w, "unexpected path", http.StatusBadRequest)
 			return
 		}
@@ -247,12 +269,9 @@ func TestPinterestPostStagesEphemeralImageURL(t *testing.T) {
 	staged := "https://public.example/media/staged.jpg"
 	adapter := &PinterestAdapter{
 		client: srv.Client(),
-		stageFromURL: func(_ context.Context, sourceURL string) (string, error) {
-			if !looksEphemeralFetchURL(sourceURL) {
-				t.Fatalf("expected ephemeral source URL, got %q", sourceURL)
-			}
-			return staged, nil
-		},
+		mediaStager: &fakePinterestMediaStager{result: storage.ExternalMediaResult{
+			PublicURL: staged, MediaType: "image/jpeg", SizeBytes: 10,
+		}},
 	}
 
 	_, err := adapter.Post(context.Background(), "token-123", "caption", []MediaItem{{
@@ -274,7 +293,15 @@ func TestPinterestPostStagesKnownTemporaryFileHosts(t *testing.T) {
 	var gotMediaURL string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v5/pins" {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1", "username": pinterestTestOwner})
+			return
+		case "/v5/boards/1151725373397121465":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "1151725373397121465", "owner": map[string]any{"username": pinterestTestOwner}})
+			return
+		case "/v5/pins":
+		default:
 			http.Error(w, "unexpected path", http.StatusBadRequest)
 			return
 		}
@@ -298,12 +325,9 @@ func TestPinterestPostStagesKnownTemporaryFileHosts(t *testing.T) {
 	staged := "https://public.example/media/staged.jpg"
 	adapter := &PinterestAdapter{
 		client: srv.Client(),
-		stageFromURL: func(_ context.Context, sourceURL string) (string, error) {
-			if !looksEphemeralFetchURL(sourceURL) {
-				t.Fatalf("expected temporary file host URL to be staged, got %q", sourceURL)
-			}
-			return staged, nil
-		},
+		mediaStager: &fakePinterestMediaStager{result: storage.ExternalMediaResult{
+			PublicURL: staged, MediaType: "image/jpeg", SizeBytes: 10,
+		}},
 	}
 
 	_, err := adapter.Post(context.Background(), "token-123", "caption", []MediaItem{{
@@ -321,11 +345,143 @@ func TestPinterestPostStagesKnownTemporaryFileHosts(t *testing.T) {
 	}
 }
 
-func TestLooksEphemeralFetchURL(t *testing.T) {
-	if !looksEphemeralFetchURL("https://example.com/a.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc") {
-		t.Fatal("expected aws-signed URL to be detected as ephemeral")
+func TestPinterestProviderFailureNormalizesKnownResponses(t *testing.T) {
+	tests := []struct {
+		name          string
+		operation     string
+		status        int
+		body          string
+		stage         string
+		wantMessage   string
+		wantErrorCode string
+		wantCode      string
+		wantReason    string
+		wantTransient bool
+		wantRetriable bool
+	}{
+		{
+			name: "invalid token", operation: "user account", status: 401,
+			body: `{"code":2,"message":"Authentication failed."}`, stage: "destination_preflight",
+			wantMessage:   "Pinterest rejected this connection. Reconnect the account, then try again.",
+			wantErrorCode: "auth_token_invalid", wantCode: "2", wantReason: "token_invalid",
+		},
+		{
+			name: "board inaccessible", operation: "board preflight", status: 403,
+			body: `{"code":29,"message":"You are not permitted to access that resource."}`, stage: "destination_preflight",
+			wantMessage:   "The selected Pinterest board is unavailable for this connected account.",
+			wantErrorCode: "target_not_found", wantCode: "29", wantReason: "board_not_accessible",
+		},
+		{
+			name: "board missing", operation: "board preflight", status: 404,
+			body: `{"code":40,"message":"Board not found."}`, stage: "destination_preflight",
+			wantMessage:   "The selected Pinterest board is unavailable for this connected account.",
+			wantErrorCode: "target_not_found", wantCode: "40", wantReason: "board_not_found",
+		},
+		{
+			name: "rate limit", operation: "board preflight", status: 429,
+			body: `{"code":8,"message":"Rate limit."}`, stage: "destination_preflight",
+			wantMessage:   "Pinterest is rate limiting this request. Try again later.",
+			wantErrorCode: "rate_limit", wantCode: "8", wantReason: "rate_limited",
+			wantTransient: true, wantRetriable: true,
+		},
+		{
+			name: "provider temporary", operation: "board preflight", status: 503,
+			body: `{"code":1,"message":"database host db.internal unavailable; token=secret"}`, stage: "destination_preflight",
+			wantMessage:   "Pinterest is temporarily unavailable. Try again later.",
+			wantErrorCode: "temporary_platform_error", wantCode: "1", wantReason: "provider_temporary_failure",
+			wantTransient: true, wantRetriable: true,
+		},
 	}
-	if looksEphemeralFetchURL("https://cdn.example.com/a.jpg") {
-		t.Fatal("expected plain public URL to not be treated as ephemeral")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := pinterestProviderFailure(tt.operation, tt.status, []byte(tt.body), tt.stage)
+			if err.Error() != tt.wantMessage {
+				t.Fatalf("message = %q, want %q", err.Error(), tt.wantMessage)
+			}
+			if strings.Contains(err.Error(), "db.internal") || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("public error leaked provider body: %q", err)
+			}
+
+			providerCarrier, ok := err.(interface{ ProviderErrorFields() map[string]any })
+			if !ok {
+				t.Fatalf("error does not carry provider fields: %T", err)
+			}
+			provider := providerCarrier.ProviderErrorFields()
+			if provider["provider"] != "pinterest" || provider["http_status"] != tt.status || provider["code"] != tt.wantCode || provider["reason"] != tt.wantReason || provider["is_transient"] != tt.wantTransient {
+				t.Fatalf("provider fields = %#v", provider)
+			}
+
+			failureCarrier, ok := err.(interface{ FailureContractFields() map[string]any })
+			if !ok {
+				t.Fatalf("error does not carry failure fields: %T", err)
+			}
+			failure := failureCarrier.FailureContractFields()
+			if failure["error_code"] != tt.wantErrorCode || failure["failure_stage"] != tt.stage || failure["is_retriable"] != tt.wantRetriable {
+				t.Fatalf("failure fields = %#v", failure)
+			}
+		})
+	}
+}
+
+func TestPinterestTransportFailureIsTemporaryAndSanitized(t *testing.T) {
+	err := pinterestTransportFailure("board preflight", context.DeadlineExceeded, "destination_preflight")
+	if err.Error() != "Pinterest is temporarily unavailable. Try again later." {
+		t.Fatalf("message = %q", err.Error())
+	}
+	if strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		t.Fatalf("public error leaked transport detail: %q", err)
+	}
+	provider := err.(interface{ ProviderErrorFields() map[string]any }).ProviderErrorFields()
+	if provider["provider"] != "pinterest" || provider["reason"] != "provider_temporary_failure" || provider["is_transient"] != true {
+		t.Fatalf("provider fields = %#v", provider)
+	}
+	failure := err.(interface{ FailureContractFields() map[string]any }).FailureContractFields()
+	if failure["error_code"] != "temporary_platform_error" || failure["failure_stage"] != "destination_preflight" || failure["is_retriable"] != true {
+		t.Fatalf("failure fields = %#v", failure)
+	}
+}
+
+func TestProviderOnlyErrorDoesNotClaimFailureContract(t *testing.T) {
+	err := newProviderError("provider temporary failure", map[string]any{
+		"provider": "example",
+	})
+	if _, ok := err.(interface{ FailureContractFields() map[string]any }); ok {
+		t.Fatalf("legacy provider-only error unexpectedly implements failure contract: %T", err)
+	}
+}
+
+func TestPinterestPostRejectsStoredEnvironmentMismatchBeforeProviderCall(t *testing.T) {
+	providerCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls++
+		http.Error(w, "must not be called", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+	adapter := &PinterestAdapter{client: srv.Client()}
+	ctx := WithDispatchMetadata(context.Background(), DispatchMetadata{
+		SocialAccountID: "sa_pin_1",
+		Environment:     "sandbox",
+	})
+
+	_, err := adapter.Post(ctx, "token", "caption", []MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage}}, map[string]any{
+		"board_id": "1131529543818288706",
+	})
+	if err == nil {
+		t.Fatal("expected environment mismatch")
+	}
+	if providerCalls != 0 {
+		t.Fatalf("provider calls = %d, want 0", providerCalls)
+	}
+	failure := err.(interface{ FailureContractFields() map[string]any }).FailureContractFields()
+	if failure["error_code"] != "target_not_found" || failure["failure_stage"] != "destination_preflight" || failure["is_retriable"] != false {
+		t.Fatalf("failure fields = %#v", failure)
+	}
+	provider := err.(interface{ ProviderErrorFields() map[string]any }).ProviderErrorFields()
+	if provider["reason"] != "board_environment_mismatch" {
+		t.Fatalf("provider fields = %#v", provider)
 	}
 }

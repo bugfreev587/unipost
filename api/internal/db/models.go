@@ -97,6 +97,218 @@ type ApiMetric struct {
 	ApiKeyID    pgtype.Text        `json:"api_key_id"`
 }
 
+type ApiRequestErrorDetail struct {
+	OccurredAt             pgtype.Timestamptz `json:"occurred_at"`
+	EventID                string             `json:"event_id"`
+	WorkspaceID            string             `json:"workspace_id"`
+	RequestHeaders         []byte             `json:"request_headers"`
+	ResponseHeaders        []byte             `json:"response_headers"`
+	QueryKeys              []string           `json:"query_keys"`
+	RequestPayload         pgtype.Text        `json:"request_payload"`
+	ResponsePayload        pgtype.Text        `json:"response_payload"`
+	RequestOriginalBytes   int64              `json:"request_original_bytes"`
+	RequestStoredBytes     int32              `json:"request_stored_bytes"`
+	ResponseOriginalBytes  int64              `json:"response_original_bytes"`
+	ResponseStoredBytes    int32              `json:"response_stored_bytes"`
+	RequestContentType     pgtype.Text        `json:"request_content_type"`
+	ResponseContentType    pgtype.Text        `json:"response_content_type"`
+	RequestSha256          pgtype.Text        `json:"request_sha256"`
+	ResponseSha256         pgtype.Text        `json:"response_sha256"`
+	RequestTruncated       bool               `json:"request_truncated"`
+	ResponseTruncated      bool               `json:"response_truncated"`
+	RequestOmissionReason  pgtype.Text        `json:"request_omission_reason"`
+	ResponseOmissionReason pgtype.Text        `json:"response_omission_reason"`
+	RedactionPolicyVersion int32              `json:"redaction_policy_version"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+type ApiRequestErrorDetails2026w31 struct {
+	OccurredAt             pgtype.Timestamptz `json:"occurred_at"`
+	EventID                string             `json:"event_id"`
+	WorkspaceID            string             `json:"workspace_id"`
+	RequestHeaders         []byte             `json:"request_headers"`
+	ResponseHeaders        []byte             `json:"response_headers"`
+	QueryKeys              []string           `json:"query_keys"`
+	RequestPayload         pgtype.Text        `json:"request_payload"`
+	ResponsePayload        pgtype.Text        `json:"response_payload"`
+	RequestOriginalBytes   int64              `json:"request_original_bytes"`
+	RequestStoredBytes     int32              `json:"request_stored_bytes"`
+	ResponseOriginalBytes  int64              `json:"response_original_bytes"`
+	ResponseStoredBytes    int32              `json:"response_stored_bytes"`
+	RequestContentType     pgtype.Text        `json:"request_content_type"`
+	ResponseContentType    pgtype.Text        `json:"response_content_type"`
+	RequestSha256          pgtype.Text        `json:"request_sha256"`
+	ResponseSha256         pgtype.Text        `json:"response_sha256"`
+	RequestTruncated       bool               `json:"request_truncated"`
+	ResponseTruncated      bool               `json:"response_truncated"`
+	RequestOmissionReason  pgtype.Text        `json:"request_omission_reason"`
+	ResponseOmissionReason pgtype.Text        `json:"response_omission_reason"`
+	RedactionPolicyVersion int32              `json:"redaction_policy_version"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+type ApiRequestErrorDetails2026w32 struct {
+	OccurredAt             pgtype.Timestamptz `json:"occurred_at"`
+	EventID                string             `json:"event_id"`
+	WorkspaceID            string             `json:"workspace_id"`
+	RequestHeaders         []byte             `json:"request_headers"`
+	ResponseHeaders        []byte             `json:"response_headers"`
+	QueryKeys              []string           `json:"query_keys"`
+	RequestPayload         pgtype.Text        `json:"request_payload"`
+	ResponsePayload        pgtype.Text        `json:"response_payload"`
+	RequestOriginalBytes   int64              `json:"request_original_bytes"`
+	RequestStoredBytes     int32              `json:"request_stored_bytes"`
+	ResponseOriginalBytes  int64              `json:"response_original_bytes"`
+	ResponseStoredBytes    int32              `json:"response_stored_bytes"`
+	RequestContentType     pgtype.Text        `json:"request_content_type"`
+	ResponseContentType    pgtype.Text        `json:"response_content_type"`
+	RequestSha256          pgtype.Text        `json:"request_sha256"`
+	ResponseSha256         pgtype.Text        `json:"response_sha256"`
+	RequestTruncated       bool               `json:"request_truncated"`
+	ResponseTruncated      bool               `json:"response_truncated"`
+	RequestOmissionReason  pgtype.Text        `json:"request_omission_reason"`
+	ResponseOmissionReason pgtype.Text        `json:"response_omission_reason"`
+	RedactionPolicyVersion int32              `json:"redaction_policy_version"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+type ApiRequestErrorDetailsDefault struct {
+	OccurredAt             pgtype.Timestamptz `json:"occurred_at"`
+	EventID                string             `json:"event_id"`
+	WorkspaceID            string             `json:"workspace_id"`
+	RequestHeaders         []byte             `json:"request_headers"`
+	ResponseHeaders        []byte             `json:"response_headers"`
+	QueryKeys              []string           `json:"query_keys"`
+	RequestPayload         pgtype.Text        `json:"request_payload"`
+	ResponsePayload        pgtype.Text        `json:"response_payload"`
+	RequestOriginalBytes   int64              `json:"request_original_bytes"`
+	RequestStoredBytes     int32              `json:"request_stored_bytes"`
+	ResponseOriginalBytes  int64              `json:"response_original_bytes"`
+	ResponseStoredBytes    int32              `json:"response_stored_bytes"`
+	RequestContentType     pgtype.Text        `json:"request_content_type"`
+	ResponseContentType    pgtype.Text        `json:"response_content_type"`
+	RequestSha256          pgtype.Text        `json:"request_sha256"`
+	ResponseSha256         pgtype.Text        `json:"response_sha256"`
+	RequestTruncated       bool               `json:"request_truncated"`
+	ResponseTruncated      bool               `json:"response_truncated"`
+	RequestOmissionReason  pgtype.Text        `json:"request_omission_reason"`
+	ResponseOmissionReason pgtype.Text        `json:"response_omission_reason"`
+	RedactionPolicyVersion int32              `json:"redaction_policy_version"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+type ApiRequestEvent struct {
+	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
+	ID              string             `json:"id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	ApiKeyID        string             `json:"api_key_id"`
+	RequestID       pgtype.Text        `json:"request_id"`
+	TraceID         pgtype.Text        `json:"trace_id"`
+	Method          string             `json:"method"`
+	RoutePattern    string             `json:"route_pattern"`
+	StatusCode      int32              `json:"status_code"`
+	DurationMs      int32              `json:"duration_ms"`
+	Outcome         string             `json:"outcome"`
+	ErrorCode       pgtype.Text        `json:"error_code"`
+	ProfileID       pgtype.Text        `json:"profile_id"`
+	SocialAccountID pgtype.Text        `json:"social_account_id"`
+	PostID          pgtype.Text        `json:"post_id"`
+	HasErrorDetail  bool               `json:"has_error_detail"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type ApiRequestEvents2026w31 struct {
+	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
+	ID              string             `json:"id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	ApiKeyID        string             `json:"api_key_id"`
+	RequestID       pgtype.Text        `json:"request_id"`
+	TraceID         pgtype.Text        `json:"trace_id"`
+	Method          string             `json:"method"`
+	RoutePattern    string             `json:"route_pattern"`
+	StatusCode      int32              `json:"status_code"`
+	DurationMs      int32              `json:"duration_ms"`
+	Outcome         string             `json:"outcome"`
+	ErrorCode       pgtype.Text        `json:"error_code"`
+	ProfileID       pgtype.Text        `json:"profile_id"`
+	SocialAccountID pgtype.Text        `json:"social_account_id"`
+	PostID          pgtype.Text        `json:"post_id"`
+	HasErrorDetail  bool               `json:"has_error_detail"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type ApiRequestEvents2026w32 struct {
+	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
+	ID              string             `json:"id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	ApiKeyID        string             `json:"api_key_id"`
+	RequestID       pgtype.Text        `json:"request_id"`
+	TraceID         pgtype.Text        `json:"trace_id"`
+	Method          string             `json:"method"`
+	RoutePattern    string             `json:"route_pattern"`
+	StatusCode      int32              `json:"status_code"`
+	DurationMs      int32              `json:"duration_ms"`
+	Outcome         string             `json:"outcome"`
+	ErrorCode       pgtype.Text        `json:"error_code"`
+	ProfileID       pgtype.Text        `json:"profile_id"`
+	SocialAccountID pgtype.Text        `json:"social_account_id"`
+	PostID          pgtype.Text        `json:"post_id"`
+	HasErrorDetail  bool               `json:"has_error_detail"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type ApiRequestEventsDefault struct {
+	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
+	ID              string             `json:"id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	ApiKeyID        string             `json:"api_key_id"`
+	RequestID       pgtype.Text        `json:"request_id"`
+	TraceID         pgtype.Text        `json:"trace_id"`
+	Method          string             `json:"method"`
+	RoutePattern    string             `json:"route_pattern"`
+	StatusCode      int32              `json:"status_code"`
+	DurationMs      int32              `json:"duration_ms"`
+	Outcome         string             `json:"outcome"`
+	ErrorCode       pgtype.Text        `json:"error_code"`
+	ProfileID       pgtype.Text        `json:"profile_id"`
+	SocialAccountID pgtype.Text        `json:"social_account_id"`
+	PostID          pgtype.Text        `json:"post_id"`
+	HasErrorDetail  bool               `json:"has_error_detail"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type ApiRequestMetricRollupHour struct {
+	HourBucket  pgtype.Timestamptz `json:"hour_bucket"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+}
+
+type ApiRequestMetricRollupsHourly struct {
+	HourBucket           pgtype.Timestamptz `json:"hour_bucket"`
+	WorkspaceID          string             `json:"workspace_id"`
+	RoutePattern         string             `json:"route_pattern"`
+	Method               string             `json:"method"`
+	StatusCode           int32              `json:"status_code"`
+	RequestCount         int64              `json:"request_count"`
+	ErrorCount           int64              `json:"error_count"`
+	ServerErrorCount     int64              `json:"server_error_count"`
+	ValidationErrorCount int64              `json:"validation_error_count"`
+	RateLimitCount       int64              `json:"rate_limit_count"`
+	DurationSumMs        int64              `json:"duration_sum_ms"`
+	DurationMinMs        int32              `json:"duration_min_ms"`
+	DurationMaxMs        int32              `json:"duration_max_ms"`
+	DurationHistogram    []int64            `json:"duration_histogram"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ApiRequestPartitionManifest struct {
+	WeekStart       pgtype.Timestamptz `json:"week_start"`
+	WeekEnd         pgtype.Timestamptz `json:"week_end"`
+	EventPartition  string             `json:"event_partition"`
+	DetailPartition string             `json:"detail_partition"`
+	State           string             `json:"state"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type AuditLog struct {
 	ID            int64              `json:"id"`
 	WorkspaceID   string             `json:"workspace_id"`
@@ -811,6 +1023,18 @@ type PostFailure struct {
 	RestrictionCycleID pgtype.Text        `json:"restriction_cycle_id"`
 }
 
+type PostFailureDebugDetail struct {
+	SocialPostResultID string             `json:"social_post_result_id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	DebugText          string             `json:"debug_text"`
+	OriginalBytes      int64              `json:"original_bytes"`
+	StoredBytes        int32              `json:"stored_bytes"`
+	Truncated          bool               `json:"truncated"`
+	RedactionVersion   int32              `json:"redaction_version"`
+	CapturedAt         pgtype.Timestamptz `json:"captured_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Profile struct {
 	ID                     string             `json:"id"`
 	Name                   string             `json:"name"`
@@ -822,6 +1046,29 @@ type Profile struct {
 	WorkspaceID            string             `json:"workspace_id"`
 	BrandingHidePoweredBy  bool               `json:"branding_hide_powered_by"`
 	BrandingLogoStorageKey pgtype.Text        `json:"branding_logo_storage_key"`
+}
+
+type PublishingPullObject struct {
+	ObjectKey    string             `json:"object_key"`
+	ContentType  string             `json:"content_type"`
+	SizeBytes    int64              `json:"size_bytes"`
+	CleanupState string             `json:"cleanup_state"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PublishingPullObjectUsage struct {
+	ID                   string             `json:"id"`
+	ObjectKey            string             `json:"object_key"`
+	WorkspaceID          string             `json:"workspace_id"`
+	PostID               string             `json:"post_id"`
+	PostStatus           string             `json:"post_status"`
+	CleanupAfterAt       pgtype.Timestamptz `json:"cleanup_after_at"`
+	RetentionReason      string             `json:"retention_reason"`
+	UploadState          string             `json:"upload_state"`
+	UploadLeaseExpiresAt pgtype.Timestamptz `json:"upload_lease_expires_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ReviewAgentToken struct {
@@ -1314,6 +1561,14 @@ type XInboxBackfillExposureReservation struct {
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	AccountingEnabled      bool               `json:"accounting_enabled"`
+	Purpose                string             `json:"purpose"`
+	ExternalUserID         pgtype.Text        `json:"external_user_id"`
+	SafetyPolicy           string             `json:"safety_policy"`
+	UnitsPerResource       int64              `json:"units_per_resource"`
+	CatalogVersion         string             `json:"catalog_version"`
+	AppMode                string             `json:"app_mode"`
+	BypassReason           pgtype.Text        `json:"bypass_reason"`
+	FinalizedAt            pgtype.Timestamptz `json:"finalized_at"`
 }
 
 type XInboxDeliveryCleanupIntent struct {
@@ -1373,6 +1628,61 @@ type XInboxOutboundRequest struct {
 	CompletionAttempts     int32              `json:"completion_attempts"`
 	NextAttemptAt          pgtype.Timestamptz `json:"next_attempt_at"`
 	LastError              pgtype.Text        `json:"last_error"`
+}
+
+type XReadExposure struct {
+	ID                     string             `json:"id"`
+	WorkspaceID            string             `json:"workspace_id"`
+	SocialAccountID        string             `json:"social_account_id"`
+	OperationKey           string             `json:"operation_key"`
+	IdempotencyKey         string             `json:"idempotency_key"`
+	RequestedResources     int32              `json:"requested_resources"`
+	ReservedUnits          int64              `json:"reserved_units"`
+	ActualUnits            pgtype.Int8        `json:"actual_units"`
+	PeriodStart            pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd              pgtype.Timestamptz `json:"period_end"`
+	UtcDate                pgtype.Date        `json:"utc_date"`
+	Status                 string             `json:"status"`
+	ReconciliationDeadline pgtype.Timestamptz `json:"reconciliation_deadline"`
+	ReconciliationAttempts int32              `json:"reconciliation_attempts"`
+	NextAttemptAt          pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError              pgtype.Text        `json:"last_error"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	AccountingEnabled      bool               `json:"accounting_enabled"`
+	Purpose                string             `json:"purpose"`
+	ExternalUserID         pgtype.Text        `json:"external_user_id"`
+	SafetyPolicy           string             `json:"safety_policy"`
+	UnitsPerResource       int64              `json:"units_per_resource"`
+	CatalogVersion         string             `json:"catalog_version"`
+	AppMode                string             `json:"app_mode"`
+	BypassReason           pgtype.Text        `json:"bypass_reason"`
+	FinalizedAt            pgtype.Timestamptz `json:"finalized_at"`
+}
+
+type XReadReceipt struct {
+	OperationID             string             `json:"operation_id"`
+	WorkspaceID             string             `json:"workspace_id"`
+	SocialAccountID         string             `json:"social_account_id"`
+	ExternalUserID          string             `json:"external_user_id"`
+	ExposureID              string             `json:"exposure_id"`
+	Endpoint                string             `json:"endpoint"`
+	IdempotencyKeyHash      string             `json:"idempotency_key_hash"`
+	RequestFingerprint      string             `json:"request_fingerprint"`
+	EncryptedRequest        []byte             `json:"encrypted_request"`
+	RequestedResources      int32              `json:"requested_resources"`
+	OperationKey            string             `json:"operation_key"`
+	Status                  string             `json:"status"`
+	ResponseJson            []byte             `json:"response_json"`
+	FailureClass            pgtype.Text        `json:"failure_class"`
+	ExecutionOwner          pgtype.Text        `json:"execution_owner"`
+	ExecutionLeaseExpiresAt pgtype.Timestamptz `json:"execution_lease_expires_at"`
+	AttemptCount            int32              `json:"attempt_count"`
+	NextAttemptAt           pgtype.Timestamptz `json:"next_attempt_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	ExpiresAt               pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
 type XUsageEvent struct {
