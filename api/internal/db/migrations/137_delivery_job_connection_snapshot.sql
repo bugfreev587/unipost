@@ -85,6 +85,40 @@ BEFORE INSERT ON post_delivery_jobs
 FOR EACH ROW
 EXECUTE FUNCTION reserve_post_delivery_job_physical_target();
 
+-- The rollout phase is a cross-version claim gate. Returning NULL keeps old
+-- claimers compatible while preventing a pending job from acquiring a new
+-- provider-I/O lease during drain. Existing leases may renew and finalize.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION guard_post_delivery_job_claim_during_social_connection_cutover()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  rollout_phase TEXT;
+BEGIN
+  SELECT phase INTO STRICT rollout_phase
+  FROM social_connection_rollout_state
+  WHERE id = 'global';
+
+  IF rollout_phase IN ('draining', 'cutting_over')
+     AND NEW.state IN ('running', 'retrying')
+     AND (
+       OLD.state = 'pending'
+       OR OLD.lease_owner IS DISTINCT FROM NEW.lease_owner
+     ) THEN
+    RETURN NULL;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER post_delivery_jobs_cutover_claim_guard
+BEFORE UPDATE ON post_delivery_jobs
+FOR EACH ROW
+EXECUTE FUNCTION guard_post_delivery_job_claim_during_social_connection_cutover();
+
 -- Reserve the complete logical Post target set in one statement. Any sibling
 -- conflict raises and rolls back every reservation made by this call.
 -- +goose StatementBegin
@@ -158,6 +192,8 @@ CREATE INDEX post_delivery_jobs_physical_connection_active_idx
   WHERE state IN ('pending', 'running', 'retrying');
 
 -- +goose Down
+DROP TRIGGER IF EXISTS post_delivery_jobs_cutover_claim_guard ON post_delivery_jobs;
+DROP FUNCTION IF EXISTS guard_post_delivery_job_claim_during_social_connection_cutover();
 DROP TRIGGER IF EXISTS post_delivery_jobs_reserve_physical_target ON post_delivery_jobs;
 DROP FUNCTION IF EXISTS reserve_post_delivery_job_physical_target();
 DROP FUNCTION IF EXISTS reserve_social_post_physical_targets(TEXT, TEXT[], TEXT[]);

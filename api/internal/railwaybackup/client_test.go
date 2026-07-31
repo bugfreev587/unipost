@@ -397,3 +397,48 @@ func TestNewClientUsesFixedRailwayPublicAPIEndpoint(t *testing.T) {
 		t.Fatalf("endpoint = %q", client.endpoint)
 	}
 }
+
+func TestClientListsActiveDeploymentsForExactEnvironment(t *testing.T) {
+	server := newGraphQLServer(t, func(_ *http.Request, request graphQLRequest) (int, any) {
+		if !strings.Contains(request.Query, "deployments(input:") || !strings.Contains(request.Query, "serviceId") || !strings.Contains(request.Query, "meta") {
+			t.Fatalf("deployment query = %q", request.Query)
+		}
+		input, ok := request.Variables["input"].(map[string]any)
+		if !ok || input["projectId"] != "project-1" || input["environmentId"] != "environment-1" {
+			t.Fatalf("deployment input = %#v", request.Variables["input"])
+		}
+		return http.StatusOK, map[string]any{"data": map[string]any{
+			"deployments": map[string]any{"edges": []any{
+				map[string]any{"node": map[string]any{
+					"id": "deployment-new", "serviceId": "api-service", "status": "SUCCESS",
+					"meta": map[string]any{"commitHash": "0123456789abcdef0123456789abcdef01234567"},
+				}},
+				map[string]any{"node": map[string]any{
+					"id": "deployment-building", "serviceId": "worker-service", "status": "BUILDING",
+					"meta": map[string]any{"commitSha": "0123456789abcdef0123456789abcdef01234567"},
+				}},
+				map[string]any{"node": map[string]any{
+					"id": "deployment-old", "serviceId": "api-service", "status": "REMOVED",
+					"meta": map[string]any{"commitHash": "old"},
+				}},
+			}},
+		}}
+	})
+	defer server.Close()
+
+	client := newTestClient(server.URL, "token", server.Client())
+	deployments, err := client.ActiveDeployments(context.Background(), DeploymentInventoryRequest{
+		ProjectID: "project-1", EnvironmentID: "environment-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployments) != 2 || deployments[0].ID != "deployment-building" || deployments[1].ID != "deployment-new" {
+		t.Fatalf("active deployments = %+v", deployments)
+	}
+	for _, deployment := range deployments {
+		if deployment.CommitSHA != "0123456789abcdef0123456789abcdef01234567" {
+			t.Fatalf("deployment commit = %+v", deployment)
+		}
+	}
+}

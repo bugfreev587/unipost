@@ -204,6 +204,17 @@ func main() {
 		slog.Error("unable to parse database config", "error", err)
 		os.Exit(1)
 	}
+	applicationName, err := databaseApplicationName(
+		processMode,
+		os.Getenv("RAILWAY_SERVICE_ID"),
+		os.Getenv("RAILWAY_DEPLOYMENT_ID"),
+		os.Getenv("RAILWAY_GIT_COMMIT_SHA"),
+	)
+	if err != nil {
+		slog.Error("invalid database application identity", "error", err)
+		os.Exit(1)
+	}
+	poolConfig.ConnConfig.RuntimeParams["application_name"] = applicationName
 	poolConfig.MaxConns = dbPoolMaxConnsForMode(processMode, deliveryWorkerConfig)
 	slog.Info("database pool configured", "process_mode", processMode, "max_conns", poolConfig.MaxConns)
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
@@ -1616,6 +1627,21 @@ func normalizeProcessMode(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("UNIPOST_PROCESS must be %q, %q, or %q, got %q", processModeAPI, processModePostDeliveryWorker, processModeMediaWorker, raw)
 	}
+}
+
+func databaseApplicationName(processMode, serviceID, deploymentID, commitSHA string) (string, error) {
+	parts := []string{processMode, serviceID, deploymentID, commitSHA}
+	for index, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			part = "local"
+		}
+		if strings.ContainsAny(part, ":\n\r\t") {
+			return "", fmt.Errorf("database application identity part %d contains a reserved separator", index)
+		}
+		parts[index] = part
+	}
+	return "unipost:" + strings.Join(parts, ":"), nil
 }
 
 func positiveInt64Env(name string) int64 {

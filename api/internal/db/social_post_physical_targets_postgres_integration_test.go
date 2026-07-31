@@ -134,4 +134,53 @@ func TestPhysicalTargetAllowsThreadAndRejectsSibling(t *testing.T) {
 	if targetCount != 0 {
 		t.Fatalf("failed batch left %d physical targets, want zero", targetCount)
 	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE social_connection_rollout_state SET phase = 'draining' WHERE id = 'global'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := tx.ExecContext(ctx, `
+		UPDATE post_delivery_jobs
+		SET state = 'running', lease_owner = 'old-worker', lease_expires_at = NOW() + INTERVAL '1 minute'
+		WHERE id = 'target-job-a-1'
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := claim.RowsAffected(); err != nil || rows != 0 {
+		t.Fatalf("draining claim affected (%d, %v), want (0, nil)", rows, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE social_connection_rollout_state SET phase = 'expand' WHERE id = 'global'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	claim, err = tx.ExecContext(ctx, `
+		UPDATE post_delivery_jobs
+		SET state = 'running', lease_owner = 'new-worker', lease_expires_at = NOW() + INTERVAL '1 minute'
+		WHERE id = 'target-job-a-1'
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := claim.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("expanded claim affected (%d, %v), want (1, nil)", rows, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE social_connection_rollout_state SET phase = 'draining' WHERE id = 'global'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	finalize, err := tx.ExecContext(ctx, `
+		UPDATE post_delivery_jobs
+		SET state = 'succeeded', finished_at = NOW()
+		WHERE id = 'target-job-a-1' AND lease_owner = 'new-worker'
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := finalize.RowsAffected(); err != nil || rows != 1 {
+		t.Fatalf("draining finalization affected (%d, %v), want (1, nil)", rows, err)
+	}
 }

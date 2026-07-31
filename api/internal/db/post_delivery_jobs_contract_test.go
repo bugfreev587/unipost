@@ -194,6 +194,26 @@ func TestPostPhysicalTargetBatchReservationContract(t *testing.T) {
 	}
 }
 
+func TestPostDeliveryDrainBlocksOnlyNewClaims(t *testing.T) {
+	source, err := os.ReadFile("migrations/137_delivery_job_connection_snapshot.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"guard_post_delivery_job_claim_during_social_connection_cutover",
+		"rollout_phase IN ('draining', 'cutting_over')",
+		"OLD.state = 'pending'",
+		"OLD.lease_owner IS DISTINCT FROM NEW.lease_owner",
+		"RETURN NULL",
+		"BEFORE UPDATE ON post_delivery_jobs",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("delivery drain migration missing %q", want)
+		}
+	}
+}
+
 func TestPostDeliveryJobPhysicalConnectionClaimContract(t *testing.T) {
 	source, err := os.ReadFile("post_delivery_jobs.sql.go")
 	if err != nil {
