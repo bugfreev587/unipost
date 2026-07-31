@@ -663,4 +663,12 @@ func TestCIRequiresMigrationGatePostgresIntegration(t *testing.T) {
 	if strings.Contains(workflow, "TestRequireCurrentSchemaRejects124AndAccepts135") {
 		t.Fatal("required PostgreSQL CI selector still names the pre-migration-136 schema test")
 	}
+
+	integrationTestBody, err := os.ReadFile("migration_gate_postgres_integration_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(integrationTestBody), "want version=135") {
+		t.Fatal("migration gate PostgreSQL diagnostics still name the pre-migration-136 schema version")
+	}
 }

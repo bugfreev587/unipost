@@ -433,7 +433,7 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	}
 	if version != 136 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"version=%d retryable=%v owner_user_ids=%v, want version=135 retryable=false canonical owner backfill",
+			"version=%d retryable=%v owner_user_ids=%v, want version=136 retryable=false canonical owner backfill",
 			version, retryable, ownerUserIDs,
 		)
 	}
@@ -803,7 +803,7 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	}
 	if version != 136 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=135 retention_reason=active_post retryable=false canonical owner backfill",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=136 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
 			retentionReason,
 			retryable,
