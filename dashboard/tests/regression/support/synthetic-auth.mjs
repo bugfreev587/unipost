@@ -141,15 +141,16 @@ export async function signInSyntheticUser(page, config, identity, dependencies =
   });
 }
 
-async function establishPreviewBypassCookie(page, config) {
+export async function establishPreviewBypassCookie(page, config) {
   if (!config.vercelBypassSecret) return;
   const response = await page.request.get(`${config.baseURL}/pricing`, {
     headers: {
       "x-vercel-protection-bypass": config.vercelBypassSecret,
       "x-vercel-set-bypass-cookie": "true",
     },
+    maxRedirects: 0,
   });
-  if (!response.ok()) {
+  if (!response.ok() && ![307, 308].includes(response.status())) {
     throw new Error(`Could not establish Vercel Preview access (${response.status()})`);
   }
 }
