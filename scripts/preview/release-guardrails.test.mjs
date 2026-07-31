@@ -8,7 +8,7 @@ const requireFromDashboard = createRequire(new URL("../../dashboard/package.json
 const { load: parseYaml } = requireFromDashboard("js-yaml");
 
 const publishingRestrictionScript =
-  "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts";
+  "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/posts-calendar-create-hydration-source.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts";
 const postgresTestsByPackage = {
   "./internal/db": [
     "TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup",
