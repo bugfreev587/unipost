@@ -26,6 +26,8 @@ Legend:
 | `POST /v1/accounts/connect` | Yes | Yes | Yes | Yes | Yes, negative path |
 | `DELETE /v1/accounts/{id}` | Yes | Yes | Yes | Yes | No direct live delete |
 | `GET /v1/accounts/{id}/capabilities` | Yes | Yes | Yes | Yes | Yes |
+| `GET /v1/accounts/{id}/profile` | No | No | No | No | No; new raw OpenAPI route |
+| `GET /v1/accounts/{id}/posts` | No | No | No | No | No; new raw OpenAPI route |
 | `GET /v1/accounts/{id}/health` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/accounts/{id}/metrics` | Yes | Yes | Yes | Yes | No direct live fixture |
 | `GET /v1/accounts/{id}/tiktok/creator-info` | Yes | Yes | Yes | Yes | Conditional |
@@ -79,6 +81,8 @@ Legend:
 | `POST /v1/webhooks/{id}/rotate` | Yes | Yes | Yes | Yes | Yes |
 | `POST /v1/oauth/connect` | Yes | Yes | Yes | Yes | Yes, accepts current backend behavior |
 | `GET /v1/usage` | Yes | Yes | Yes | Yes | Yes |
+| `GET /v1/billing/x-credits` | No | No | No | No | No; feature-gated |
+| `GET /v1/billing/x-credits/events` | No | No | No | No | No; feature-gated |
 
 ## SDK-only helpers
 

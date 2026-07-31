@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,12 +105,13 @@ func isStripeResourceMissing(err error) bool {
 }
 
 type BillingHandler struct {
-	queries      billingQueries
-	quota        *quota.Checker
-	stripe       *billing.Manager
-	xCredits     xCreditsSnapshotService
-	xInboundCap  xCreditsInboundCapService
-	featureFlags interface {
+	queries       billingQueries
+	quota         *quota.Checker
+	stripe        *billing.Manager
+	xCredits      xCreditsSnapshotService
+	xCreditEvents xCreditsEventService
+	xInboundCap   xCreditsInboundCapService
+	featureFlags  interface {
 		ForWorkspace(context.Context, string, string) (bool, error)
 	}
 	trialCheckout billingTrialCheckoutService
@@ -145,6 +147,10 @@ type xCreditsSnapshotService interface {
 	Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error)
 }
 
+type xCreditsEventService interface {
+	ListEvents(context.Context, xcredits.ListEventsRequest) (xcredits.EventPage, error)
+}
+
 type xCreditsInboundCapService interface {
 	UpdateInboundCap(context.Context, xcredits.UpdateInboundCapRequest) (xcredits.InboundCapSetting, error)
 }
@@ -155,6 +161,9 @@ func NewBillingHandler(queries billingQueries, quotaChecker *quota.Checker, stri
 
 func (h *BillingHandler) SetXCreditsService(service xCreditsSnapshotService) *BillingHandler {
 	h.xCredits = service
+	if events, ok := service.(xCreditsEventService); ok {
+		h.xCreditEvents = events
+	}
 	if inboundCap, ok := service.(xCreditsInboundCapService); ok {
 		h.xInboundCap = inboundCap
 	}
@@ -819,6 +828,9 @@ type xCreditsAllowanceResponse struct {
 	PlanID              string    `json:"plan_id"`
 	MonthlyAllowance    *int64    `json:"monthly_allowance"`
 	MonthlyUsed         int64     `json:"monthly_used"`
+	MonthlyFinalized    int64     `json:"monthly_finalized"`
+	MonthlyPending      int64     `json:"monthly_pending"`
+	MonthlyEffective    int64     `json:"monthly_effective"`
 	MonthlyRemaining    *int64    `json:"monthly_remaining"`
 	BillingPeriodStart  time.Time `json:"billing_period_start"`
 	BillingPeriodEnd    time.Time `json:"billing_period_end"`
@@ -860,6 +872,9 @@ func (h *BillingHandler) GetXCredits(w http.ResponseWriter, r *http.Request) {
 		PlanID:              snapshot.PlanID,
 		MonthlyAllowance:    snapshot.MonthlyAllowance,
 		MonthlyUsed:         snapshot.MonthlyUsed,
+		MonthlyFinalized:    snapshot.MonthlyFinalized,
+		MonthlyPending:      snapshot.MonthlyPending,
+		MonthlyEffective:    snapshot.MonthlyEffective,
 		MonthlyRemaining:    snapshot.MonthlyRemaining,
 		BillingPeriodStart:  snapshot.PeriodStart,
 		BillingPeriodEnd:    snapshot.PeriodEnd,
@@ -874,6 +889,74 @@ func (h *BillingHandler) GetXCredits(w http.ResponseWriter, r *http.Request) {
 		InboundPauseReason:  snapshot.InboundPauseReason,
 		ConnectionModeNote:  "Activity through the UniPost-managed X app consumes this allowance. Workspace X app activity does not consume UniPost X Credits.",
 	})
+}
+
+// ListXCreditsEvents handles GET /v1/billing/x-credits/events.
+func (h *BillingHandler) ListXCreditsEvents(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if !h.requireXCreditsAvailable(w, r, workspaceID) {
+		return
+	}
+	if h.xCreditEvents == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X Credits event service is not configured")
+		return
+	}
+
+	query := r.URL.Query()
+	limit := 50
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "limit must be between 1 and 100")
+			return
+		}
+		limit = parsed
+	}
+	parseTime := func(name string) (*time.Time, bool) {
+		raw := strings.TrimSpace(query.Get(name))
+		if raw == "" {
+			return nil, true
+		}
+		value, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", name+" must be an RFC 3339 timestamp")
+			return nil, false
+		}
+		value = value.UTC()
+		return &value, true
+	}
+	start, ok := parseTime("start_time")
+	if !ok {
+		return
+	}
+	end, ok := parseTime("end_time")
+	if !ok {
+		return
+	}
+	if start != nil && end != nil && !end.After(*start) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "end_time must be after start_time")
+		return
+	}
+
+	page, err := h.xCreditEvents.ListEvents(r.Context(), xcredits.ListEventsRequest{
+		WorkspaceID: workspaceID, AccountID: strings.TrimSpace(query.Get("account_id")),
+		ExternalUserID: strings.TrimSpace(query.Get("external_user_id")),
+		Operation:      strings.TrimSpace(query.Get("operation")), Status: strings.TrimSpace(query.Get("status")),
+		StartTime: start, EndTime: end, Cursor: strings.TrimSpace(query.Get("cursor")), Limit: limit,
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "cursor") {
+			writeError(w, http.StatusBadRequest, "INVALID_CURSOR", "The X Credits event cursor is invalid")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load X Credits events")
+		return
+	}
+	writeSuccessWithCursor(w, page.Items, page.NextCursor, page.NextCursor != "", limit)
 }
 
 // UpdateXInboundCap handles PATCH /v1/billing/x-credits/inbound-cap.
