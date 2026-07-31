@@ -25,8 +25,15 @@ CREATE TABLE publishing_pull_object_usages (
   post_status      TEXT NOT NULL,
   cleanup_after_at TIMESTAMPTZ,
   retention_reason TEXT NOT NULL DEFAULT 'active_post',
+  upload_state     TEXT NOT NULL DEFAULT 'active'
+    CHECK (upload_state IN ('pending', 'active', 'abandoned')),
+  upload_lease_expires_at TIMESTAMPTZ,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (
+    (upload_state = 'pending' AND upload_lease_expires_at IS NOT NULL)
+    OR (upload_state <> 'pending' AND upload_lease_expires_at IS NULL)
+  )
 );
 
 CREATE INDEX publishing_pull_object_usages_post_idx

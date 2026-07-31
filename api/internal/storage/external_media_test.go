@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/safefetch"
 )
@@ -155,6 +156,66 @@ func TestExternalMediaUploadCancellationAbandonsWithLiveDetachedContext(t *testi
 	}
 	if len(recorder.abandonContextErrors) != 1 || recorder.abandonContextErrors[0] != nil {
 		t.Fatalf("abandon context errors = %v, want one live detached context", recorder.abandonContextErrors)
+	}
+}
+
+func TestExternalMediaActivationUsesLiveDetachedContextAfterRequestCancellation(t *testing.T) {
+	t.Parallel()
+
+	tempPath := writeVerifiedTemp(t, []byte("verified image bytes"))
+	fetcher := &fakeExternalFetcher{result: &safefetch.Result{
+		Path: tempPath, MediaType: "image/jpeg", SizeBytes: 20, SHA256Hex: strings.Repeat("7", 64),
+	}}
+	recorder := &recordingPublishingObjectLifecycle{usageIDs: []string{"usage_activated"}}
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	ctx := WithPublishingObjectLifecycle(requestCtx, PublishingObjectContext{
+		WorkspaceID: "workspace_1",
+		PostID:      "post_1",
+		Lifecycle:   recorder,
+	})
+	uploader := func(context.Context, string, string, string, string) error {
+		cancelRequest()
+		return nil
+	}
+
+	_, err := stageExternalMedia(ctx, "https://cdn.example/photo.jpg", safefetch.Policy{}, fetcher, uploader, func(key string) string { return key })
+	if err != nil {
+		t.Fatalf("stageExternalMedia returned error: %v", err)
+	}
+	if len(recorder.activated) != 1 || recorder.activated[0] != "usage_activated" {
+		t.Fatalf("activated usages = %v, want usage_activated", recorder.activated)
+	}
+	if len(recorder.activateContextErrors) != 1 || recorder.activateContextErrors[0] != nil {
+		t.Fatalf("activation context errors = %v, want one live detached context", recorder.activateContextErrors)
+	}
+}
+
+func TestExternalMediaUploadHasDeadlineBeforePendingLeaseExpiry(t *testing.T) {
+	t.Parallel()
+
+	tempPath := writeVerifiedTemp(t, []byte("verified image bytes"))
+	fetcher := &fakeExternalFetcher{result: &safefetch.Result{
+		Path: tempPath, MediaType: "image/jpeg", SizeBytes: 20, SHA256Hex: strings.Repeat("6", 64),
+	}}
+	var remaining time.Duration
+	uploader := func(ctx context.Context, _, _, _, _ string) error {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("upload context has no deadline")
+		}
+		remaining = time.Until(deadline)
+		return errors.New("stop after deadline inspection")
+	}
+
+	_, err := stageExternalMedia(testPublishingLifecycleContext(), "https://cdn.example/photo.jpg", safefetch.Policy{}, fetcher, uploader, func(key string) string { return key })
+	if !errors.Is(err, ErrExternalMediaUpload) {
+		t.Fatalf("error = %v, want ErrExternalMediaUpload", err)
+	}
+	if remaining <= 0 || remaining > publishingObjectUploadTimeout {
+		t.Fatalf("upload deadline remaining = %v, want within (0, %v]", remaining, publishingObjectUploadTimeout)
+	}
+	if publishingObjectUploadTimeout >= 15*time.Minute {
+		t.Fatalf("upload timeout = %v, must remain below the 15-minute pending lease", publishingObjectUploadTimeout)
 	}
 }
 

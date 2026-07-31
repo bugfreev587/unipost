@@ -29,6 +29,7 @@ type verifiedFileUploader func(context.Context, string, string, string, string) 
 type publicURLBuilder func(string) string
 
 const publishingObjectLifecycleWriteTimeout = 5 * time.Second
+const publishingObjectUploadTimeout = 10 * time.Minute
 
 func (c *Client) StageExternalMedia(ctx context.Context, rawURL string, policy safefetch.Policy) (ExternalMediaResult, error) {
 	if c == nil {
@@ -84,7 +85,10 @@ func stageExternalMedia(
 	if err != nil || strings.TrimSpace(usageID) == "" {
 		return ExternalMediaResult{}, fmt.Errorf("%w: reservation failed", ErrExternalMediaLifecycle)
 	}
-	if err := putFile(ctx, key, fetched.Path, fetched.MediaType, "public, max-age=86400, immutable"); err != nil {
+	uploadCtx, cancelUpload := context.WithTimeout(ctx, publishingObjectUploadTimeout)
+	uploadErr := putFile(uploadCtx, key, fetched.Path, fetched.MediaType, "public, max-age=86400, immutable")
+	cancelUpload()
+	if uploadErr != nil {
 		if abandonErr := abandonPublishingObjectDetached(ctx, lifecycle.Lifecycle, usageID); abandonErr != nil {
 			return ExternalMediaResult{}, errors.Join(
 				fmt.Errorf("%w: object storage unavailable", ErrExternalMediaUpload),

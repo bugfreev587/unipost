@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -160,7 +161,7 @@ func TestPublishingPullObjectClaimCoordinatesWithReservations(t *testing.T) {
 
 		if _, err := pool.Exec(ctx, `
 			UPDATE publishing_pull_object_usages
-			SET cleanup_after_at = NOW() - INTERVAL '1 second'
+			SET upload_lease_expires_at = NOW() - INTERVAL '1 second'
 			WHERE id = $1
 		`, usageID); err != nil {
 			t.Fatalf("advance pending upload lease to expired: %v", err)
@@ -173,6 +174,178 @@ func TestPublishingPullObjectClaimCoordinatesWithReservations(t *testing.T) {
 			t.Fatalf("claimed rows after pending lease expiry = %+v, want %q", rows, publishingPullObjectRaceKey)
 		}
 		assertPublishingPullObjectState(t, pool, "deleting", 0)
+	})
+
+	t.Run("post-wide retention sync preserves pending upload lease", func(t *testing.T) {
+		pool := openPublishingRestrictionIntegrationPool(t)
+		setupPublishingPullObjectConcurrencySchema(t, pool)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		queries := New(pool)
+
+		usageID, err := queries.ReservePublishingPullObjectUsage(ctx, ReservePublishingPullObjectUsageParams{
+			ObjectKey:   publishingPullObjectRaceKey,
+			ContentType: "video/mp4",
+			SizeBytes:   128,
+			WorkspaceID: "workspace-1",
+			PostID:      "post-active",
+		})
+		if err != nil {
+			t.Fatalf("reserve pending upload usage: %v", err)
+		}
+		cleanupAfter := time.Now().Add(time.Hour).UTC()
+		if err := queries.UpdatePublishingPullObjectUsagesForPost(ctx, UpdatePublishingPullObjectUsagesForPostParams{
+			PostStatus:      "failed",
+			CleanupAfterAt:  pgtype.Timestamptz{Time: cleanupAfter, Valid: true},
+			RetentionReason: "failed_post",
+			PostID:          "post-active",
+		}); err != nil {
+			t.Fatalf("sync post retention while upload is pending: %v", err)
+		}
+
+		var uploadState string
+		var leaseValid bool
+		if err := pool.QueryRow(ctx, `
+			SELECT upload_state, upload_lease_expires_at > NOW()
+			FROM publishing_pull_object_usages
+			WHERE id = $1
+		`, usageID).Scan(&uploadState, &leaseValid); err != nil {
+			t.Fatalf("read pending upload state after post sync: %v", err)
+		}
+		if uploadState != "pending" || !leaseValid {
+			t.Fatalf("upload state/lease after post sync = %q/%t, want pending/valid", uploadState, leaseValid)
+		}
+		if _, err := queries.ActivatePublishingPullObjectUsage(ctx, usageID); err != nil {
+			t.Fatalf("activate exact pending usage after post sync: %v", err)
+		}
+
+		var postStatus, retentionReason string
+		var cleanupPreserved, leaseCleared bool
+		if err := pool.QueryRow(ctx, `
+			SELECT post_status,
+			       retention_reason,
+			       cleanup_after_at = $2,
+			       upload_state = 'active' AND upload_lease_expires_at IS NULL
+			FROM publishing_pull_object_usages
+			WHERE id = $1
+		`, usageID, cleanupAfter).Scan(&postStatus, &retentionReason, &cleanupPreserved, &leaseCleared); err != nil {
+			t.Fatalf("read activated usage after post sync: %v", err)
+		}
+		if postStatus != "failed" || retentionReason != "failed_post" || !cleanupPreserved || !leaseCleared {
+			t.Fatalf("activated usage fields = status %q reason %q cleanup-preserved %t lease-cleared %t", postStatus, retentionReason, cleanupPreserved, leaseCleared)
+		}
+	})
+
+	t.Run("activation object lock prevents concurrent cleanup claim", func(t *testing.T) {
+		pool := openPublishingRestrictionIntegrationPool(t)
+		setupPublishingPullObjectConcurrencySchema(t, pool)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		usageID, err := New(pool).ReservePublishingPullObjectUsage(ctx, ReservePublishingPullObjectUsageParams{
+			ObjectKey:   publishingPullObjectRaceKey,
+			ContentType: "video/mp4",
+			SizeBytes:   128,
+			WorkspaceID: "workspace-1",
+			PostID:      "post-active",
+		})
+		if err != nil {
+			t.Fatalf("reserve pending upload usage: %v", err)
+		}
+		activationConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire activation connection: %v", err)
+		}
+		defer activationConn.Release()
+		activationTx, err := activationConn.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin activation transaction: %v", err)
+		}
+		defer activationTx.Rollback(context.Background())
+		activationQueries := New(activationTx)
+		if _, err := activationQueries.LockPublishingPullObjectForUsageActivation(ctx, usageID); err != nil {
+			t.Fatalf("lock publishing object for activation: %v", err)
+		}
+		if _, err := activationQueries.MarkPublishingPullObjectUsageActive(ctx, usageID); err != nil {
+			t.Fatalf("mark usage active while object lock is held: %v", err)
+		}
+
+		rows, err := New(pool).ClaimPublishingPullObjectsDue(ctx, 10)
+		if err != nil {
+			t.Fatalf("claim while activation transaction owns object lock: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("cleanup claimed %d objects while activation owned the object lock, want 0", len(rows))
+		}
+		if err := activationTx.Commit(ctx); err != nil {
+			t.Fatalf("commit activation transaction: %v", err)
+		}
+		assertPublishingPullObjectState(t, pool, "active", 1)
+	})
+
+	t.Run("cleanup object lock makes later activation fail closed", func(t *testing.T) {
+		pool := openPublishingRestrictionIntegrationPool(t)
+		setupPublishingPullObjectConcurrencySchema(t, pool)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		queries := New(pool)
+
+		usageID, err := queries.ReservePublishingPullObjectUsage(ctx, ReservePublishingPullObjectUsageParams{
+			ObjectKey:   publishingPullObjectRaceKey,
+			ContentType: "video/mp4",
+			SizeBytes:   128,
+			WorkspaceID: "workspace-1",
+			PostID:      "post-active",
+		})
+		if err != nil {
+			t.Fatalf("reserve pending upload usage: %v", err)
+		}
+		cleanupConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire cleanup connection: %v", err)
+		}
+		defer cleanupConn.Release()
+		cleanupTx, err := cleanupConn.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin cleanup transaction: %v", err)
+		}
+		defer cleanupTx.Rollback(context.Background())
+		if _, err := cleanupTx.Exec(ctx, `
+			SELECT object_key
+			FROM publishing_pull_objects
+			WHERE object_key = $1
+			FOR UPDATE
+		`, publishingPullObjectRaceKey); err != nil {
+			t.Fatalf("lock publishing object for cleanup: %v", err)
+		}
+
+		activationConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire later activation connection: %v", err)
+		}
+		defer activationConn.Release()
+		activationPID := publishingPullObjectBackendPID(t, ctx, activationConn)
+		activationResultCh := make(chan error, 1)
+		go func() {
+			_, activateErr := New(activationConn).ActivatePublishingPullObjectUsage(ctx, usageID)
+			activationResultCh <- activateErr
+		}()
+		waitForPublishingPullObjectLock(t, ctx, pool, activationPID)
+
+		if _, err := cleanupTx.Exec(ctx, `
+			UPDATE publishing_pull_objects
+			SET cleanup_state = 'deleting', updated_at = NOW()
+			WHERE object_key = $1
+		`, publishingPullObjectRaceKey); err != nil {
+			t.Fatalf("mark publishing object deleting while cleanup owns lock: %v", err)
+		}
+		if err := cleanupTx.Commit(ctx); err != nil {
+			t.Fatalf("commit winning cleanup: %v", err)
+		}
+		if err := <-activationResultCh; !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("activation after cleanup claim error = %v, want pgx.ErrNoRows", err)
+		}
+		assertPublishingPullObjectState(t, pool, "deleting", 1)
 	})
 }
 
@@ -261,7 +434,13 @@ func assertPublishingPullObjectState(t *testing.T, pool *pgxpool.Pool, wantState
 		SELECT COUNT(*)
 		FROM publishing_pull_object_usages
 		WHERE object_key = $1
-		  AND (cleanup_after_at IS NULL OR cleanup_after_at > NOW())
+		  AND (
+		    (upload_state = 'pending' AND upload_lease_expires_at > NOW())
+		    OR (
+		      upload_state = 'active'
+		      AND (cleanup_after_at IS NULL OR cleanup_after_at > NOW())
+		    )
+		  )
 	`, publishingPullObjectRaceKey).Scan(&activeUsages); err != nil {
 		t.Fatalf("count active publishing object usages: %v", err)
 	}

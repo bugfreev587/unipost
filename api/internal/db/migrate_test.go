@@ -540,6 +540,10 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 		"create table publishing_pull_object_usages",
 		"workspace_id text not null references workspaces(id) on delete cascade",
 		"post_id text not null references social_posts(id) on delete cascade",
+		"upload_state text not null default 'active'",
+		"check (upload_state in ('pending', 'active', 'abandoned'))",
+		"upload_lease_expires_at timestamptz",
+		"upload_state = 'pending' and upload_lease_expires_at is not null",
 		"publishing_pull_object_usages_object_post_idx",
 		"publishing_pull_object_usages_cleanup_due_idx",
 	} {
@@ -558,7 +562,8 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 	querySQL := string(queries)
 	for _, want := range []string{
 		"-- name: ReservePublishingPullObjectUsage :one",
-		"-- name: ActivatePublishingPullObjectUsage :one",
+		"-- name: LockPublishingPullObjectForUsageActivation :one",
+		"-- name: MarkPublishingPullObjectUsageActive :one",
 		"-- name: AbandonPublishingPullObjectUsage :exec",
 		"-- name: UpdatePublishingPullObjectUsagesForPost :exec",
 		"-- name: LockPublishingPullObjectCandidates :many",
@@ -574,9 +579,11 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 	queryCompact := strings.Join(strings.Fields(strings.ToLower(querySQL)), " ")
 	for _, want := range []string{
 		"where publishing_pull_objects.cleanup_state = 'active'",
-		"'upload_pending'",
+		"'pending'",
+		"upload_state",
+		"upload_lease_expires_at",
 		"now() + interval '15 minutes'",
-		"retention_reason = 'active_post'",
+		"'active_post'",
 		"candidate.cleanup_state in ('active', 'deleting')",
 		"usage.cleanup_after_at is null or usage.cleanup_after_at > now()",
 		"returning id",
@@ -597,6 +604,9 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 	transactionCompact := strings.Join(strings.Fields(string(transactionSource)), " ")
 	for _, want := range []string{
 		"WithTransaction",
+		"ActivatePublishingPullObjectUsage",
+		"LockPublishingPullObjectForUsageActivation",
+		"MarkPublishingPullObjectUsageActive",
 		"LockPublishingPullObjectCandidates",
 		"PublishingPullObjectHasActiveUsage",
 		"MarkPublishingPullObjectDeleting",

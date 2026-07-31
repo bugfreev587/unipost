@@ -330,14 +330,16 @@ The staged object must reuse the existing publishing-object retention and cleanu
 
 Because external media has no media-library row, storage must keep a provider-neutral lifecycle ledger for `pull/` objects:
 
-- reserve the content-addressed object and a unique per-staging-attempt usage ID atomically before upload; the usage begins as `upload_pending` under a 15-minute durable cleanup lease rather than an unbounded active usage;
-- after object upload, activate that exact usage and remove its pending lease before returning the staged URL;
+- reserve the content-addressed object and a unique per-staging-attempt usage ID atomically before upload; the usage begins with a provider-neutral `upload_state = pending` and a separate 15-minute `upload_lease_expires_at`, rather than encoding upload progress in post status or retention fields;
+- bound the R2 upload to 10 minutes, below the 15-minute upload lease, so an upload cannot legitimately continue after cleanup eligibility begins;
+- after object upload, activate that exact usage and clear its upload lease before returning the staged URL; activation and cleanup must take the same per-object database row lock, and activation must fail closed if cleanup already claimed the object or the lease expired;
 - never persist the source URL, credentials, path, or query string in that ledger;
 - keep the usage active while the post is draft, queued, publishing, processing, or otherwise non-terminal;
 - on a terminal post transition, apply the same plan/status retention deadline already used by publishing media;
+- post-wide status/retention synchronization may update `post_status`, `cleanup_after_at`, and `retention_reason`, but must never change `upload_state` or `upload_lease_expires_at`; this prevents a sibling dispatch from erasing another attempt's pending-upload protection;
 - allow one content-addressed object to be shared by multiple posts and workspaces, and delete it only after every usage is past its deadline;
 - mark only the failed attempt's usage immediately eligible for cleanup, so a concurrent successful dispatch for the same post and content remains protected;
-- perform activation and best-effort abandonment with a five-second bounded context detached from request cancellation; if an abandonment write still fails, the pending lease expires and makes the object recoverable by the normal cleanup sweep;
+- perform activation and best-effort abandonment with a five-second bounded context detached from request cancellation; if an abandonment write still fails, the independent upload lease expires and makes the object recoverable by the normal cleanup sweep;
 - coordinate reservation and cleanup through the same per-object database row lock; after cleanup owns that lock, re-evaluate usage eligibility in a subsequent statement inside the same transaction before claiming the object, so a concurrently committed active usage cannot be missed by a stale statement snapshot;
 - claim an eligible object before R2 deletion, release the claim when R2 deletion fails, and retry database-finalization failures safely.
 

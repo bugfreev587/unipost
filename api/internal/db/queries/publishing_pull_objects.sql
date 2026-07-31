@@ -24,26 +24,41 @@ INSERT INTO publishing_pull_object_usages (
   post_id,
   post_status,
   cleanup_after_at,
-  retention_reason
+  retention_reason,
+  upload_state,
+  upload_lease_expires_at
 )
 SELECT
   reserved_object.object_key,
   sqlc.arg(workspace_id),
   sqlc.arg(post_id),
-  'upload_pending',
-  NOW() + INTERVAL '15 minutes',
-  'upload_pending'
+  'publishing',
+  NULL,
+  'active_post',
+  'pending',
+  NOW() + INTERVAL '15 minutes'
 FROM reserved_object
 RETURNING id;
 
--- name: ActivatePublishingPullObjectUsage :one
+-- name: LockPublishingPullObjectForUsageActivation :one
+SELECT usage.object_key
+FROM publishing_pull_object_usages usage
+JOIN publishing_pull_objects object
+  ON object.object_key = usage.object_key
+WHERE usage.id = sqlc.arg(usage_id)
+  AND usage.upload_state = 'pending'
+  AND usage.upload_lease_expires_at > NOW()
+  AND object.cleanup_state = 'active'
+FOR UPDATE OF object;
+
+-- name: MarkPublishingPullObjectUsageActive :one
 UPDATE publishing_pull_object_usages
-SET post_status = 'publishing',
-    cleanup_after_at = NULL,
-    retention_reason = 'active_post',
+SET upload_state = 'active',
+    upload_lease_expires_at = NULL,
     updated_at = NOW()
 WHERE id = sqlc.arg(usage_id)
-  AND post_status = 'upload_pending'
+  AND upload_state = 'pending'
+  AND upload_lease_expires_at > NOW()
 RETURNING id;
 
 -- name: AbandonPublishingPullObjectUsage :exec
@@ -51,6 +66,8 @@ UPDATE publishing_pull_object_usages
 SET post_status = 'failed',
     cleanup_after_at = NOW(),
     retention_reason = 'upload_failed',
+    upload_state = 'abandoned',
+    upload_lease_expires_at = NULL,
     updated_at = NOW()
 WHERE id = sqlc.arg(usage_id);
 
@@ -71,8 +88,14 @@ WHERE candidate.cleanup_state IN ('active', 'deleting')
     FROM publishing_pull_object_usages usage
     WHERE usage.object_key = candidate.object_key
       AND (
-        usage.cleanup_after_at IS NULL
-        OR usage.cleanup_after_at > NOW()
+        (usage.upload_state = 'pending' AND usage.upload_lease_expires_at > NOW())
+        OR (
+          usage.upload_state = 'active'
+          AND (
+            usage.cleanup_after_at IS NULL
+            OR usage.cleanup_after_at > NOW()
+          )
+        )
       )
   )
 ORDER BY candidate.created_at ASC, candidate.object_key ASC
@@ -85,8 +108,14 @@ SELECT EXISTS (
   FROM publishing_pull_object_usages usage
   WHERE usage.object_key = sqlc.arg(object_key)
     AND (
-      usage.cleanup_after_at IS NULL
-      OR usage.cleanup_after_at > NOW()
+      (usage.upload_state = 'pending' AND usage.upload_lease_expires_at > NOW())
+      OR (
+        usage.upload_state = 'active'
+        AND (
+          usage.cleanup_after_at IS NULL
+          OR usage.cleanup_after_at > NOW()
+        )
+      )
     )
 );
 

@@ -1058,15 +1058,17 @@ type PublishingPullObject struct {
 }
 
 type PublishingPullObjectUsage struct {
-	ID              string             `json:"id"`
-	ObjectKey       string             `json:"object_key"`
-	WorkspaceID     string             `json:"workspace_id"`
-	PostID          string             `json:"post_id"`
-	PostStatus      string             `json:"post_status"`
-	CleanupAfterAt  pgtype.Timestamptz `json:"cleanup_after_at"`
-	RetentionReason string             `json:"retention_reason"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID                   string             `json:"id"`
+	ObjectKey            string             `json:"object_key"`
+	WorkspaceID          string             `json:"workspace_id"`
+	PostID               string             `json:"post_id"`
+	PostStatus           string             `json:"post_status"`
+	CleanupAfterAt       pgtype.Timestamptz `json:"cleanup_after_at"`
+	RetentionReason      string             `json:"retention_reason"`
+	UploadState          string             `json:"upload_state"`
+	UploadLeaseExpiresAt pgtype.Timestamptz `json:"upload_lease_expires_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ReviewAgentToken struct {

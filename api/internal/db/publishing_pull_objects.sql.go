@@ -16,6 +16,8 @@ UPDATE publishing_pull_object_usages
 SET post_status = 'failed',
     cleanup_after_at = NOW(),
     retention_reason = 'upload_failed',
+    upload_state = 'abandoned',
+    upload_lease_expires_at = NULL,
     updated_at = NOW()
 WHERE id = $1
 `
@@ -23,24 +25,6 @@ WHERE id = $1
 func (q *Queries) AbandonPublishingPullObjectUsage(ctx context.Context, usageID string) error {
 	_, err := q.db.Exec(ctx, abandonPublishingPullObjectUsage, usageID)
 	return err
-}
-
-const activatePublishingPullObjectUsage = `-- name: ActivatePublishingPullObjectUsage :one
-UPDATE publishing_pull_object_usages
-SET post_status = 'publishing',
-    cleanup_after_at = NULL,
-    retention_reason = 'active_post',
-    updated_at = NOW()
-WHERE id = $1
-  AND post_status = 'upload_pending'
-RETURNING id
-`
-
-func (q *Queries) ActivatePublishingPullObjectUsage(ctx context.Context, usageID string) (string, error) {
-	row := q.db.QueryRow(ctx, activatePublishingPullObjectUsage, usageID)
-	var id string
-	err := row.Scan(&id)
-	return id, err
 }
 
 const hardDeletePublishingPullObject = `-- name: HardDeletePublishingPullObject :exec
@@ -63,8 +47,14 @@ WHERE candidate.cleanup_state IN ('active', 'deleting')
     FROM publishing_pull_object_usages usage
     WHERE usage.object_key = candidate.object_key
       AND (
-        usage.cleanup_after_at IS NULL
-        OR usage.cleanup_after_at > NOW()
+        (usage.upload_state = 'pending' AND usage.upload_lease_expires_at > NOW())
+        OR (
+          usage.upload_state = 'active'
+          AND (
+            usage.cleanup_after_at IS NULL
+            OR usage.cleanup_after_at > NOW()
+          )
+        )
       )
   )
 ORDER BY candidate.created_at ASC, candidate.object_key ASC
@@ -99,6 +89,25 @@ func (q *Queries) LockPublishingPullObjectCandidates(ctx context.Context, batchS
 	return items, nil
 }
 
+const lockPublishingPullObjectForUsageActivation = `-- name: LockPublishingPullObjectForUsageActivation :one
+SELECT usage.object_key
+FROM publishing_pull_object_usages usage
+JOIN publishing_pull_objects object
+  ON object.object_key = usage.object_key
+WHERE usage.id = $1
+  AND usage.upload_state = 'pending'
+  AND usage.upload_lease_expires_at > NOW()
+  AND object.cleanup_state = 'active'
+FOR UPDATE OF object
+`
+
+func (q *Queries) LockPublishingPullObjectForUsageActivation(ctx context.Context, usageID string) (string, error) {
+	row := q.db.QueryRow(ctx, lockPublishingPullObjectForUsageActivation, usageID)
+	var object_key string
+	err := row.Scan(&object_key)
+	return object_key, err
+}
+
 const markPublishingPullObjectDeleting = `-- name: MarkPublishingPullObjectDeleting :one
 UPDATE publishing_pull_objects
 SET cleanup_state = 'deleting',
@@ -122,14 +131,38 @@ func (q *Queries) MarkPublishingPullObjectDeleting(ctx context.Context, objectKe
 	return i, err
 }
 
+const markPublishingPullObjectUsageActive = `-- name: MarkPublishingPullObjectUsageActive :one
+UPDATE publishing_pull_object_usages
+SET upload_state = 'active',
+    upload_lease_expires_at = NULL,
+    updated_at = NOW()
+WHERE id = $1
+  AND upload_state = 'pending'
+  AND upload_lease_expires_at > NOW()
+RETURNING id
+`
+
+func (q *Queries) MarkPublishingPullObjectUsageActive(ctx context.Context, usageID string) (string, error) {
+	row := q.db.QueryRow(ctx, markPublishingPullObjectUsageActive, usageID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const publishingPullObjectHasActiveUsage = `-- name: PublishingPullObjectHasActiveUsage :one
 SELECT EXISTS (
   SELECT 1
   FROM publishing_pull_object_usages usage
   WHERE usage.object_key = $1
     AND (
-      usage.cleanup_after_at IS NULL
-      OR usage.cleanup_after_at > NOW()
+      (usage.upload_state = 'pending' AND usage.upload_lease_expires_at > NOW())
+      OR (
+        usage.upload_state = 'active'
+        AND (
+          usage.cleanup_after_at IS NULL
+          OR usage.cleanup_after_at > NOW()
+        )
+      )
     )
 )
 `
@@ -180,15 +213,19 @@ INSERT INTO publishing_pull_object_usages (
   post_id,
   post_status,
   cleanup_after_at,
-  retention_reason
+  retention_reason,
+  upload_state,
+  upload_lease_expires_at
 )
 SELECT
   reserved_object.object_key,
   $1,
   $2,
-  'upload_pending',
-  NOW() + INTERVAL '15 minutes',
-  'upload_pending'
+  'publishing',
+  NULL,
+  'active_post',
+  'pending',
+  NOW() + INTERVAL '15 minutes'
 FROM reserved_object
 RETURNING id
 `
