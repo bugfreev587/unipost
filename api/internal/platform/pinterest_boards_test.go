@@ -540,3 +540,92 @@ func TestPinterestFetchBoardsRejectsDuplicatePages(t *testing.T) {
 		t.Fatalf("failure fields = %#v", failure)
 	}
 }
+
+func TestPinterestDispatchEventsRecordPreflightAndCreateFailure(t *testing.T) {
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	recorder := NewDispatchEventRecorder()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1", "username": pinterestTestOwner})
+		case "/v5/boards/" + pinterestTestBoardID:
+			writePinterestJSON(w, http.StatusOK, map[string]any{
+				"id": pinterestTestBoardID, "owner": map[string]any{"username": pinterestTestOwner},
+			})
+		case "/v5/pins":
+			writePinterestJSON(w, http.StatusForbidden, map[string]any{"code": 29, "message": "resource denied"})
+		default:
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+	ctx := WithDispatchMetadata(context.Background(), DispatchMetadata{
+		SocialAccountID: "sa_1",
+		Environment:     "production",
+		Events:          recorder,
+	})
+
+	_, err := (&PinterestAdapter{client: srv.Client()}).Post(ctx, "token_1", "caption", []MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage}}, map[string]any{"board_id": pinterestTestBoardID})
+	if err == nil {
+		t.Fatal("expected create Pin failure")
+	}
+	events := recorder.Snapshot()
+	wantNames := []string{
+		"pinterest_destination_preflight_started",
+		"pinterest_destination_preflight_succeeded",
+		"pinterest_create_pin_failed",
+	}
+	if len(events) != len(wantNames) {
+		t.Fatalf("events = %#v", events)
+	}
+	for i, want := range wantNames {
+		if events[i].Name != want {
+			t.Fatalf("event %d name = %q, want %q", i, events[i].Name, want)
+		}
+		if events[i].BoardFingerprint == "" || strings.Contains(events[i].BoardFingerprint, pinterestTestBoardID) {
+			t.Fatalf("event %d unsafe board fingerprint = %q", i, events[i].BoardFingerprint)
+		}
+	}
+	if events[2].ProviderCode != "29" || events[2].Reason != "board_not_accessible" || events[2].FailureStage != "destination_preflight" || events[2].Retriable {
+		t.Fatalf("create failure event = %#v", events[2])
+	}
+}
+
+func TestPinterestDispatchEventsRecordPreflightFailureWithoutCreatePin(t *testing.T) {
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	recorder := NewDispatchEventRecorder()
+	pinCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1", "username": pinterestTestOwner})
+		case "/v5/boards/" + pinterestTestBoardID:
+			writePinterestJSON(w, http.StatusNotFound, map[string]any{"code": 40, "message": "missing"})
+		case "/v5/pins":
+			pinCalls++
+		default:
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+	ctx := WithDispatchMetadata(context.Background(), DispatchMetadata{
+		SocialAccountID: "sa_1", Environment: "production", Events: recorder,
+	})
+
+	_, err := (&PinterestAdapter{client: srv.Client()}).Post(ctx, "token_1", "caption", []MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage}}, map[string]any{"board_id": pinterestTestBoardID})
+	if err == nil {
+		t.Fatal("expected preflight failure")
+	}
+	if pinCalls != 0 {
+		t.Fatalf("create Pin calls = %d, want 0", pinCalls)
+	}
+	events := recorder.Snapshot()
+	if len(events) != 2 || events[0].Name != "pinterest_destination_preflight_started" || events[1].Name != "pinterest_destination_preflight_failed" {
+		t.Fatalf("events = %#v", events)
+	}
+	if events[1].ProviderCode != "40" || events[1].Reason != "board_not_found" || events[1].Retriable {
+		t.Fatalf("preflight failure event = %#v", events[1])
+	}
+}

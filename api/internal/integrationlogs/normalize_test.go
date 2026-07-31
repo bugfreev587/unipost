@@ -40,3 +40,23 @@ func TestNormalize_NormalizesPlatformAndErrorCode(t *testing.T) {
 		t.Fatalf("error_code = %#v, want remote_forbidden", params.ErrorCode)
 	}
 }
+
+func TestPinterestPublishingActionNamesAreStable(t *testing.T) {
+	want := map[string]string{
+		"preflight_started":   "pinterest_destination_preflight_started",
+		"preflight_succeeded": "pinterest_destination_preflight_succeeded",
+		"preflight_failed":    "pinterest_destination_preflight_failed",
+		"create_pin_failed":   "pinterest_create_pin_failed",
+	}
+	got := map[string]string{
+		"preflight_started":   ActionPinterestDestinationPreflightStarted,
+		"preflight_succeeded": ActionPinterestDestinationPreflightSucceeded,
+		"preflight_failed":    ActionPinterestDestinationPreflightFailed,
+		"create_pin_failed":   ActionPinterestCreatePinFailed,
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Fatalf("%s action = %q, want %q", key, got[key], value)
+		}
+	}
+}

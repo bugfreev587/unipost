@@ -429,6 +429,45 @@ func TestPostFailureShouldMarkReconnectRequired(t *testing.T) {
 	}
 }
 
+type typedFailureStageTestError struct {
+	message     string
+	stage       string
+	errorCode   string
+	isRetriable bool
+	provider    map[string]any
+}
+
+func (e typedFailureStageTestError) Error() string        { return e.message }
+func (e typedFailureStageTestError) FailureStage() string { return e.stage }
+func (e typedFailureStageTestError) FailureContractFields() map[string]any {
+	return map[string]any{
+		"error_code":    e.errorCode,
+		"failure_stage": e.stage,
+		"is_retriable":  e.isRetriable,
+	}
+}
+func (e typedFailureStageTestError) ProviderErrorFields() map[string]any { return e.provider }
+
+func TestInferDispatchFailureStagePrefersTypedStage(t *testing.T) {
+	err := typedFailureStageTestError{message: "create_tweet failed", stage: "destination_preflight"}
+	if got := inferDispatchFailureStage(err); got != "destination_preflight" {
+		t.Fatalf("stage = %q, want destination_preflight", got)
+	}
+}
+
+func TestInferDispatchFailureStageFindsWrappedTypedStage(t *testing.T) {
+	err := fmt.Errorf("publish failed: %w", typedFailureStageTestError{message: "provider rejected request", stage: "destination_preflight"})
+	if got := inferDispatchFailureStage(err); got != "destination_preflight" {
+		t.Fatalf("stage = %q, want destination_preflight from wrapped carrier", got)
+	}
+}
+
+func TestInferDispatchFailureStageKeepsLegacyFallback(t *testing.T) {
+	if got := inferDispatchFailureStage(errors.New("upload_media_append failed")); got != "upload_media_append" {
+		t.Fatalf("stage = %q, want upload_media_append", got)
+	}
+}
+
 func TestSanitizeDeliveryErrorTextRemovesNULAndInvalidUTF8(t *testing.T) {
 	got := sanitizeDeliveryErrorText("tiktok upload failed:\x00" + string([]byte{0xff, 0xfe}) + "done")
 
@@ -1382,6 +1421,68 @@ func TestQueueImmediatePostLogsEveryLocallyFailedResult(t *testing.T) {
 	}
 }
 
+func TestPinterestDispatchObservabilityUsesAllowlistedSafeFields(t *testing.T) {
+	logStore := &restrictedFinalizeIntegrationLogStore{}
+	logger, stopLogger := runIntegrationLogger(t, logStore)
+	h := NewSocialPostHandler(nil, nil, nil, nil, nil, nil, logger)
+	post := db.SocialPost{ID: "post_pin", WorkspaceID: "ws_pin"}
+	result := db.SocialPostResult{ID: "result_pin", SocialAccountID: "account_pin"}
+	job := db.PostDeliveryJob{ID: "job_pin", Platform: "pinterest"}
+
+	h.logPlatformDispatchEvents(context.Background(), post, result, job, []platform.DispatchEvent{
+		{
+			Name:             integrationlogs.ActionPinterestDestinationPreflightFailed,
+			Status:           "failed",
+			Environment:      "production",
+			BoardFingerprint: "b4f9206f2d2c145a",
+			HTTPStatus:       http.StatusForbidden,
+			ProviderCode:     "29",
+			ErrorCode:        "target_not_found",
+			Reason:           "board_not_writable",
+			FailureStage:     "destination_preflight",
+			Retriable:        false,
+			Duration:         42 * time.Millisecond,
+		},
+		{Name: "not_allowlisted", Status: "failed", Reason: "access_token=secret https://api.pinterest.com/v5/boards/123"},
+	})
+	stopLogger()
+
+	if len(logStore.params) != 1 {
+		t.Fatalf("integration log count = %d, want 1 allowlisted event", len(logStore.params))
+	}
+	got := logStore.params[0]
+	if got.Action != integrationlogs.ActionPinterestDestinationPreflightFailed || got.Message != integrationlogs.ActionPinterestDestinationPreflightFailed {
+		t.Fatalf("action/message = %q/%q, want stable preflight failure action", got.Action, got.Message)
+	}
+	if !got.RemoteStatusCode.Valid || got.RemoteStatusCode.Int32 != http.StatusForbidden {
+		t.Fatalf("remote status = %#v, want 403", got.RemoteStatusCode)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(got.Metadata, &metadata); err != nil {
+		t.Fatalf("decode event metadata: %v", err)
+	}
+	for key, want := range map[string]any{
+		"job_id":                "job_pin",
+		"result_id":             "result_pin",
+		"board_fingerprint":     "b4f9206f2d2c145a",
+		"pinterest_environment": "production",
+		"provider_code":         "29",
+		"normalized_reason":     "board_not_writable",
+		"failure_stage":         "destination_preflight",
+		"retriable":             false,
+	} {
+		if metadata[key] != want {
+			t.Errorf("metadata[%q] = %#v, want %#v", key, metadata[key], want)
+		}
+	}
+	encoded := string(got.Metadata)
+	for _, forbidden := range []string{"access_token", "secret", "api.pinterest.com", "/boards/123"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("safe event metadata contains %q: %s", forbidden, encoded)
+		}
+	}
+}
+
 func TestFinalizeRestrictedDeliveryJobLostLeasePreservesNewerSuccess(t *testing.T) {
 	publishedAt := time.Date(2026, 7, 26, 19, 45, 0, 0, time.UTC)
 	job := baseDeliveryJob()
@@ -1882,6 +1983,8 @@ type unavailableAccountDeliveryDB struct {
 	platformStartedCalls int
 	failureDetailsCode   string
 	recordedFailureCode  string
+	recordedFailure      db.CreatePostFailureParams
+	retryJobs            []db.PostDeliveryJob
 }
 
 func (f *unavailableAccountDeliveryDB) Begin(context.Context) (pgx.Tx, error) {
@@ -1938,7 +2041,11 @@ func (f *unavailableAccountDeliveryDB) Query(_ context.Context, query string, _ 
 	case strings.Contains(query, "-- name: ListSocialPostResultsByPost"):
 		return &queueRows{values: [][]any{socialPostResultScanRow(f.result).values}}, nil
 	case strings.Contains(query, "-- name: ListPostDeliveryJobsByPost"):
-		return &queueRows{values: [][]any{postDeliveryJobScanRow(f.job).values}}, nil
+		values := [][]any{postDeliveryJobScanRow(f.job).values}
+		for _, retryJob := range f.retryJobs {
+			values = append(values, postDeliveryJobScanRow(retryJob).values)
+		}
+		return &queueRows{values: values}, nil
 	default:
 		return nil, fmt.Errorf("unexpected Query: %s", query)
 	}
@@ -1967,13 +2074,61 @@ func (f *unavailableAccountDeliveryDB) QueryRow(_ context.Context, query string,
 		f.result.ErrorMessage = args[3].(pgtype.Text)
 		return socialPostResultScanRow(f.result)
 	case strings.Contains(query, "-- name: CreatePostFailure"):
-		f.recordedFailureCode = args[6].(string)
-		return scanRow{err: pgx.ErrNoRows}
+		f.recordedFailure = db.CreatePostFailureParams{
+			PostID:             args[0].(string),
+			SocialPostResultID: args[1].(pgtype.Text),
+			WorkspaceID:        args[2].(string),
+			SocialAccountID:    args[3].(pgtype.Text),
+			Platform:           args[4].(string),
+			FailureStage:       args[5].(string),
+			ErrorCode:          args[6].(string),
+			PlatformErrorCode:  args[7].(pgtype.Text),
+			Message:            args[8].(string),
+			RawError:           args[9].(pgtype.Text),
+			IsRetriable:        args[10].(bool),
+			ErrorSource:        args[11].(pgtype.Text),
+			ErrorTemporality:   args[12].(pgtype.Text),
+			ProviderError:      args[13].([]byte),
+			RestrictionCycleID: args[14].(pgtype.Text),
+		}
+		f.recordedFailureCode = f.recordedFailure.ErrorCode
+		return policySnapshotPostFailureRow(f.recordedFailure)
+	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
+		retryJob := db.PostDeliveryJob{
+			ID:                 fmt.Sprintf("retry_%d", len(f.retryJobs)+1),
+			PostID:             args[0].(string),
+			SocialPostResultID: args[1].(string),
+			WorkspaceID:        args[2].(string),
+			SocialAccountID:    args[3].(string),
+			Platform:           args[4].(string),
+			PostInputIndex:     args[5].(int32),
+			Kind:               args[6].(string),
+			State:              args[7].(string),
+			Attempts:           args[8].(int32),
+			MaxAttempts:        args[9].(int32),
+			FailureStage:       args[10].(pgtype.Text),
+			ErrorCode:          args[11].(pgtype.Text),
+			PlatformErrorCode:  args[12].(pgtype.Text),
+			LastError:          args[13].(pgtype.Text),
+			NextRunAt:          args[14].(pgtype.Timestamptz),
+			LastAttemptAt:      args[15].(pgtype.Timestamptz),
+			FinishedAt:         args[16].(pgtype.Timestamptz),
+			CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		}
+		f.retryJobs = append(f.retryJobs, retryJob)
+		return postDeliveryJobScanRow(retryJob)
 	case strings.Contains(query, "-- name: MarkPostDeliveryJobFailed"):
 		f.job.State = args[0].(string)
 		f.job.FailureStage = args[1].(pgtype.Text)
 		f.job.ErrorCode = args[2].(pgtype.Text)
+		f.job.PlatformErrorCode = args[3].(pgtype.Text)
+		f.job.LastError = args[4].(pgtype.Text)
+		f.job.NextRunAt = args[5].(pgtype.Timestamptz)
 		return postDeliveryJobScanRow(f.job)
+	case strings.Contains(query, "-- name: GetSocialPostProjectionVersion"):
+		return scanRow{values: []any{"failure-version"}}
+	case strings.Contains(query, "-- name: CreatePostStatusTransitionEvent"):
+		return terminalPostEventOutboxScanRow("post-event-failure", args[0].(string), args[1].(string), args[2].(string), args[3].(string), args[4].(string))
 	default:
 		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
 	}
@@ -2035,6 +2190,104 @@ func TestProcessPostDeliveryJobRejectsMissingAccountBeforePlatformStart(t *testi
 		if params.Action == integrationlogs.ActionPostPublishPlatformStarted {
 			t.Fatal("missing account emitted a platform-started integration log")
 		}
+	}
+}
+
+func TestPinterestDestinationFailureRetryDisposition(t *testing.T) {
+	tests := []struct {
+		name             string
+		failure          typedFailureStageTestError
+		wantOriginal     string
+		wantResult       string
+		wantRetryJobs    int
+		wantErrorCode    string
+		wantNextRunValid bool
+	}{
+		{
+			name: "permanent board failure is terminal after one attempt",
+			failure: typedFailureStageTestError{
+				message:     "Pinterest board is unavailable or not writable for this account.",
+				stage:       "destination_preflight",
+				errorCode:   "target_not_found",
+				isRetriable: false,
+				provider:    map[string]any{"provider": "pinterest", "http_status": 403, "code": "29", "reason": "board_not_writable"},
+			},
+			wantOriginal:  "dead",
+			wantResult:    "failed",
+			wantRetryJobs: 0,
+			wantErrorCode: "target_not_found",
+		},
+		{
+			name: "temporary board failure schedules retry",
+			failure: typedFailureStageTestError{
+				message:     "Pinterest board verification is temporarily unavailable.",
+				stage:       "destination_preflight",
+				errorCode:   "temporary_platform_error",
+				isRetriable: true,
+				provider:    map[string]any{"provider": "pinterest", "http_status": 503, "code": "503", "reason": "provider_unavailable"},
+			},
+			wantOriginal:     "failed",
+			wantResult:       "processing",
+			wantRetryJobs:    1,
+			wantErrorCode:    "temporary_platform_error",
+			wantNextRunValid: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := baseDeliveryJob()
+			job.Platform = "pinterest"
+			job.SocialAccountID = "acct_pin"
+			job.LeaseOwner = pgtype.Text{String: "worker_pin", Valid: true}
+			job.LastAttemptAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			post := db.SocialPost{ID: job.PostID, WorkspaceID: job.WorkspaceID, Status: "publishing"}
+			result := db.SocialPostResult{
+				ID: job.SocialPostResultID, PostID: job.PostID, SocialAccountID: job.SocialAccountID,
+				Status: "processing", Caption: "safe caption",
+			}
+			dbtx := &unavailableAccountDeliveryDB{job: job, post: post, result: result}
+			h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, nil)
+
+			err := h.handleJobDispatchFailure(
+				withoutPostMediaRetentionSync(context.Background()),
+				post,
+				result,
+				job,
+				publishOneOutcome{platform: "pinterest", err: tt.failure},
+			)
+			if err != nil {
+				t.Fatalf("handleJobDispatchFailure: %v", err)
+			}
+			if dbtx.job.State != tt.wantOriginal || dbtx.job.Attempts != 1 {
+				t.Errorf("original job = state:%q attempts:%d, want %q/1", dbtx.job.State, dbtx.job.Attempts, tt.wantOriginal)
+			}
+			if dbtx.job.FailureStage.String != "destination_preflight" || dbtx.job.NextRunAt.Valid {
+				t.Errorf("original failure stage/next run = %q/%#v, want destination_preflight/empty", dbtx.job.FailureStage.String, dbtx.job.NextRunAt)
+			}
+			if dbtx.result.Status != tt.wantResult {
+				t.Errorf("result status = %q, want %q", dbtx.result.Status, tt.wantResult)
+			}
+			if len(dbtx.retryJobs) != tt.wantRetryJobs {
+				t.Fatalf("retry job count = %d, want %d", len(dbtx.retryJobs), tt.wantRetryJobs)
+			}
+			if tt.wantRetryJobs == 1 {
+				retry := dbtx.retryJobs[0]
+				if retry.Kind != "retry" || retry.State != "pending" || retry.Attempts != 0 || retry.FailureStage.String != "destination_preflight" || retry.NextRunAt.Valid != tt.wantNextRunValid {
+					t.Errorf("retry job = %#v, want pending retry at destination_preflight with a schedule", retry)
+				}
+			}
+			failure := dbtx.recordedFailure
+			if failure.FailureStage != "destination_preflight" || failure.ErrorCode != tt.wantErrorCode || failure.IsRetriable != tt.failure.isRetriable {
+				t.Errorf("recorded failure = stage:%q code:%q retriable:%v", failure.FailureStage, failure.ErrorCode, failure.IsRetriable)
+			}
+			diagnostics := failure.Message + " " + failure.RawError.String + " " + string(failure.ProviderError)
+			for _, forbidden := range []string{"access_token", "secret-token", "api.pinterest.com/v5/boards"} {
+				if strings.Contains(diagnostics, forbidden) {
+					t.Fatalf("failure diagnostics contain %q: %s", forbidden, diagnostics)
+				}
+			}
+		})
 	}
 }
 

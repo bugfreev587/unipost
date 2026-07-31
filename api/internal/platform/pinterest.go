@@ -194,9 +194,17 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 	if !pinterestBoardIDPattern.MatchString(boardID) {
 		return nil, fmt.Errorf("invalid pinterest platform_options.board_id: must be a numeric board ID")
 	}
+	preflightStartedAt := a.pinterestNow()
+	pinterestRecordDispatchEvent(ctx, DispatchEvent{
+		Name:             "pinterest_destination_preflight_started",
+		Status:           "started",
+		Environment:      PinterestEnvironment(),
+		BoardFingerprint: pinterestBoardFingerprint(boardID),
+		FailureStage:     "destination_preflight",
+	})
 	if metadata, ok := DispatchMetadataFromContext(ctx); ok &&
 		metadata.Environment != "" && metadata.Environment != PinterestEnvironment() {
-		return nil, newProviderFailure(
+		err := newProviderFailure(
 			"The selected Pinterest board belongs to a different Pinterest environment. Choose another board and publish again.",
 			map[string]any{
 				"provider": "pinterest",
@@ -208,10 +216,21 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 				IsRetriable: false,
 			},
 		)
-	}
-	if err := a.preflightBoard(ctx, accessToken, boardID); err != nil {
+		pinterestRecordDispatchFailure(ctx, "pinterest_destination_preflight_failed", boardID, a.pinterestNow().Sub(preflightStartedAt), err)
 		return nil, err
 	}
+	if err := a.preflightBoard(ctx, accessToken, boardID); err != nil {
+		pinterestRecordDispatchFailure(ctx, "pinterest_destination_preflight_failed", boardID, a.pinterestNow().Sub(preflightStartedAt), err)
+		return nil, err
+	}
+	pinterestRecordDispatchEvent(ctx, DispatchEvent{
+		Name:             "pinterest_destination_preflight_succeeded",
+		Status:           "succeeded",
+		Environment:      PinterestEnvironment(),
+		BoardFingerprint: pinterestBoardFingerprint(boardID),
+		FailureStage:     "destination_preflight",
+		Duration:         a.pinterestNow().Sub(preflightStartedAt),
+	})
 
 	title := strings.TrimSpace(optString(opts, "title"))
 	link := strings.TrimSpace(optString(opts, "link"))
@@ -261,13 +280,17 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, pinterestTransportFailure("create pin", err, "dispatch")
+		failure := pinterestTransportFailure("create pin", err, "dispatch")
+		pinterestRecordDispatchFailure(ctx, "pinterest_create_pin_failed", boardID, 0, failure)
+		return nil, failure
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, pinterestProviderFailure("create pin", resp.StatusCode, body, "dispatch")
+		failure := pinterestProviderFailure("create pin", resp.StatusCode, body, "dispatch")
+		pinterestRecordDispatchFailure(ctx, "pinterest_create_pin_failed", boardID, 0, failure)
+		return nil, failure
 	}
 
 	var pin struct {

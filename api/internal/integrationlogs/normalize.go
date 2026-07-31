@@ -55,6 +55,11 @@ const (
 	ActionPostPublishPlatformFailed    = "post.publish.platform_failed"
 	ActionPostPublishCompleted         = "post.publish.completed"
 
+	ActionPinterestDestinationPreflightStarted   = "pinterest_destination_preflight_started"
+	ActionPinterestDestinationPreflightSucceeded = "pinterest_destination_preflight_succeeded"
+	ActionPinterestDestinationPreflightFailed    = "pinterest_destination_preflight_failed"
+	ActionPinterestCreatePinFailed               = "pinterest_create_pin_failed"
+
 	ActionAPIRequestSucceeded        = "api.request.succeeded"
 	ActionAPIRequestFailed           = "api.request.failed"
 	ActionAPIRequestValidationFailed = "api.request.validation_failed"

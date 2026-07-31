@@ -2462,10 +2462,15 @@ func (h *SocialPostHandler) publishOneContext(
 	// result row. Per-dispatch so concurrent publishes don't trample
 	// each other.
 	debugRec := debugrt.NewRecorder()
+	dispatchEventRec := platform.NewDispatchEventRecorder()
+	defer func() {
+		oc.dispatchEvents = dispatchEventRec.Snapshot()
+	}()
 	dispatchCtx := debugrt.WithRecorder(ctx, debugRec)
 	dispatchCtx = platform.WithDispatchMetadata(dispatchCtx, platform.DispatchMetadata{
 		SocialAccountID: acc.ID,
 		Environment:     pp.DispatchEnvironment,
+		Events:          dispatchEventRec,
 	})
 
 	usageEvent, usageErr := h.reserveManagedXUsage(dispatchCtx, workspaceID, usageKey+":main", acc, pp.Caption)
@@ -2743,6 +2748,9 @@ type publishOneOutcome struct {
 	// internal/debugrt). Populated whenever entries exist, but only
 	// persisted on failure — successful publishes ignore it.
 	debugCurl string
+	// dispatchEvents are bounded, URL-free adapter progress events. The
+	// worker attaches post/result/workspace identity before writing them.
+	dispatchEvents []platform.DispatchEvent
 }
 
 // resolveSource classifies the publish trigger as either "ui" (Clerk

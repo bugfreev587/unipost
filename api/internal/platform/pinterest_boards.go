@@ -257,6 +257,68 @@ func pinterestTokenFingerprint(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func pinterestBoardFingerprint(boardID string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(boardID)))
+	return hex.EncodeToString(sum[:8])
+}
+
+func pinterestRecordDispatchEvent(ctx context.Context, event DispatchEvent) {
+	metadata, ok := DispatchMetadataFromContext(ctx)
+	if !ok || metadata.Events == nil {
+		return
+	}
+	metadata.Events.Record(event)
+}
+
+func pinterestRecordDispatchFailure(ctx context.Context, name, boardID string, duration time.Duration, err error) {
+	event := DispatchEvent{
+		Name:             name,
+		Status:           "failed",
+		Environment:      PinterestEnvironment(),
+		BoardFingerprint: pinterestBoardFingerprint(boardID),
+		Duration:         duration,
+	}
+	if carrier, ok := err.(interface{ ProviderErrorFields() map[string]any }); ok {
+		fields := carrier.ProviderErrorFields()
+		event.HTTPStatus = pinterestIntField(fields["http_status"])
+		event.ProviderCode = pinterestStringField(fields["code"])
+		event.Reason = pinterestStringField(fields["reason"])
+	}
+	if carrier, ok := err.(interface{ FailureContractFields() map[string]any }); ok {
+		fields := carrier.FailureContractFields()
+		event.ErrorCode = pinterestStringField(fields["error_code"])
+		event.FailureStage = pinterestStringField(fields["failure_stage"])
+		event.Retriable, _ = fields["is_retriable"].(bool)
+	}
+	pinterestRecordDispatchEvent(ctx, event)
+}
+
+func pinterestStringField(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case int:
+		return fmt.Sprint(typed)
+	case int64:
+		return fmt.Sprint(typed)
+	default:
+		return ""
+	}
+}
+
+func pinterestIntField(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	default:
+		return 0
+	}
+}
+
 func (a *PinterestAdapter) pinterestNow() time.Time {
 	if a.now != nil {
 		return a.now()

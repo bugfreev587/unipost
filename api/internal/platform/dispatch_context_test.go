@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestDispatchMetadataRoundTrip(t *testing.T) {
@@ -22,6 +23,21 @@ func TestDispatchMetadataRoundTrip(t *testing.T) {
 	}
 	if ctx.Value(unrelatedKey{}) != "kept" {
 		t.Fatal("unrelated context value was not preserved")
+	}
+}
+
+func TestDispatchEventRecorderIsBoundedAndSnapshotsByValue(t *testing.T) {
+	recorder := NewDispatchEventRecorder()
+	for i := 0; i < 20; i++ {
+		recorder.Record(DispatchEvent{Name: "event", Duration: time.Duration(i)})
+	}
+	events := recorder.Snapshot()
+	if len(events) != 16 {
+		t.Fatalf("event count = %d, want 16", len(events))
+	}
+	events[0].Name = "mutated"
+	if recorder.Snapshot()[0].Name != "event" {
+		t.Fatal("snapshot mutated recorder state")
 	}
 }
 
