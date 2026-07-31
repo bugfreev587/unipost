@@ -38,6 +38,10 @@ export default async function GuidesIndexPage() {
           <div className="docs-card-title">X comments</div>
           <p>List eligible X replies, send idempotent responses, and run a bounded public-reply backfill.</p>
         </Link>
+        <Link href="/docs/guides/x/profile-and-post-history" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">X profile and post history</div>
+          <p>Read a connected X profile, paginate authored posts, and recover safely from uncertain results.</p>
+        </Link>
         {controlledGuides.filter((guide) => guide.href.includes("direct-messages")).map((guide) => (
           <Link key={guide.href} href={guide.href} className="docs-card" style={{ textDecoration: "none" }}>
             <div className="docs-card-title">{guide.title}</div>

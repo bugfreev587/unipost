@@ -426,8 +426,9 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     },
     {
       title: "X Guides",
-      description: "Plan managed-X usage and follow the phased X Inbox rollout.",
+      description: "Read connected-account data, plan managed-X usage, and follow the phased X rollout.",
       items: [
+        { label: "Profile and post history", href: "/docs/guides/x/profile-and-post-history" },
         { label: "X Credits", href: "/docs/guides/x/credits" },
       ],
     },

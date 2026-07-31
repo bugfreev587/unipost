@@ -75,6 +75,14 @@ function answerForPublicFlags(query, flags) {
   return docsAi.buildGroundedDocsAnswer(query, search);
 }
 
+function searchForPublicFlags(query, flags) {
+  const chunks = docsAi.DOCS_AI_INDEX.filter((chunk) => (
+    (!chunk.required_feature || flags[chunk.required_feature])
+    && (chunk.path !== "/docs/guides/x/direct-messages" || flags.x_dms_v1)
+  ));
+  return docsAi.searchDocsIndex(query, { limit: 5, chunks });
+}
+
 test("public X comments remain searchable while disabled DM and Credits chunks stay hidden", () => {
   const flags = { x_dms_v1: false, x_credits_billing_v1: false };
   const comments = answerForPublicFlags("How do I reply to X comments?", flags);
@@ -84,6 +92,27 @@ test("public X comments remain searchable while disabled DM and Credits chunks s
   assert.ok(comments.sources.some((source) => source.path === "/docs/guides/x/comments"));
   assert.ok(dms.sources.every((source) => source.path !== "/docs/guides/x/direct-messages"));
   assert.ok(credits.sources.every((source) => !["/docs/guides/x/credits", "/docs/api/x-credits"].includes(source.path)));
+});
+
+test("X account-read workflow stays searchable while its Credits details follow the feature flag", () => {
+  const flagsOff = { x_dms_v1: false, x_credits_billing_v1: false };
+  const workflowQuery = "Read an X profile and authored post history with cursor pagination";
+  const workflowSearch = searchForPublicFlags(workflowQuery, flagsOff);
+  const workflow = answerForPublicFlags(workflowQuery, flagsOff);
+  const creditsOff = answerForPublicFlags("How are profile and post-history reads charged X Credits?", flagsOff);
+  const creditsOn = answerForPublicFlags(
+    "How are profile and post-history reads charged X Credits?",
+    { ...flagsOff, x_credits_billing_v1: true },
+  );
+
+  assert.ok(workflowSearch.hits.some((hit) => hit.chunk.id === "guide-x-profile-post-history"));
+  assert.ok(
+    workflow.sources.some((source) => source.path === "/docs/guides/x/profile-and-post-history"),
+    JSON.stringify(workflow),
+  );
+  assert.ok(workflow.sources.every((source) => source.id !== "guide-x-profile-post-history-credits"));
+  assert.ok(creditsOff.sources.every((source) => source.id !== "guide-x-profile-post-history-credits"));
+  assert.ok(creditsOn.sources.some((source) => source.id === "guide-x-profile-post-history-credits"));
 });
 
 test("TikTok connect API questions route to Connect Sessions, not analytics followers", () => {
