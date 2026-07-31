@@ -74,6 +74,9 @@ func (s *RolloutService) Snapshot(ctx context.Context, workspaceID string, now t
 	}
 	snapshot.MonthlyAllowance = nil
 	snapshot.MonthlyUsed = 0
+	snapshot.MonthlyFinalized = 0
+	snapshot.MonthlyPending = 0
+	snapshot.MonthlyEffective = 0
 	snapshot.MonthlyRemaining = nil
 	snapshot.PausePaidSources = false
 	snapshot.InboundPauseReason = ""
@@ -88,6 +91,10 @@ func (s *RolloutService) Snapshot(ctx context.Context, workspaceID string, now t
 		}
 	}
 	return snapshot, nil
+}
+
+func (s *RolloutService) ListEvents(ctx context.Context, req ListEventsRequest) (EventPage, error) {
+	return s.base.ListEvents(ctx, req)
 }
 
 func (s *RolloutService) AdmitInbound(ctx context.Context, req InboundRequest) (InboundAdmission, error) {
@@ -130,7 +137,26 @@ func (s *RolloutService) ReserveExposure(
 	if err != nil {
 		return ExposureReservation{}, err
 	}
-	return s.base.reserveExposure(ctx, req, enabled)
+	return s.base.reserveExposure(ctx, req, enabled, nil)
+}
+
+func (s *RolloutService) ReserveExposureWithMutation(
+	ctx context.Context,
+	req ExposureReservationRequest,
+	mutation ExposureMutation,
+) (ExposureReservation, error) {
+	mode, err := xinbox.NormalizePersistedAppMode(req.AppMode)
+	if err != nil {
+		return ExposureReservation{}, err
+	}
+	if mode != xinbox.AppModeUniPostManaged {
+		return s.base.reserveExposure(ctx, req, false, mutation)
+	}
+	enabled, err := s.EnabledForWorkspace(ctx, req.WorkspaceID)
+	if err != nil {
+		return ExposureReservation{}, err
+	}
+	return s.base.reserveExposure(ctx, req, enabled, mutation)
 }
 
 func (s *RolloutService) MarkExposureReadStarted(ctx context.Context, id string) error {
@@ -143,6 +169,14 @@ func (s *RolloutService) MarkExposureFinalizePending(ctx context.Context, id str
 
 func (s *RolloutService) FinalizeExposure(ctx context.Context, id string, units int64) error {
 	return s.base.FinalizeExposure(ctx, id, units)
+}
+
+func (s *RolloutService) FinalizeExposureWithMutation(ctx context.Context, id string, units int64, mutation ExposureSettlementMutation) error {
+	return s.base.FinalizeExposureWithMutation(ctx, id, units, mutation)
+}
+
+func (s *RolloutService) MarkExposureFinalizePendingWithMutation(ctx context.Context, id string, units int64, message string, mutation ExposureSettlementMutation) error {
+	return s.base.MarkExposureFinalizePendingWithMutation(ctx, id, units, message, mutation)
 }
 
 func (s *RolloutService) ReleaseExposure(ctx context.Context, id string) error {
