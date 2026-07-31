@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -327,5 +328,111 @@ func TestLooksEphemeralFetchURL(t *testing.T) {
 	}
 	if looksEphemeralFetchURL("https://cdn.example.com/a.jpg") {
 		t.Fatal("expected plain public URL to not be treated as ephemeral")
+	}
+}
+
+func TestPinterestProviderFailureNormalizesKnownResponses(t *testing.T) {
+	tests := []struct {
+		name          string
+		operation     string
+		status        int
+		body          string
+		stage         string
+		wantMessage   string
+		wantErrorCode string
+		wantCode      string
+		wantReason    string
+		wantTransient bool
+		wantRetriable bool
+	}{
+		{
+			name: "invalid token", operation: "user account", status: 401,
+			body: `{"code":2,"message":"Authentication failed."}`, stage: "destination_preflight",
+			wantMessage:   "Pinterest rejected this connection. Reconnect the account, then try again.",
+			wantErrorCode: "auth_token_invalid", wantCode: "2", wantReason: "token_invalid",
+		},
+		{
+			name: "board inaccessible", operation: "board preflight", status: 403,
+			body: `{"code":29,"message":"You are not permitted to access that resource."}`, stage: "destination_preflight",
+			wantMessage:   "The selected Pinterest board is unavailable for this connected account.",
+			wantErrorCode: "target_not_found", wantCode: "29", wantReason: "board_not_accessible",
+		},
+		{
+			name: "board missing", operation: "board preflight", status: 404,
+			body: `{"code":40,"message":"Board not found."}`, stage: "destination_preflight",
+			wantMessage:   "The selected Pinterest board is unavailable for this connected account.",
+			wantErrorCode: "target_not_found", wantCode: "40", wantReason: "board_not_found",
+		},
+		{
+			name: "rate limit", operation: "board preflight", status: 429,
+			body: `{"code":8,"message":"Rate limit."}`, stage: "destination_preflight",
+			wantMessage:   "Pinterest is rate limiting this request. Try again later.",
+			wantErrorCode: "rate_limit", wantCode: "8", wantReason: "rate_limited",
+			wantTransient: true, wantRetriable: true,
+		},
+		{
+			name: "provider temporary", operation: "board preflight", status: 503,
+			body: `{"code":1,"message":"database host db.internal unavailable; token=secret"}`, stage: "destination_preflight",
+			wantMessage:   "Pinterest is temporarily unavailable. Try again later.",
+			wantErrorCode: "temporary_platform_error", wantCode: "1", wantReason: "provider_temporary_failure",
+			wantTransient: true, wantRetriable: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := pinterestProviderFailure(tt.operation, tt.status, []byte(tt.body), tt.stage)
+			if err.Error() != tt.wantMessage {
+				t.Fatalf("message = %q, want %q", err.Error(), tt.wantMessage)
+			}
+			if strings.Contains(err.Error(), "db.internal") || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("public error leaked provider body: %q", err)
+			}
+
+			providerCarrier, ok := err.(interface{ ProviderErrorFields() map[string]any })
+			if !ok {
+				t.Fatalf("error does not carry provider fields: %T", err)
+			}
+			provider := providerCarrier.ProviderErrorFields()
+			if provider["provider"] != "pinterest" || provider["http_status"] != tt.status || provider["code"] != tt.wantCode || provider["reason"] != tt.wantReason || provider["is_transient"] != tt.wantTransient {
+				t.Fatalf("provider fields = %#v", provider)
+			}
+
+			failureCarrier, ok := err.(interface{ FailureContractFields() map[string]any })
+			if !ok {
+				t.Fatalf("error does not carry failure fields: %T", err)
+			}
+			failure := failureCarrier.FailureContractFields()
+			if failure["error_code"] != tt.wantErrorCode || failure["failure_stage"] != tt.stage || failure["is_retriable"] != tt.wantRetriable {
+				t.Fatalf("failure fields = %#v", failure)
+			}
+		})
+	}
+}
+
+func TestPinterestTransportFailureIsTemporaryAndSanitized(t *testing.T) {
+	err := pinterestTransportFailure("board preflight", context.DeadlineExceeded, "destination_preflight")
+	if err.Error() != "Pinterest is temporarily unavailable. Try again later." {
+		t.Fatalf("message = %q", err.Error())
+	}
+	if strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+		t.Fatalf("public error leaked transport detail: %q", err)
+	}
+	provider := err.(interface{ ProviderErrorFields() map[string]any }).ProviderErrorFields()
+	if provider["provider"] != "pinterest" || provider["reason"] != "provider_temporary_failure" || provider["is_transient"] != true {
+		t.Fatalf("provider fields = %#v", provider)
+	}
+	failure := err.(interface{ FailureContractFields() map[string]any }).FailureContractFields()
+	if failure["error_code"] != "temporary_platform_error" || failure["failure_stage"] != "destination_preflight" || failure["is_retriable"] != true {
+		t.Fatalf("failure fields = %#v", failure)
+	}
+}
+
+func TestProviderOnlyErrorDoesNotClaimFailureContract(t *testing.T) {
+	err := newProviderError("provider temporary failure", map[string]any{
+		"provider": "example",
+	})
+	if _, ok := err.(interface{ FailureContractFields() map[string]any }); ok {
+		t.Fatalf("legacy provider-only error unexpectedly implements failure contract: %T", err)
 	}
 }

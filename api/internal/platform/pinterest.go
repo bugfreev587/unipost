@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -233,13 +234,13 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("pinterest create pin: %w", err)
+		return nil, pinterestTransportFailure("create pin", err, "dispatch")
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("pinterest create pin (%d): %s", resp.StatusCode, string(body))
+		return nil, pinterestProviderFailure("create pin", resp.StatusCode, body, "dispatch")
 	}
 
 	var pin struct {
@@ -256,6 +257,87 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 		ExternalID: pin.ID,
 		URL:        pin.URL,
 	}, nil
+}
+
+type pinterestAPIErrorBody struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func pinterestProviderFailure(operation string, status int, body []byte, stage string) error {
+	var providerBody pinterestAPIErrorBody
+	_ = json.Unmarshal(body, &providerBody)
+
+	providerCode := ""
+	if providerBody.Code != 0 {
+		providerCode = strconv.Itoa(providerBody.Code)
+	}
+	reason := "unknown"
+	errorCode := "platform_error"
+	message := "Pinterest rejected the request. Contact support if the problem continues."
+	isTransient := false
+	isRetriable := false
+
+	switch {
+	case status == http.StatusUnauthorized || providerBody.Code == 2:
+		reason = "token_invalid"
+		errorCode = "auth_token_invalid"
+		message = "Pinterest rejected this connection. Reconnect the account, then try again."
+	case providerBody.Code == 29:
+		reason = "board_not_accessible"
+		errorCode = "target_not_found"
+		message = "The selected Pinterest board is unavailable for this connected account."
+		if strings.EqualFold(strings.TrimSpace(operation), "create pin") {
+			stage = "destination_preflight"
+		}
+	case providerBody.Code == 40:
+		reason = "board_not_found"
+		errorCode = "target_not_found"
+		message = "The selected Pinterest board is unavailable for this connected account."
+		if strings.EqualFold(strings.TrimSpace(operation), "create pin") {
+			stage = "destination_preflight"
+		}
+	case status == http.StatusTooManyRequests:
+		reason = "rate_limited"
+		errorCode = "rate_limit"
+		message = "Pinterest is rate limiting this request. Try again later."
+		isTransient = true
+		isRetriable = true
+	case status >= http.StatusInternalServerError:
+		reason = "provider_temporary_failure"
+		errorCode = "temporary_platform_error"
+		message = "Pinterest is temporarily unavailable. Try again later."
+		isTransient = true
+		isRetriable = true
+	}
+
+	return newProviderFailure(message, map[string]any{
+		"provider":     "pinterest",
+		"http_status":  status,
+		"code":         providerCode,
+		"reason":       reason,
+		"is_transient": isTransient,
+	}, FailureContract{
+		ErrorCode:   errorCode,
+		Stage:       strings.TrimSpace(stage),
+		IsRetriable: isRetriable,
+	})
+}
+
+func pinterestTransportFailure(_ string, _ error, stage string) error {
+	return newProviderFailure(
+		"Pinterest is temporarily unavailable. Try again later.",
+		map[string]any{
+			"provider":     "pinterest",
+			"reason":       "provider_temporary_failure",
+			"is_transient": true,
+		},
+		FailureContract{
+			ErrorCode:   "temporary_platform_error",
+			Stage:       strings.TrimSpace(stage),
+			IsRetriable: true,
+		},
+	)
 }
 
 func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
