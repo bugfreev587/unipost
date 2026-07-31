@@ -132,8 +132,6 @@ func TestPostDeliveryJobConnectionSnapshotMigrationContract(t *testing.T) {
 	for _, want := range []string{
 		"ADD COLUMN connection_id TEXT",
 		"ADD COLUMN binding_version BIGINT",
-		"SET connection_id = sa.connection_id",
-		"binding_version = sa.binding_version",
 		"COALESCE(connection_id, social_account_id)",
 		"DROP COLUMN IF EXISTS binding_version",
 		"DROP COLUMN IF EXISTS connection_id",
@@ -141,6 +139,9 @@ func TestPostDeliveryJobConnectionSnapshotMigrationContract(t *testing.T) {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("connection snapshot migration missing %q:\n%s", want, sql)
 		}
+	}
+	if strings.Contains(sql, "UPDATE post_delivery_jobs") {
+		t.Fatal("Expand migration must not backfill historical delivery jobs")
 	}
 }
 

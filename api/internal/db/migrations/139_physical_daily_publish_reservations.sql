@@ -5,11 +5,6 @@ ALTER TABLE social_post_results
   ADD COLUMN daily_reservation_operation_key TEXT,
   ADD COLUMN daily_reservation_release_pending BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Block legacy result writers while today's success count is captured and the
--- compatibility trigger is installed. Once this transaction commits, an old
--- pod that records a success automatically advances the durable ledger.
-LOCK TABLE social_post_results IN SHARE ROW EXCLUSIVE MODE;
-
 CREATE TABLE physical_daily_publish_reservations (
   workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   physical_account_id TEXT NOT NULL,
@@ -40,31 +35,6 @@ CREATE INDEX physical_daily_publish_operations_account_idx
     platform,
     utc_date
   );
-
-INSERT INTO physical_daily_publish_reservations (
-  workspace_id,
-  physical_account_id,
-  platform,
-  utc_date,
-  reserved_count
-)
-SELECT
-  p.workspace_id,
-  COALESCE(sa.connection_id, sa.id),
-  sa.platform,
-  (result.published_at AT TIME ZONE 'UTC')::DATE,
-  COUNT(*)::INTEGER
-FROM social_post_results result
-JOIN social_accounts sa ON sa.id = result.social_account_id
-JOIN profiles p ON p.id = sa.profile_id
-WHERE result.published_at IS NOT NULL
-  AND result.published_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')
-  AND result.published_at < date_trunc('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day'
-GROUP BY
-  p.workspace_id,
-  COALESCE(sa.connection_id, sa.id),
-  sa.platform,
-  (result.published_at AT TIME ZONE 'UTC')::DATE;
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION reserve_physical_daily_publish(

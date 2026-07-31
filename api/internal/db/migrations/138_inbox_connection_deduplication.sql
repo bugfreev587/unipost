@@ -11,60 +11,6 @@ CREATE TABLE inbox_item_supersessions (
   CHECK (inbox_item_id <> canonical_inbox_item_id)
 );
 
--- Historical sibling bindings may already contain the same provider event.
--- Preserve every row for audit, but mark later copies as superseded and assign
--- the physical key only to the earliest copy. API reads exclude superseded rows;
--- future upserts resolve connection_id and conflict with the canonical row.
-WITH ranked AS (
-  SELECT
-    i.id,
-    sa.connection_id,
-    FIRST_VALUE(i.id) OVER (
-      PARTITION BY sa.connection_id, i.source, i.external_id
-      ORDER BY i.received_at, i.created_at, i.id
-    ) AS canonical_id,
-    ROW_NUMBER() OVER (
-      PARTITION BY sa.connection_id, i.source, i.external_id
-      ORDER BY i.received_at, i.created_at, i.id
-    ) AS duplicate_rank
-  FROM inbox_items i
-  JOIN social_accounts sa ON sa.id = i.social_account_id
-  WHERE sa.connection_id IS NOT NULL
-)
-INSERT INTO inbox_item_supersessions (inbox_item_id, canonical_inbox_item_id)
-SELECT id, canonical_id
-FROM ranked
-WHERE duplicate_rank > 1;
-
-WITH ranked AS (
-  SELECT
-    i.id,
-    sa.connection_id,
-    ROW_NUMBER() OVER (
-      PARTITION BY sa.connection_id, i.source, i.external_id
-      ORDER BY i.received_at, i.created_at, i.id
-    ) AS duplicate_rank
-  FROM inbox_items i
-  JOIN social_accounts sa ON sa.id = i.social_account_id
-  WHERE sa.connection_id IS NOT NULL
-)
-UPDATE inbox_items i
-SET connection_id = ranked.connection_id
-FROM ranked
-WHERE ranked.id = i.id
-  AND ranked.duplicate_rank = 1;
-
--- The original binding-scoped constraint blocks rehoming a canonical row onto
--- a sibling that retains its hidden historical duplicate. Classified rows are
--- now protected by the connection-level index below; only legacy rows still
--- need binding-scoped uniqueness.
-ALTER TABLE inbox_items
-  DROP CONSTRAINT IF EXISTS inbox_items_social_account_id_external_id_key;
-
-CREATE UNIQUE INDEX inbox_items_legacy_account_source_external_unique_idx
-  ON inbox_items (social_account_id, source, external_id)
-  WHERE connection_id IS NULL;
-
 CREATE UNIQUE INDEX inbox_items_connection_source_external_unique_idx
   ON inbox_items (connection_id, source, external_id)
   WHERE connection_id IS NOT NULL;
@@ -198,9 +144,5 @@ DROP TRIGGER IF EXISTS aa_social_accounts_rehome_connection_inbox_items ON socia
 DROP FUNCTION IF EXISTS rehome_connection_inbox_items_before_binding_delete();
 DROP INDEX IF EXISTS inbox_items_connection_received_idx;
 DROP INDEX IF EXISTS inbox_items_connection_source_external_unique_idx;
-DROP INDEX IF EXISTS inbox_items_legacy_account_source_external_unique_idx;
 DROP TABLE IF EXISTS inbox_item_supersessions;
 ALTER TABLE inbox_items DROP COLUMN IF EXISTS connection_id;
-ALTER TABLE inbox_items
-  ADD CONSTRAINT inbox_items_social_account_id_external_id_key
-  UNIQUE (social_account_id, external_id);
