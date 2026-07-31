@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { ArrowRight, BarChart3, CheckCircle2, ExternalLink } from "lucide-react";
 import { MarketingCTA } from "@/components/marketing/nav";
-import { PlatformIcon } from "@/components/platform-icons";
+import { PublicPlatformIcon } from "@/components/public/public-platform-icon";
 
 export type AnalyticsToolSlug = "tiktok" | "youtube" | "instagram" | "threads" | "pinterest";
 
@@ -265,7 +265,7 @@ export function PublicAnalyticsToolPage({ tool }: { tool: AnalyticsToolConfig })
         <div className="at-hero-copy">
           <div className="at-eyebrow">
             <span className="at-icon-pill">
-              <PlatformIcon platform={tool.slug} size={18} />
+              <PublicPlatformIcon platform={tool.slug} size={18} />
             </span>
             {tool.eyebrow}
           </div>
@@ -377,7 +377,7 @@ export function PublicAnalyticsToolPage({ tool }: { tool: AnalyticsToolConfig })
           {relatedTools.map((item) => (
             <Link href={item.href} className="at-related-link" key={item.slug}>
               <span>
-                <PlatformIcon platform={item.slug} size={16} />
+                <PublicPlatformIcon platform={item.slug} size={16} />
                 {item.title}
               </span>
               <ArrowRight aria-hidden="true" />

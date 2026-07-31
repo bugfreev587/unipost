@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { establishPreviewBypassCookie } from "./support/synthetic-auth.mjs";
+
 const expectedSHA = process.env.EXPECTED_PREVIEW_SHA;
 const expectedAPIURL = process.env.EXPECTED_PREVIEW_API_URL?.replace(/\/+$/, "");
 const dashboardBaseURL = process.env.DASHBOARD_BASE_URL;
@@ -29,7 +31,6 @@ test("frontend and API are the same isolated preview pair", async ({ page }) => 
   const manifestResponse = await page.request.get("/__unipost-preview.json", {
     headers: {
       "x-vercel-protection-bypass": automationBypassSecret,
-      "x-vercel-set-bypass-cookie": "true",
     },
   });
   expect(manifestResponse.ok()).toBeTruthy();
@@ -46,6 +47,10 @@ test("frontend and API are the same isolated preview pair", async ({ page }) => 
     }
   });
 
+  await establishPreviewBypassCookie(page, {
+    baseURL: dashboardBaseURL,
+    vercelBypassSecret: automationBypassSecret,
+  });
   await page.goto("/docs", { waitUntil: "domcontentloaded" });
   await expect(page.locator("article").first()).toContainText(/UniPost|API/);
 

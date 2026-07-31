@@ -54,6 +54,8 @@ const (
 	ActionPlanChanged  = "PLAN.CHANGED"
 	ActionTrialGranted = "TRIAL.GRANTED"
 	ActionTrialRevoked = "TRIAL.REVOKED"
+
+	ActionPostFailureDebugViewed = "POST_FAILURE.DEBUG_VIEWED"
 )
 
 // Event is the input shape for Log. Pointer-y fields default to NULL

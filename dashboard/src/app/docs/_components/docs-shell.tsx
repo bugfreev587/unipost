@@ -1414,7 +1414,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-page h2:hover .docs-heading-anchor,.docs-page h3:hover .docs-heading-anchor,.docs-heading-anchor:focus-visible{opacity:1}
 .docs-heading-anchor:hover{color:var(--docs-link-hover);text-decoration:none!important;transform:translateY(-1px) scale(1.04)}
 .docs-heading-anchor:focus-visible{outline:2px solid color-mix(in srgb, var(--docs-link) 58%, transparent);outline-offset:3px;border-radius:5px}
-.docs-page p{font-size:16px;line-height:1.76;color:var(--docs-text-soft);margin:0 0 16px;max-width:66ch}
+.docs-page p{font-size:16px;line-height:1.76;color:var(--docs-text-soft);margin:0 0 16px;max-width:66ch;overflow-wrap:anywhere}
 .docs-page a{color:var(--docs-link);text-decoration:none}
 .docs-page a:hover{color:var(--docs-link-hover);text-decoration:underline;text-decoration-thickness:1.2px}
 .docs-page strong{color:var(--docs-text)}

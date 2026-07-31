@@ -20,6 +20,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/inboxaccess"
+	"github.com/xiaoboyu/unipost-api/internal/requestevents"
 )
 
 const (
@@ -44,6 +45,13 @@ type recordingInboxPlanGate struct {
 	scope       inboxaccess.Scope
 }
 
+type countingLogReadSelector struct {
+	calls   int
+	enabled bool
+}
+
+func (s *countingLogReadSelector) UseV2(context.Context) bool { s.calls++; return s.enabled }
+
 func (g *recordingInboxPlanGate) PlanAllowsInbox(ctx context.Context, workspaceID string) bool {
 	g.calls++
 	g.workspaceID = workspaceID
@@ -65,6 +73,7 @@ type webSocketTestHarness struct {
 	serveWS           string
 	serveScope        inboxaccess.Scope
 	serveContextScope inboxaccess.Scope
+	logServes         int
 }
 
 func newInboxWebSocketTestHandler() *webSocketTestHarness {
@@ -111,7 +120,75 @@ func newInboxWebSocketTestHandler() *webSocketTestHarness {
 		harness.serveScope = scope
 		harness.serveContextScope, _ = inboxaccess.FromContext(ctx)
 	}
+	harness.handler.serveLogWebSocket = func(_ context.Context, _ string, _ *websocket.Conn) {
+		harness.serves++
+		harness.logServes++
+	}
 	return harness
+}
+
+func TestLogsWebSocketDoesNotEvaluateReadModeAtHandshake(t *testing.T) {
+	harness := newInboxWebSocketTestHandler()
+	harness.handler.scopedInboxAuth = false
+	harness.handler.planChecker = nil
+	selector := &countingLogReadSelector{enabled: true}
+	harness.handler.WithLogReadSelector(selector)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/logs/ws?token="+testClerkToken, nil)
+	harness.handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if selector.calls != 0 {
+		t.Fatalf("selector calls = %d, want 0", selector.calls)
+	}
+	if harness.logServes != 1 {
+		t.Fatalf("log serves = %d, want 1", harness.logServes)
+	}
+}
+
+func TestLogsWebSocketModeDoesNotDependOnSelectorPresence(t *testing.T) {
+	harness := newInboxWebSocketTestHandler()
+	harness.handler.scopedInboxAuth = false
+	harness.handler.planChecker = nil
+	harness.handler.WithLogReadSelector(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/logs/ws?token="+testClerkToken, nil)
+	harness.handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if harness.logServes != 1 || harness.legacyServes != 0 {
+		t.Fatalf("log/legacy serves = %d/%d, want 1/0", harness.logServes, harness.legacyServes)
+	}
+}
+
+func TestAuthenticatedLogsWebSocketSwitchesOpenConnectionToLegacyWithoutReconnect(t *testing.T) {
+	harness := newInboxWebSocketTestHandler()
+	harness.handler.scopedInboxAuth = false
+	harness.handler.planChecker = nil
+	selector := &countingLogReadSelector{enabled: true}
+	harness.handler.WithLogReadSelector(selector)
+	connection := &Conn{send: make(chan []byte, 2)}
+	harness.handler.serveLogWebSocket = func(_ context.Context, workspaceID string, _ *websocket.Conn) {
+		harness.logServes++
+		harness.handler.Hub.RegisterLog(workspaceID, connection)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/logs/ws?token="+testClerkToken, nil)
+	harness.handler.ServeHTTP(httptest.NewRecorder(), req)
+	defer harness.handler.Hub.Unregister("workspace_1", connection)
+	if harness.legacyCalls != 1 || harness.accepts != 1 || harness.logServes != 1 {
+		t.Fatalf("handshake calls = auth:%d accept:%d serve:%d, want 1/1/1", harness.legacyCalls, harness.accepts, harness.logServes)
+	}
+
+	canonical, _ := json.Marshal(RequestEventLogEnvelope(requestevents.Event{ID: "event-1", WorkspaceID: "workspace_1"}))
+	harness.handler.Hub.Broadcast("workspace_1", canonical)
+	assertHubLogID(t, connection.send, "request:event-1")
+
+	selector.enabled = false
+	legacy, _ := json.Marshal(LogEnvelope(db.IntegrationLog{ID: 42, WorkspaceID: "workspace_1", Category: "api_request"}))
+	harness.handler.Hub.Broadcast("workspace_1", legacy)
+	assertHubLogID(t, connection.send, int64(42))
+	if harness.legacyCalls != 1 || harness.accepts != 1 || harness.logServes != 1 {
+		t.Fatalf("connection re-handshook = auth:%d accept:%d serve:%d", harness.legacyCalls, harness.accepts, harness.logServes)
+	}
 }
 
 func clerkWebSocketContext(ctx context.Context, role string) context.Context {

@@ -10,7 +10,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { PublicSiteHeader, MarketingCTA } from "@/components/marketing/nav";
-import { PlatformIcon } from "@/components/platform-icons";
+import { PublicPlatformIcon } from "@/components/public/public-platform-icon";
 
 const description =
   "UniPost is a developer-first social media publishing API for products that need account connection, posting, scheduling, webhooks, analytics, and inbox workflows across social platforms.";
@@ -249,7 +249,7 @@ export default function AboutPage() {
               <div className="about-visual-platforms">
                 {ABOUT_PLATFORMS.map((platform) => (
                   <div key={platform.name} className="about-platform">
-                    <PlatformIcon platform={platform.platform} size={16} />
+                    <PublicPlatformIcon platform={platform.platform} size={16} />
                     <span className="about-platform-name">{platform.name}</span>
                   </div>
                 ))}

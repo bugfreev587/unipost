@@ -42,15 +42,19 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/mediaprocessing"
 	"github.com/xiaoboyu/unipost-api/internal/metrics"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
+	"github.com/xiaoboyu/unipost-api/internal/observabilityreads"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/paidquotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailuredebug"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/railwaybackup"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
+	"github.com/xiaoboyu/unipost-api/internal/requesteventpartitions"
+	"github.com/xiaoboyu/unipost-api/internal/requestevents"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/trials"
@@ -88,6 +92,7 @@ func main() {
 		os.Getenv,
 		func(token string) railwaybackup.Client { return railwaybackup.New(token) },
 		db.RunMigrationsWithBackupGate,
+		requesteventpartitions.EnsureDatabaseReady,
 	); handled {
 		if commandErr != nil {
 			slog.Error("migration command failed", "error", commandErr)
@@ -223,6 +228,14 @@ func main() {
 	superAdminChecker := auth.NewSuperAdminChecker(queries)
 	featureFlagStore := featureflags.NewPostgresStore(pool)
 	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
+	observabilityLogStore := observabilityreads.NewPostgresLogStore(pool)
+	observabilityMetricsStore := observabilityreads.NewPostgresMetricsStore(pool)
+	observabilityReadSelector := observabilityreads.NewReadSelector(featureFlagEvaluator, slog.Default())
+	observabilityLiveLogMode := observabilityreads.NewCachedReadSelector(observabilityReadSelector, observabilityreads.CachedReadSelectorConfig{
+		RefreshInterval:   time.Second,
+		EvaluationTimeout: 500 * time.Millisecond,
+		Logger:            slog.Default(),
+	})
 	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
 	publishingRestrictionStore := publishingrestrictions.NewPostgresStore(pool)
 	publishingRestrictionCampaignPreviewSecret := strings.TrimSpace(os.Getenv("PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET"))
@@ -232,6 +245,16 @@ func main() {
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
 	})
+	postFailureDebugWriter := postfailuredebug.NewWriter(
+		postfailuredebug.NewPostgresStore(pool),
+		postfailuredebug.Config{},
+	)
+	requestEventRecorder := requestevents.NewRecorder(
+		requestevents.NewPostgresStore(pool),
+		requestevents.Config{},
+	)
+	partitionStore := requesteventpartitions.NewPostgresStore(pool)
+	requestEventPartitionWorker := requesteventpartitions.NewWorker(partitionStore)
 
 	// Build the Stripe billing manager now that the DB is ready. The
 	// SUPER_ADMINS list may contain email addresses, which the manager
@@ -281,8 +304,30 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 
+	if processMode == processModeAPI {
+		go requestEventPartitionWorker.Start(workerCtx)
+	}
+	if processMode == processModeAPI {
+		observabilityRollupStore := observabilityreads.NewPostgresRollupStore(pool)
+		observabilityRollupWorker := observabilityreads.NewRollupWorker(observabilityRollupStore)
+		go observabilityRollupWorker.Start(workerCtx)
+	}
+	if processMode == processModeAPI {
+		observabilityLiveLogMode.Start(workerCtx)
+	}
+
 	if processMode == processModeAPI || processMode == processModePostDeliveryWorker {
 		go integrationLogger.Start(workerCtx)
+		// The diagnostic writer has its own lifecycle. Customer requests and
+		// delivery workers are quiesced before Stop closes queue admission.
+		go postFailureDebugWriter.Start(ctx)
+	}
+	if processMode == processModeAPI {
+		// The canonical recorder is a dark dual-write path. Existing Metrics and
+		// integration-log writers remain active until read parity is accepted.
+		// Its lifecycle outlives worker cancellation so in-flight HTTP requests
+		// finish before queue admission closes during graceful shutdown.
+		go requestEventRecorder.Start(ctx)
 	}
 
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
@@ -596,7 +641,8 @@ func main() {
 		SetXTokenRefresher(xTokenRefresher).
 		SetPaidScheduleCoordinator(paidquota.NewPostgresCoordinator(pool)).
 		SetHoldReconciler(paidQuotaHoldReconciler).
-		SetPaidQuotaEvaluator(paidPlanQuotaEmailService)
+		SetPaidQuotaEvaluator(paidPlanQuotaEmailService).
+		SetPostFailureDebugSink(postFailureDebugWriter)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
@@ -678,6 +724,9 @@ func main() {
 			processName = "media worker"
 		}
 		waitForProcessShutdown(processName, workerCancel, port)
+		debugWaitCtx, debugWaitCancel := context.WithTimeout(context.Background(), 4*time.Second)
+		waitForPostFailureDebugShutdown(debugWaitCtx, postFailureDebugWriter)
+		debugWaitCancel()
 		return
 	}
 
@@ -730,8 +779,8 @@ func main() {
 	mediaProcessingAdmitter := mediaprocessing.NewPostgresAdmitter(pool)
 	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient).WithAdmitter(mediaProcessingAdmitter)
 	mediaGIFConversionHandler := handler.NewMediaGIFConversionHandler(queries, storageClient, mediaProcessingAdmitter)
-	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
-	adminAPIMetricsHandler := handler.NewAdminAPIMetricsHandler(queries)
+	apiMetricsHandler := handler.NewAPIMetricsHandler(queries).WithObservabilityReads(observabilityReadSelector, observabilityMetricsStore)
+	adminAPIMetricsHandler := handler.NewAdminAPIMetricsHandler(queries).WithObservabilityReads(observabilityReadSelector, observabilityMetricsStore)
 	adminObjectStorageHandler := handler.NewAdminObjectStorageHandler(queries, os.Getenv("R2_BUCKET_NAME"))
 	adminSearchHistoryHandler := handler.NewAdminSearchHistoryHandler(queries, superAdminChecker)
 	apiMetricsRecorder := metrics.NewRecorder(queries)
@@ -799,7 +848,8 @@ func main() {
 	billingHandler.SetTrialService(trialService)
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries).
 		SetTrialService(trialService).
-		SetPaidQuotaServices(paidQuotaHoldReconciler, paidPlanQuotaEmailService)
+		SetPaidQuotaServices(paidQuotaHoldReconciler, paidPlanQuotaEmailService).
+		SetObservabilityReads(observabilityReadSelector, observabilityLogStore)
 	supportBundleHandler := handler.NewSupportBundleHandler(queries)
 	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
 	errorTriageHandler := handler.NewErrorTriageHandler(errorTriageStore, errorTriageService, errorTriageEmailService)
@@ -848,7 +898,7 @@ func main() {
 	inboxWSHandler := ws.NewHandler(inboxHub, queries).
 		WithInboxPlanGate(quotaChecker).
 		WithInboxScopeAuth()
-	logsWSHandler := ws.NewHandler(logsHub, queries)
+	logsWSHandler := ws.NewHandler(logsHub, queries).WithLogReadSelector(observabilityLiveLogMode)
 	r.Get("/v1/inbox/ws", inboxWSHandler.ServeHTTP)
 	r.Get("/v1/logs/ws", logsWSHandler.ServeHTTP)
 
@@ -1005,6 +1055,10 @@ func main() {
 			Get("/v1/admin/feature-flags", featureFlagsHandler.ListAdmin)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Feature flags are restricted to super admins")).
 			Patch("/v1/admin/feature-flags/{key}", featureFlagsHandler.UpdateAdmin)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Request-event telemetry is restricted to super admins")).
+			Get("/v1/admin/observability/request-events", requestevents.StatsHandler(requestEventRecorder))
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Request-event partition health is restricted to super admins")).
+			Get("/v1/admin/observability/request-event-partitions", requesteventpartitions.StatusHandler(partitionStore, requestEventPartitionWorker))
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
 			Get("/v1/admin/publishing-restrictions", publishingRestrictionHandler.AdminList)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
@@ -1028,7 +1082,10 @@ func main() {
 		r.Post("/v1/admin/workspaces/{workspaceID}/plan", adminHandler.SetPlan)
 		r.Post("/v1/admin/workspaces/{workspaceID}/trials", adminHandler.GrantTrial)
 		r.Post("/v1/admin/workspaces/{workspaceID}/trials/{trialID}/revoke", adminHandler.RevokeTrial)
-		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin errors are restricted to super admins")).
+			Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin errors are restricted to super admins")).
+			Get("/v1/admin/post-failures/{id}/debug", adminHandler.GetPostFailureDebug)
 		r.Get("/v1/admin/error-triage/runs", errorTriageHandler.ListRuns)
 		r.Post("/v1/admin/error-triage/runs", errorTriageHandler.CreateRun)
 		r.Get("/v1/admin/error-triage/runs/{id}", errorTriageHandler.GetRun)
@@ -1064,6 +1121,7 @@ func main() {
 		r.Use(auth.DualAuthMiddleware(queries))
 		r.Use(integrationlogs.Middleware(integrationLogger))
 		r.Use(apiMetricsRecorder.Middleware)
+		r.Use(requestevents.Middleware(requestEventRecorder))
 
 		// Workspace info.
 		r.Get("/v1/workspace", workspaceHandler.Get)
@@ -1291,7 +1349,7 @@ func main() {
 		// inline at every mutation site via internal/audit.Log().
 		auditHandler := handler.NewAuditHandler(queries)
 		r.With(handler.RequirePlanAuditLog(quotaChecker)).Get("/v1/audit-log", auditHandler.List)
-		logsHandler := handler.NewLogsHandler(queries)
+		logsHandler := handler.NewLogsHandler(queries).SetObservabilityReads(observabilityReadSelector, observabilityLogStore)
 		r.Get("/v1/logs", logsHandler.List)
 		// Mount the static /stream route before the /{id} param route so
 		// chi does not treat "stream" as a log id.
@@ -1360,14 +1418,67 @@ func main() {
 
 	slog.Info("shutting down server")
 	workerCancel()
+	observabilityLiveLogMode.Stop()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("server forced to shutdown", "error", err)
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		slog.Error("server forced to shutdown", "error", shutdownErr)
+	}
+	waitForPostFailureDebugShutdown(shutdownCtx, postFailureDebugWriter)
+	waitForRequestEventRecorderShutdown(shutdownCtx, requestEventRecorder)
+	waitForObservabilityLiveLogModeShutdown(shutdownCtx, observabilityLiveLogMode)
+	if shutdownErr != nil {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+func waitForObservabilityLiveLogModeShutdown(ctx context.Context, observabilityLiveLogMode *observabilityreads.CachedReadSelector) {
+	if observabilityLiveLogMode == nil {
+		return
+	}
+	observabilityLiveLogMode.Stop()
+	if err := observabilityLiveLogMode.Wait(ctx); err != nil {
+		slog.Warn("observability live-log mode shutdown timed out", "error", err)
+	}
+}
+
+func waitForPostFailureDebugShutdown(ctx context.Context, writer *postfailuredebug.Writer) {
+	if writer == nil {
+		return
+	}
+	writer.Stop()
+	if err := writer.Wait(ctx); err != nil {
+		stats := writer.Stats()
+		slog.Warn("post failure debug writer shutdown timed out",
+			"error", err,
+			"queue_depth", stats.QueueDepth,
+			"abandoned", stats.Abandoned,
+			"dropped", stats.Dropped,
+			"failures", stats.Failures,
+		)
+	}
+}
+
+func waitForRequestEventRecorderShutdown(ctx context.Context, recorder *requestevents.Recorder) {
+	if recorder == nil {
+		return
+	}
+	recorder.Stop()
+	if err := recorder.Wait(ctx); err != nil {
+		stats := recorder.Stats()
+		slog.Warn("request event recorder shutdown timed out",
+			"error", err,
+			"normal_queue_depth", stats.NormalQueueDepth,
+			"failure_queue_depth", stats.FailureQueueDepth,
+			"success_dropped", stats.SuccessDropped,
+			"success_write_failures", stats.SuccessWriteFailures,
+			"failure_write_failures", stats.FailureWriteFailures,
+			"abandoned", stats.Abandoned,
+		)
+	}
 }
 
 func warnMissingPublishingRestrictionCampaignConfigFor(readiness publishingrestrictions.CampaignDeliveryReadiness) {

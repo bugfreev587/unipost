@@ -16,7 +16,7 @@ import {
   type BillingInfo,
 } from "@/lib/api";
 import { useLogsWebSocket } from "@/lib/use-logs-ws";
-import { integrationLogMatchesSearch } from "@/lib/log-search";
+import { integrationLogMatchesSearch, logDetailUnavailableMessage } from "@/lib/log-search";
 import {
   Check,
   Copy,
@@ -290,7 +290,7 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
+  const [selectedLogId, setSelectedLogId] = useState<number | string | null>(null);
   const [selectedLog, setSelectedLog] = useState<IntegrationLog | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
@@ -525,7 +525,7 @@ export default function LogsPage() {
     }
   };
 
-  const openLog = async (id: number) => {
+  const openLog = async (id: number | string) => {
     try {
       setSelectedLogId(id);
       setSelectedLog(null);
@@ -555,6 +555,7 @@ export default function LogsPage() {
   };
 
   const selectedTone = selectedLog ? toneForStatus(selectedLog.status) : null;
+  const detailUnavailableMessage = selectedLog ? logDetailUnavailableMessage(selectedLog) : null;
   const errorCount = logs.filter((log) => log.status === "error").length;
   const warningCount = logs.filter((log) => log.status === "warning").length;
   const publishCount = logs.filter((log) => log.category === "publishing").length;
@@ -947,6 +948,11 @@ export default function LogsPage() {
                     ) : null
                   }
                 />
+                {detailUnavailableMessage ? (
+                  <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--dborder)", background: "var(--surface2)", color: "var(--dmuted)", fontSize: 12.5, lineHeight: 1.5 }}>
+                    {detailUnavailableMessage}
+                  </div>
+                ) : null}
                 {drawerTab === "raw" ? (
                   <pre style={drawerRawJsonStyle}>{JSON.stringify(selectedLog, null, 2)}</pre>
                 ) : (

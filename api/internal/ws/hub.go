@@ -19,9 +19,12 @@ import (
 
 // Conn wraps a single WebSocket connection.
 type Conn struct {
-	ws   *websocket.Conn
-	send chan []byte
+	ws      *websocket.Conn
+	send    chan []byte
+	project func([]byte, bool) ([]byte, bool)
 }
+
+type logReadSelector interface{ UseV2(context.Context) bool }
 
 // Subscription is a non-WebSocket consumer of a workspace's broadcast
 // stream. SSE handlers use it to receive the same raw envelopes the
@@ -76,6 +79,18 @@ type Hub struct {
 	subs        map[string]map[*Subscription]struct{} // workspaceID -> set of legacy raw subscribers
 	scopedConns map[scopeKey]map[*Conn]struct{}
 	scopedSubs  map[scopeKey]map[*Subscription]struct{}
+	logSelector logReadSelector
+}
+
+// WithLogReadSelector installs the process-level in-memory selector used by
+// Broadcast. It must be configured before the hub begins serving traffic.
+func (h *Hub) WithLogReadSelector(selector logReadSelector) *Hub {
+	if h != nil {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.logSelector = selector
+	}
+	return h
 }
 
 func NewHub() *Hub {
@@ -171,6 +186,14 @@ func (h *Hub) Register(workspaceID string, c *Conn) {
 	slog.Info("ws: client connected", "workspace_id", workspaceID, "total", len(h.conns[workspaceID]))
 }
 
+func (h *Hub) RegisterLog(workspaceID string, c *Conn) {
+	if c == nil {
+		return
+	}
+	c.project = ProjectLogEnvelope
+	h.Register(workspaceID, c)
+}
+
 // RegisterScope registers an Inbox connection under an exact canonical scope.
 func (h *Hub) RegisterScope(scope inboxaccess.Scope, c *Conn) bool {
 	key, ok := keyForScope(scope)
@@ -237,10 +260,28 @@ func (h *Hub) Unregister(workspaceID string, c *Conn) {
 func (h *Hub) Broadcast(workspaceID string, msg []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	useV2 := false
+	if h.logSelector != nil {
+		useV2 = h.logSelector.UseV2(context.Background())
+	}
 
+	var projectedPayload []byte
+	var projectedOK bool
+	projectionReady := false
 	for c := range h.conns[workspaceID] {
+		payload := msg
+		if c.project != nil {
+			if !projectionReady {
+				projectedPayload, projectedOK = c.project(msg, useV2)
+				projectionReady = true
+			}
+			if !projectedOK {
+				continue
+			}
+			payload = projectedPayload
+		}
 		select {
-		case c.send <- msg:
+		case c.send <- payload:
 		default:
 			// Client is slow, skip this message.
 			slog.Warn("ws: dropping message for slow client", "workspace_id", workspaceID)
@@ -312,13 +353,25 @@ func (h *Hub) BroadcastInboxItem(workspaceID, externalUserID string, item any) {
 // ServeConn runs the read/write pumps for a connection. Blocks until
 // the connection closes. Called as a goroutine from the HTTP handler.
 func (h *Hub) ServeConn(parentCtx context.Context, workspaceID string, ws *websocket.Conn) {
+	h.serveConn(parentCtx, workspaceID, ws, false)
+}
+
+func (h *Hub) ServeLogConn(parentCtx context.Context, workspaceID string, ws *websocket.Conn) {
+	h.serveConn(parentCtx, workspaceID, ws, true)
+}
+
+func (h *Hub) serveConn(parentCtx context.Context, workspaceID string, ws *websocket.Conn, projectLogs bool) {
 	// Detach from the HTTP request context so the connection stays
 	// alive after the handler returns. Use a cancel for cleanup.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	c := &Conn{ws: ws, send: make(chan []byte, 64)}
-	h.Register(workspaceID, c)
+	if projectLogs {
+		h.RegisterLog(workspaceID, c)
+	} else {
+		h.Register(workspaceID, c)
+	}
 	defer h.Unregister(workspaceID, c)
 
 	// Write pump: drain send channel to the WebSocket.

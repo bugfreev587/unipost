@@ -18,6 +18,7 @@ import {
   getAdminIntegrationLog,
   listAdminIntegrationLogs,
 } from "@/lib/api";
+import { logDetailUnavailableMessage } from "@/lib/log-search";
 import { AdminShell } from "../_components/admin-ui";
 import { SearchHistoryInput } from "../_components/search-history-input";
 
@@ -285,7 +286,7 @@ function AdminLogsPageInner() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
+  const [selectedLogId, setSelectedLogId] = useState<number | string | null>(null);
   const [selectedLog, setSelectedLog] = useState<AdminIntegrationLog | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
@@ -419,6 +420,7 @@ function AdminLogsPageInner() {
   const warningCount = useMemo(() => logs.filter((log) => log.status === "warning").length, [logs]);
   const workspaceCount = useMemo(() => new Set(logs.map((log) => log.workspace_id)).size, [logs]);
   const latestLog = logs[0] || null;
+  const detailUnavailableMessage = selectedLog ? logDetailUnavailableMessage(selectedLog) : null;
   const retentionSummary = useMemo(() => {
     const plans = Array.from(new Set(logs.map((log) => (log.plan_id || "free").toLowerCase()).filter(Boolean)));
     if (plans.length === 1) {
@@ -732,6 +734,11 @@ function AdminLogsPageInner() {
                     ) : null
                   }
                 />
+                {detailUnavailableMessage ? (
+                  <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--dborder)", background: "var(--surface2)", color: "var(--dmuted)", fontSize: 12.5, lineHeight: 1.5 }}>
+                    {detailUnavailableMessage}
+                  </div>
+                ) : null}
                 {drawerTab === "raw" ? (
                   <pre style={drawerRawJsonStyle}>{JSON.stringify(selectedLog, null, 2)}</pre>
                 ) : (
