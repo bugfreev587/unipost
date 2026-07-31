@@ -89,6 +89,25 @@ func TestSocialAccountBindingDisconnectedConnectionRequiresReconnect(t *testing.
 	}
 }
 
+func TestSocialAccountBindingRequiresAuthenticatedWorkspaceContext(t *testing.T) {
+	store := &fakeSocialConnectionStore{}
+	handler := NewSocialAccountHandler(db.New(&bindingHandlerDB{}), nil, nil, nil).SetConnectionStore(store)
+	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/account-a/bindings", strings.NewReader(`{"profile_id":"profile-b"}`))
+	route := chi.NewRouteContext()
+	route.URLParams.Add("id", "account-a")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, route))
+	recorder := httptest.NewRecorder()
+
+	handler.Bind(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if store.workspaceID != "" {
+		t.Fatalf("binding store called without authenticated workspace: %q", store.workspaceID)
+	}
+}
+
 func TestSocialAccountUnbindLeavesPhysicalConnectionActive(t *testing.T) {
 	store := &fakeSocialConnectionStore{}
 	handler := NewSocialAccountHandler(db.New(&bindingHandlerDB{}), nil, nil, nil).SetConnectionStore(store)

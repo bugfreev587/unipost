@@ -143,13 +143,9 @@ func (h *SocialAccountHandler) Bind(w http.ResponseWriter, r *http.Request) {
 		targetProfileID = strings.TrimSpace(body.ProfileID)
 	}
 	workspaceID := auth.GetWorkspaceID(r.Context())
-	if workspaceID == "" && targetProfileID != "" {
-		profile, err := h.queries.GetProfile(r.Context(), targetProfileID)
-		if err != nil {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
-			return
-		}
-		workspaceID = profile.WorkspaceID
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
 	}
 	if accountID == "" || targetProfileID == "" || workspaceID == "" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "account_id and profile_id are required")
@@ -211,13 +207,8 @@ func (h *SocialAccountHandler) Unbind(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
-		profileID := h.getProfileID(r)
-		profile, err := h.queries.GetProfile(r.Context(), profileID)
-		if err != nil {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
-			return
-		}
-		workspaceID = profile.WorkspaceID
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
 	}
 	if accountID == "" || workspaceID == "" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "account_id is required")
@@ -241,9 +232,10 @@ func (h *SocialAccountHandler) Unbind(w http.ResponseWriter, r *http.Request) {
 // and POST /v1/profiles/{profileID}/social-accounts/connect (Clerk auth)
 func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ProfileID   string            `json:"profile_id"`
-		Platform    string            `json:"platform"`
-		Credentials map[string]string `json:"credentials"`
+		ProfileID          string            `json:"profile_id"`
+		Platform           string            `json:"platform"`
+		Credentials        map[string]string `json:"credentials"`
+		ReconnectAccountID string            `json:"reconnect_account_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -341,7 +333,8 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 			AccessToken: encAccess, RefreshToken: encRefresh, TokenExpiresAt: result.TokenExpiresAt,
 			AccountName: result.AccountName, AvatarURL: result.AvatarURL, Metadata: metadataJSON,
 			Scopes: result.Scopes, XAppMode: xAppMode.String,
-			Ownership: socialconnections.Ownership{ConnectionType: "byo"},
+			ReconnectAccountID: strings.TrimSpace(body.ReconnectAccountID),
+			Ownership:          socialconnections.Ownership{ConnectionType: "byo"},
 		})
 	} else {
 		account, err = h.queries.CreateSocialAccount(r.Context(), db.CreateSocialAccountParams{
@@ -362,6 +355,10 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, socialconnections.ErrAlreadyConnected) {
 			writeError(w, http.StatusConflict, "ACCOUNT_ALREADY_CONNECTED",
 				"This "+body.Platform+" account is already connected in your workspace. Use the Profile binding operation to share it with another Profile.")
+			return
+		}
+		if errors.Is(err, socialconnections.ErrReconnectTargetConflict) {
+			writeError(w, http.StatusConflict, "RECONNECT_TARGET_INVALID", "The selected account does not match the verified provider identity")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save account")

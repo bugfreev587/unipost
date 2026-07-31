@@ -154,12 +154,13 @@ func handleSocialConnectionCommand(
 		PollInterval: time.Second,
 		Backup: func(backupCtx context.Context, report socialconnectioncutover.Report, operation func(context.Context) error) error {
 			affectedRows := report.Counts.Accounts + report.Counts.ActiveDeliveryJobs
-			return db.RunIrreversibleOperationWithBackupGate(
-				backupCtx, backupConfig, railwayClient,
+			return db.RunRegisteredIrreversibleOperationWithBackupGate(
+				backupCtx, db.SocialConnectionsCutoverOperation, backupConfig, railwayClient,
 				[]db.AffectedMigration{{Version: 136, Rows: affectedRows}}, operation,
 			)
 		},
 		Reconcile: reconciler.Run,
+		Recorder:  socialconnectioncutover.NewPostgresCutoverRunRecorder(pool, sha, environmentID),
 	}
 	report, err := orchestrator.Run(ctx)
 	if err != nil {

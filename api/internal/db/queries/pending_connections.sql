@@ -9,9 +9,10 @@ INSERT INTO pending_connections (
   meta_user_id,
   user_token_encrypted,
   user_token_expires_at,
-  pages_json
+  pages_json,
+  reconnect_account_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: GetPendingConnection :one

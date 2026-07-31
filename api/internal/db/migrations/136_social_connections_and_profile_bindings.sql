@@ -112,11 +112,32 @@ CREATE TABLE social_connection_rollout_state (
 INSERT INTO social_connection_rollout_state (id, phase)
 VALUES ('global', 'expand');
 
+CREATE TABLE social_connection_cutover_runs (
+  id               TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+  application_sha  TEXT NOT NULL,
+  environment_id   TEXT NOT NULL,
+  phase_before     TEXT NOT NULL,
+  status           TEXT NOT NULL CHECK (status IN ('started', 'succeeded', 'failed')),
+  report           JSONB NOT NULL DEFAULT '{}'::JSONB,
+  started_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at     TIMESTAMPTZ
+);
+
 ALTER TABLE social_accounts
   ADD COLUMN connection_id TEXT REFERENCES social_connections(id),
   ADD COLUMN binding_version BIGINT NOT NULL DEFAULT 1,
   ADD COLUMN binding_status TEXT NOT NULL DEFAULT 'active'
     CHECK (binding_status IN ('active', 'unbound'));
+
+-- Persist the user-selected recovery target across every credential flow.
+-- These rows are short-lived; the FK prevents a deleted binding ID from being
+-- reused or accidentally redirected to a different public account.
+ALTER TABLE oauth_states
+  ADD COLUMN reconnect_account_id TEXT REFERENCES social_accounts(id) ON DELETE SET NULL;
+ALTER TABLE connect_sessions
+  ADD COLUMN reconnect_account_id TEXT REFERENCES social_accounts(id) ON DELETE SET NULL;
+ALTER TABLE pending_connections
+  ADD COLUMN reconnect_account_id TEXT REFERENCES social_accounts(id) ON DELETE SET NULL;
 
 CREATE UNIQUE INDEX social_accounts_profile_connection_unique_idx
   ON social_accounts (profile_id, connection_id)
@@ -275,6 +296,10 @@ EXECUTE FUNCTION enforce_social_connection_authority_write_gate();
 
 -- +goose Down
 
+ALTER TABLE pending_connections DROP COLUMN IF EXISTS reconnect_account_id;
+ALTER TABLE connect_sessions DROP COLUMN IF EXISTS reconnect_account_id;
+ALTER TABLE oauth_states DROP COLUMN IF EXISTS reconnect_account_id;
+
 DROP TRIGGER IF EXISTS social_accounts_connection_authority_write_gate ON social_accounts;
 DROP FUNCTION IF EXISTS enforce_social_connection_authority_write_gate();
 DROP INDEX IF EXISTS social_accounts_connection_status_idx;
@@ -286,6 +311,7 @@ ALTER TABLE social_accounts
   DROP COLUMN IF EXISTS connection_id;
 
 DROP TABLE IF EXISTS social_connection_rollout_state;
+DROP TABLE IF EXISTS social_connection_cutover_runs;
 DROP INDEX IF EXISTS social_connection_migration_audit_identity_idx;
 DROP TABLE IF EXISTS social_connection_migration_audit;
 DROP TABLE IF EXISTS social_connection_migration_conflicts;

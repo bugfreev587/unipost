@@ -94,6 +94,7 @@ export default function AccountsPage() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [connectProfileId, setConnectProfileId] = useState(profileId);
+  const [reconnectTargetId, setReconnectTargetId] = useState<string | null>(null);
   const [accountsError, setAccountsError] = useState<{ message: string; topic: string } | null>(null);
 
   const router = useRouter();
@@ -243,7 +244,11 @@ export default function AccountsPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      await connectSocialAccount(token, connectProfileId, { platform: "bluesky", credentials: { handle: handle.trim(), app_password: appPassword.trim() } });
+      await connectSocialAccount(token, connectProfileId, {
+        platform: "bluesky",
+        credentials: { handle: handle.trim(), app_password: appPassword.trim() },
+        reconnect_account_id: reconnectTargetId || undefined,
+      });
       setConnectOpen(false); setSelectedPlatform(null); setHandle(""); setAppPassword(""); loadAccounts();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to connect";
@@ -252,13 +257,13 @@ export default function AccountsPage() {
     } finally { setConnecting(false); }
   }
 
-  async function handleOAuthConnect(platform: string, targetProfileId = connectProfileId) {
+  async function handleOAuthConnect(platform: string, targetProfileId = connectProfileId, reconnectAccountId?: string) {
     setConnecting(true); setConnectError(""); setAccountsError(null);
     try {
       const token = await getToken();
       if (!token) return;
       const redirectUrl = window.location.href.split("?")[0];
-      const res = await getOAuthConnectURL(token, targetProfileId, platform, redirectUrl);
+      const res = await getOAuthConnectURL(token, targetProfileId, platform, redirectUrl, reconnectAccountId);
       window.location.href = res.data.auth_url;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start OAuth";
@@ -266,6 +271,17 @@ export default function AccountsPage() {
       setAccountsError({ message, topic: "account-oauth-failure" });
       setConnecting(false);
     }
+  }
+
+  function handleReconnect(account: SocialAccount) {
+    if (account.platform === "bluesky") {
+      setConnectProfileId(account.profile_id);
+      setReconnectTargetId(account.id);
+      setSelectedPlatform("bluesky");
+      setConnectOpen(true);
+      return;
+    }
+    handleOAuthConnect(account.platform, account.profile_id, account.id);
   }
 
   async function handleDisconnect(accountId: string) {
@@ -420,6 +436,7 @@ export default function AccountsPage() {
             setConnectOpen(open);
             if (!open) {
               setSelectedPlatform(null);
+              setReconnectTargetId(null);
               setConnectError("");
               if (searchParams.get("action") === "new") {
                 clearStoredReplay();
@@ -427,6 +444,7 @@ export default function AccountsPage() {
               }
             } else {
               setConnectProfileId(profileId);
+              setReconnectTargetId(null);
             }
           }}
         >
@@ -645,14 +663,14 @@ export default function AccountsPage() {
                         onRequestUnbind={() => setUnbindTarget(a.id)}
                       />
                       <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
-                        {a.platform === "twitter" && xEligibility?.reconnectRequired ? (
+                        {a.status === "reconnect_required" ? (
                           <button
                             className="dbtn dbtn-primary"
                             style={{ padding: "4px 10px", fontSize: 12 }}
-                            onClick={() => handleOAuthConnect("twitter", a.profile_id)}
+                            onClick={() => handleReconnect(a)}
                             disabled={connecting}
                           >
-                            Reconnect X
+                            Reconnect
                           </button>
                         ) : null}
                         <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setDisconnectTarget(a.id)}>

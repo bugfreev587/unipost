@@ -49,6 +49,17 @@ func (p preflightStub) Run(context.Context, string) (Report, error) {
 	return Report{Counts: Counts{Accounts: 4}}, nil
 }
 
+type recorderStub struct{ calls *[]string }
+
+func (r recorderStub) Start(context.Context, string) (string, error) {
+	*r.calls = append(*r.calls, "run:start")
+	return "run-1", nil
+}
+func (r recorderStub) Finish(_ context.Context, _ string, status string, _ Report) error {
+	*r.calls = append(*r.calls, "run:"+status)
+	return nil
+}
+
 func TestOrchestratorDrainsProvesBacksUpAndReconcilesInOrder(t *testing.T) {
 	calls := make([]string, 0)
 	store := &rolloutStoreStub{phase: "expand", leases: []int64{1, 0}, calls: &calls}
@@ -56,6 +67,7 @@ func TestOrchestratorDrainsProvesBacksUpAndReconcilesInOrder(t *testing.T) {
 		Store:     store,
 		Proof:     proofStub{calls: &calls},
 		Preflight: preflightStub{calls: &calls},
+		Recorder:  recorderStub{calls: &calls},
 		Backup: func(_ context.Context, report Report, operation func(context.Context) error) error {
 			calls = append(calls, "backup")
 			if report.Counts.Accounts != 4 {
@@ -73,8 +85,8 @@ func TestOrchestratorDrainsProvesBacksUpAndReconcilesInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"lock", "phase:draining", "leases", "sleep", "leases", "proof", "preflight",
-		"phase:cutting_over", "backup", "reconcile", "phase:cutover", "unlock",
+		"lock", "run:start", "phase:draining", "leases", "sleep", "leases", "proof", "preflight",
+		"phase:cutting_over", "backup", "reconcile", "phase:cutover", "run:succeeded", "unlock",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
@@ -87,6 +99,7 @@ func TestOrchestratorRestoresExpandWhenReconciliationFails(t *testing.T) {
 	wantErr := errors.New("reconciliation failed")
 	orchestrator := Orchestrator{
 		Store: store, Proof: proofStub{calls: &calls}, Preflight: preflightStub{calls: &calls},
+		Recorder: recorderStub{calls: &calls},
 		Backup: func(ctx context.Context, _ Report, operation func(context.Context) error) error {
 			return operation(ctx)
 		},
@@ -123,6 +136,7 @@ func TestOrchestratorDoesNotRestoreExpandAfterCommittedReconciliation(t *testing
 	}
 	orchestrator := Orchestrator{
 		Store: store, Proof: proofStub{calls: &calls}, Preflight: preflightStub{calls: &calls},
+		Recorder: recorderStub{calls: &calls},
 		Backup: func(ctx context.Context, _ Report, operation func(context.Context) error) error {
 			return operation(ctx)
 		},

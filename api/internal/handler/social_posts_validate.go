@@ -281,7 +281,8 @@ func socialAccountDisconnectedForPublish(acc db.SocialAccount, ok bool) bool {
 	if !ok {
 		return false
 	}
-	return acc.DisconnectedAt.Valid || strings.EqualFold(strings.TrimSpace(acc.Status), "reconnect_required")
+	bindingStatus := strings.TrimSpace(acc.BindingStatus)
+	return (bindingStatus != "" && bindingStatus != "active") || acc.DisconnectedAt.Valid || strings.EqualFold(strings.TrimSpace(acc.Status), "reconnect_required")
 }
 
 // loadValidateMedia loads each referenced media_id from the workspace's

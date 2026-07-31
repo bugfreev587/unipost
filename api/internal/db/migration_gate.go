@@ -24,6 +24,26 @@ type irreversibleMigration struct {
 	CountAffected func(context.Context, migrationQueryer, int64) (int64, error)
 }
 
+type irreversibleOperation struct {
+	Key                    string
+	Description            string
+	AffectedRowsClassifier string
+	BackupAction           string
+	RollbackAction         string
+}
+
+const SocialConnectionsCutoverOperation = "social-connections-cutover"
+
+var irreversibleOperations = []irreversibleOperation{
+	{
+		Key:                    SocialConnectionsCutoverOperation,
+		Description:            "promotes connection authority and quarantines ambiguous historical bindings",
+		AffectedRowsClassifier: "the secret-free cutover preflight report counts affected account, delivery, Inbox, result, and daily-ledger rows",
+		BackupAction:           "create and lock a fresh exact-environment Railway volume backup immediately before reconciliation",
+		RollbackAction:         "restore the exact pre-cutover Railway backup and deploy the Expand-compatible SHA",
+	},
+}
+
 var irreversibleMigrations = []irreversibleMigration{
 	{
 		Version:       124,
@@ -143,6 +163,27 @@ func RunIrreversibleOperationWithBackupGate(
 		config.databaseURL = strings.TrimSpace(config.DatabaseURL)
 	}
 	return runAfterBackupGate(ctx, config, client, affected, operation)
+}
+
+func RunRegisteredIrreversibleOperationWithBackupGate(
+	ctx context.Context,
+	operationKey string,
+	config MigrationGateConfig,
+	client railwaybackup.Client,
+	affected []AffectedMigration,
+	operation func(context.Context) error,
+) error {
+	registered := false
+	for _, candidate := range irreversibleOperations {
+		if candidate.Key == operationKey {
+			registered = true
+			break
+		}
+	}
+	if !registered {
+		return fmt.Errorf("irreversible operation %q is not registered", operationKey)
+	}
+	return RunIrreversibleOperationWithBackupGate(ctx, config, client, affected, operation)
 }
 
 var disposablePreviewEnvironmentPattern = regexp.MustCompile(`^unipost-pr-([1-9][0-9]*)$`)

@@ -349,6 +349,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 			AccessToken: encAccess, RefreshToken: encRefresh, TokenExpiresAt: connectResult.TokenExpiresAt,
 			AccountName: connectResult.AccountName, AvatarURL: connectResult.AvatarURL,
 			Metadata: metadataJSON, Scopes: connectResult.Scopes, ConnectSessionID: session.ID,
+			ReconnectAccountID: session.ReconnectAccountID.String,
 			Ownership: socialconnections.Ownership{
 				ConnectionType: "managed", ExternalUserID: session.ExternalUserID,
 				ExternalUserEmail: session.ExternalUserEmail.String,

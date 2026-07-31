@@ -26,6 +26,11 @@ type BackupOperation func(context.Context, Report, func(context.Context) error) 
 type ReconcileOperation func(context.Context, Report) error
 type SleepOperation func(context.Context, time.Duration) error
 
+type CutoverRunRecorder interface {
+	Start(context.Context, string) (string, error)
+	Finish(context.Context, string, string, Report) error
+}
+
 type Orchestrator struct {
 	Store        RolloutStore
 	Proof        DeploymentVerifier
@@ -35,6 +40,7 @@ type Orchestrator struct {
 	PollInterval time.Duration
 	DrainTimeout time.Duration
 	Sleep        SleepOperation
+	Recorder     CutoverRunRecorder
 }
 
 func (o Orchestrator) Run(ctx context.Context) (report Report, runErr error) {
@@ -61,9 +67,24 @@ func (o Orchestrator) Run(ctx context.Context) (report Report, runErr error) {
 	if phase != "expand" {
 		return Report{}, fmt.Errorf("social connection rollout phase %q cannot start cutover", phase)
 	}
-	if o.Proof == nil || o.Preflight == nil || o.Backup == nil || o.Reconcile == nil {
-		return Report{}, errors.New("cutover proof, preflight, backup, and reconciliation are required")
+	if o.Proof == nil || o.Preflight == nil || o.Backup == nil || o.Reconcile == nil || o.Recorder == nil {
+		return Report{}, errors.New("cutover proof, preflight, backup, reconciliation, and run recorder are required")
 	}
+	runID, err := o.Recorder.Start(ctx, phase)
+	if err != nil {
+		return Report{}, fmt.Errorf("record social connection cutover start: %w", err)
+	}
+	defer func() {
+		status := "succeeded"
+		if runErr != nil {
+			status = "failed"
+		}
+		finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := o.Recorder.Finish(finishCtx, runID, status, report); err != nil && runErr == nil {
+			runErr = fmt.Errorf("record social connection cutover completion: %w", err)
+		}
+	}()
 
 	phaseChanged := false
 	completed := false

@@ -746,6 +746,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			AccessToken: encAccess, RefreshToken: encRefresh, TokenExpiresAt: tokens.ExpiresAt,
 			AccountName: accountName.String, AvatarURL: profile.AvatarURL, Metadata: metadata,
 			Scopes: tokens.Scopes, XAppMode: resolved.xAppMode.String, ConnectSessionID: session.ID,
+			ReconnectAccountID: session.ReconnectAccountID.String,
 			Ownership: socialconnections.Ownership{
 				ConnectionType: "managed", ExternalUserID: session.ExternalUserID,
 				ExternalUserEmail: session.ExternalUserEmail.String,

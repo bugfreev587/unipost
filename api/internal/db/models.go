@@ -160,6 +160,7 @@ type ConnectSession struct {
 	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
 	AllowQuickstartCreds     bool               `json:"allow_quickstart_creds"`
 	XAppMode                 pgtype.Text        `json:"x_app_mode"`
+	ReconnectAccountID       pgtype.Text        `json:"reconnect_account_id"`
 }
 
 type EmailPreference struct {
@@ -571,14 +572,15 @@ type NotificationSubscription struct {
 }
 
 type OauthState struct {
-	State        string             `json:"state"`
-	ProfileID    string             `json:"profile_id"`
-	Platform     string             `json:"platform"`
-	RedirectUrl  pgtype.Text        `json:"redirect_url"`
-	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	PkceVerifier pgtype.Text        `json:"pkce_verifier"`
-	XAppMode     pgtype.Text        `json:"x_app_mode"`
+	State              string             `json:"state"`
+	ProfileID          string             `json:"profile_id"`
+	Platform           string             `json:"platform"`
+	RedirectUrl        pgtype.Text        `json:"redirect_url"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	PkceVerifier       pgtype.Text        `json:"pkce_verifier"`
+	XAppMode           pgtype.Text        `json:"x_app_mode"`
+	ReconnectAccountID pgtype.Text        `json:"reconnect_account_id"`
 }
 
 type PaidPlanQuotaNotification struct {
@@ -639,6 +641,7 @@ type PendingConnection struct {
 	UserTokenEncrypted string             `json:"user_token_encrypted"`
 	UserTokenExpiresAt pgtype.Timestamptz `json:"user_token_expires_at"`
 	PagesJson          []byte             `json:"pages_json"`
+	ReconnectAccountID pgtype.Text        `json:"reconnect_account_id"`
 	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
