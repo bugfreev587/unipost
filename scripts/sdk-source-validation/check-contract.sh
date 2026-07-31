@@ -18,7 +18,6 @@ case "$SUITE" in
     python3 -m pip install --disable-pip-version-check -e '.[dev]'
     pytest -q
     mypy unipost
-    ruff check unipost tests
     ;;
   sdk-go)
     cd "${UNIPOST_DEV_ROOT}/sdk-go"

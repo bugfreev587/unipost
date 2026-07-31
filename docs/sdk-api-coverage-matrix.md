@@ -26,8 +26,8 @@ Legend:
 | `POST /v1/accounts/connect` | Yes | Yes | Yes | Yes | Yes, negative path |
 | `DELETE /v1/accounts/{id}` | Yes | Yes | Yes | Yes | No direct live delete |
 | `GET /v1/accounts/{id}/capabilities` | Yes | Yes | Yes | Yes | Yes |
-| `GET /v1/accounts/{id}/profile` | No | No | No | No | No; new raw OpenAPI route |
-| `GET /v1/accounts/{id}/posts` | No | No | No | No | No; new raw OpenAPI route |
+| `GET /v1/accounts/{id}/profile` | `accounts.getProfile` (0.7.0) | `accounts.get_profile` (0.7.0) | `Accounts.Profile` (0.7.0) | `accounts().profile` (0.7.0) | Conditional; exact replay required with X fixture |
+| `GET /v1/accounts/{id}/posts` | `accounts.listPosts` (0.7.0) | `accounts.list_posts` (0.7.0) | `Accounts.ListPosts` (0.7.0) | `accounts().listPosts` (0.7.0) | Conditional; minimum page, exact replay, and cursor continuation |
 | `GET /v1/accounts/{id}/health` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/accounts/{id}/metrics` | Yes | Yes | Yes | Yes | No direct live fixture |
 | `GET /v1/accounts/{id}/tiktok/creator-info` | Yes | Yes | Yes | Yes | Conditional |
@@ -81,8 +81,8 @@ Legend:
 | `POST /v1/webhooks/{id}/rotate` | Yes | Yes | Yes | Yes | Yes |
 | `POST /v1/oauth/connect` | Yes | Yes | Yes | Yes | Yes, accepts current backend behavior |
 | `GET /v1/usage` | Yes | Yes | Yes | Yes | Yes |
-| `GET /v1/billing/x-credits` | No | No | No | No | No; feature-gated |
-| `GET /v1/billing/x-credits/events` | No | No | No | No | No; feature-gated |
+| `GET /v1/billing/x-credits` | `billing.getXCredits` (0.7.0) | `billing.get_x_credits` (0.7.0) | `Billing.GetXCredits` (0.7.0) | `billing().getXCredits` (0.7.0) | Conditional; success when enabled, `FEATURE_NOT_AVAILABLE` when disabled |
+| `GET /v1/billing/x-credits/events` | `billing.listXCreditEvents` (0.7.0) | `billing.list_x_credit_events` (0.7.0) | `Billing.ListXCreditEvents` (0.7.0) | `billing().listXCreditEvents` (0.7.0) | Conditional; feature-gated |
 
 ## SDK-only helpers
 

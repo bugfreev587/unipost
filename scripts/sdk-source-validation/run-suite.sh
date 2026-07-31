@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # Child bash -lc scripts intentionally expand their positional parameters.
 
 set -euo pipefail
 
@@ -15,6 +16,9 @@ fi
 UNIPOST_API_KEY="${UNIPOST_API_KEY:-}"
 BASE_URL="${BASE_URL:-https://api.unipost.dev}"
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID:-}"
+TEST_X_ACCOUNT_ID="${TEST_X_ACCOUNT_ID:-}"
+TEST_EXTERNAL_USER_ID="${TEST_EXTERNAL_USER_ID:-}"
+REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="${REQUIRE_X_ACCOUNT_READ_ACCEPTANCE:-false}"
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW:-false}"
 TEST_PLATFORM_CREDENTIALS_PLATFORM="${TEST_PLATFORM_CREDENTIALS_PLATFORM:-}"
 SOURCE_ONLY="${SOURCE_ONLY:-false}"
@@ -22,6 +26,11 @@ export TEST_PLATFORM_CREDENTIALS_PLATFORM
 
 if [[ "$SOURCE_ONLY" != "true" && -z "$UNIPOST_API_KEY" ]]; then
   echo "UNIPOST_API_KEY is required" >&2
+  exit 64
+fi
+if [[ "$SOURCE_ONLY" != "true" && "$REQUIRE_X_ACCOUNT_READ_ACCEPTANCE" == "true" ]] \
+  && [[ -z "$TEST_X_ACCOUNT_ID" || -z "$TEST_EXTERNAL_USER_ID" ]]; then
+  echo "required X account-read acceptance fixture is missing: set TEST_X_ACCOUNT_ID and TEST_EXTERNAL_USER_ID" >&2
   exit 64
 fi
 
@@ -51,15 +60,15 @@ case "$SUITE" in
     run_and_log bash -lc '
       cd scripts/sdk-validation/js
       npm ci
-      UNIPOST_JS_SDK_IMPORT="$1/dist/index.mjs" UNIPOST_API_KEY="$2" BASE_URL="$3" TEST_ACCOUNT_ID="$4" TEST_PUBLISH_NOW="$5" node unipost-sdk-test.mjs
-    ' _ "${UNIPOST_DEV_ROOT}/sdk-js" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
+      UNIPOST_JS_SDK_IMPORT="$1/dist/index.mjs" UNIPOST_API_KEY="$2" BASE_URL="$3" TEST_ACCOUNT_ID="$4" TEST_PUBLISH_NOW="$5" TEST_X_ACCOUNT_ID="$6" TEST_EXTERNAL_USER_ID="$7" REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="$8" node unipost-sdk-test.mjs
+    ' _ "${UNIPOST_DEV_ROOT}/sdk-js" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW" "$TEST_X_ACCOUNT_ID" "$TEST_EXTERNAL_USER_ID" "$REQUIRE_X_ACCOUNT_READ_ACCEPTANCE"
     ;;
   sdk-python)
     run_and_log bash -lc '
       cd scripts/sdk-validation/python
       python3 -m pip install --disable-pip-version-check -r requirements.txt
-      UNIPOST_PYTHON_SDK_PATH="$1" UNIPOST_API_KEY="$2" BASE_URL="$3" TEST_ACCOUNT_ID="$4" TEST_PUBLISH_NOW="$5" python3 unipost_sdk_test.py
-    ' _ "${UNIPOST_DEV_ROOT}/sdk-python" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
+      UNIPOST_PYTHON_SDK_PATH="$1" UNIPOST_API_KEY="$2" BASE_URL="$3" TEST_ACCOUNT_ID="$4" TEST_PUBLISH_NOW="$5" TEST_X_ACCOUNT_ID="$6" TEST_EXTERNAL_USER_ID="$7" REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="$8" python3 unipost_sdk_test.py
+    ' _ "${UNIPOST_DEV_ROOT}/sdk-python" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW" "$TEST_X_ACCOUNT_ID" "$TEST_EXTERNAL_USER_ID" "$REQUIRE_X_ACCOUNT_READ_ACCEPTANCE"
     ;;
   sdk-go)
     run_and_log bash -lc '
@@ -77,8 +86,8 @@ require github.com/unipost-dev/sdk-go v0.2.4
 replace github.com/unipost-dev/sdk-go => $1/sdk-go
 EOF
       cd "$TMP_DIR"
-      GOCACHE="${RUNNER_TEMP:-/tmp}/unipost-go-cache" UNIPOST_API_KEY="$2" BASE_URL="$3" TEST_ACCOUNT_ID="$4" TEST_PUBLISH_NOW="$5" go run main.go
-    ' _ "$UNIPOST_DEV_ROOT" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
+      GOCACHE="${RUNNER_TEMP:-/tmp}/unipost-go-cache" UNIPOST_API_KEY="$2" BASE_URL="$3" TEST_ACCOUNT_ID="$4" TEST_PUBLISH_NOW="$5" TEST_X_ACCOUNT_ID="$6" TEST_EXTERNAL_USER_ID="$7" REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="$8" go run main.go
+    ' _ "$UNIPOST_DEV_ROOT" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW" "$TEST_X_ACCOUNT_ID" "$TEST_EXTERNAL_USER_ID" "$REQUIRE_X_ACCOUNT_READ_ACCEPTANCE"
     ;;
   sdk-java)
     run_and_log bash -lc '
@@ -86,8 +95,8 @@ EOF
       cd "$1/sdk-java"
       ./gradlew publishToMavenLocal
       cd "$2/scripts/sdk-validation/java"
-      UNIPOST_API_KEY="$3" BASE_URL="$4" TEST_ACCOUNT_ID="$5" TEST_PUBLISH_NOW="$6" ./gradlew run -PunipostJavaSdkVersion="$SDK_VERSION" -PuseLocalSdk=true
-    ' _ "$UNIPOST_DEV_ROOT" "$ROOT_DIR" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW"
+      UNIPOST_API_KEY="$3" BASE_URL="$4" TEST_ACCOUNT_ID="$5" TEST_PUBLISH_NOW="$6" TEST_X_ACCOUNT_ID="$7" TEST_EXTERNAL_USER_ID="$8" REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="$9" ./gradlew run -PunipostJavaSdkVersion="$SDK_VERSION" -PuseLocalSdk=true
+    ' _ "$UNIPOST_DEV_ROOT" "$ROOT_DIR" "$UNIPOST_API_KEY" "$BASE_URL" "$TEST_ACCOUNT_ID" "$TEST_PUBLISH_NOW" "$TEST_X_ACCOUNT_ID" "$TEST_EXTERNAL_USER_ID" "$REQUIRE_X_ACCOUNT_READ_ACCEPTANCE"
     ;;
   *)
     echo "unknown suite: $SUITE" >&2
