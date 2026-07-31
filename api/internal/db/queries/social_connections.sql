@@ -120,6 +120,99 @@ RETURNING id, profile_id, platform, access_token, refresh_token,
   connect_session_id, external_user_id, external_user_email, last_refreshed_at,
   x_app_mode, connection_id, binding_version, binding_status;
 
+-- name: GetReconnectRequiredSocialAccountForUpdate :one
+-- A caller may recover only the exact quarantined public binding selected
+-- before provider authentication. Workspace/Profile/platform scope and open
+-- migration evidence are all required by the locking read.
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = @reconnect_account_id
+  AND p.workspace_id = @workspace_id
+  AND sa.profile_id = @profile_id
+  AND sa.platform = @platform
+  AND sa.connection_id IS NULL
+  AND sa.status = 'reconnect_required'
+  AND sa.binding_status = 'active'
+  AND EXISTS (
+    SELECT 1
+    FROM social_connection_migration_conflicts conflict
+    WHERE conflict.workspace_id = @workspace_id
+      AND conflict.platform = @platform
+      AND conflict.resolved_at IS NULL
+      AND sa.id = ANY(conflict.source_account_ids)
+  )
+FOR UPDATE OF sa;
+
+-- name: RecoverReconnectRequiredSocialAccountBinding :one
+UPDATE social_accounts sa
+SET connection_id = @connection_id,
+    access_token = @legacy_access_token,
+    refresh_token = @legacy_refresh_token,
+    token_expires_at = @token_expires_at,
+    external_account_id = @external_account_id,
+    account_name = @account_name,
+    account_avatar_url = @account_avatar_url,
+    metadata = COALESCE(@metadata::jsonb, '{}'::jsonb),
+    scope = @scope,
+    connection_type = @connection_type,
+    connect_session_id = @connect_session_id,
+    external_user_id = @external_user_id,
+    external_user_email = @external_user_email,
+    last_refreshed_at = NOW(),
+    x_app_mode = @x_app_mode,
+    binding_status = 'active',
+    binding_version = binding_version + 1,
+    disconnected_at = NULL,
+    status = 'active'
+FROM profiles p
+WHERE sa.id = @reconnect_account_id
+  AND sa.profile_id = p.id
+  AND p.workspace_id = @workspace_id
+  AND sa.profile_id = @profile_id
+  AND sa.platform = @platform
+  AND sa.connection_id IS NULL
+  AND sa.status = 'reconnect_required'
+  AND EXISTS (
+    SELECT 1
+    FROM social_connection_migration_conflicts conflict
+    WHERE conflict.workspace_id = @workspace_id
+      AND conflict.platform = @platform
+      AND conflict.resolved_at IS NULL
+      AND sa.id = ANY(conflict.source_account_ids)
+  )
+RETURNING sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status;
+
+-- name: ResolveMigrationConflictsForRecoveredAccount :exec
+UPDATE social_connection_migration_conflicts conflict
+SET resolved_at = NOW(),
+    resolution = JSONB_BUILD_OBJECT(
+      'method', 'verified_targeted_reconnect',
+      'recovered_account_id', @reconnect_account_id::TEXT,
+      'connection_id', @connection_id::TEXT
+    )
+WHERE conflict.workspace_id = @workspace_id
+  AND conflict.platform = @platform
+  AND conflict.resolved_at IS NULL
+  AND @reconnect_account_id::TEXT = ANY(conflict.source_account_ids)
+  AND NOT EXISTS (
+    SELECT 1
+    FROM UNNEST(conflict.source_account_ids) AS source(account_id)
+    JOIN social_accounts remaining ON remaining.id = source.account_id
+    WHERE remaining.connection_id IS NULL
+      AND remaining.status = 'reconnect_required'
+  );
+
 -- name: UpdateSocialConnectionTokens :exec
 UPDATE social_connections
 SET access_token = @access_token,

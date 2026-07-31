@@ -3,6 +3,7 @@ package socialconnections
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -17,13 +18,14 @@ import (
 )
 
 var (
-	ErrAlreadyConnected       = errors.New("social account is already connected")
-	ErrOwnershipConflict      = errors.New("social connection ownership conflict")
-	ErrInvalidCredentialInput = errors.New("invalid social connection input")
-	ErrProfileNotInWorkspace  = errors.New("profile is not in workspace")
-	ErrLegacyBinding          = errors.New("legacy social account has no shareable connection")
-	ErrBindingNotFound        = errors.New("social account binding not found")
-	ErrReconnectRequired      = errors.New("social connection must be reconnected before binding")
+	ErrAlreadyConnected        = errors.New("social account is already connected")
+	ErrOwnershipConflict       = errors.New("social connection ownership conflict")
+	ErrInvalidCredentialInput  = errors.New("invalid social connection input")
+	ErrProfileNotInWorkspace   = errors.New("profile is not in workspace")
+	ErrLegacyBinding           = errors.New("legacy social account has no shareable connection")
+	ErrBindingNotFound         = errors.New("social account binding not found")
+	ErrReconnectRequired       = errors.New("social connection must be reconnected before binding")
+	ErrReconnectTargetConflict = errors.New("reconnect target does not match verified social identity")
 )
 
 type Ownership struct {
@@ -33,21 +35,22 @@ type Ownership struct {
 }
 
 type CredentialInput struct {
-	WorkspaceID       string
-	ProfileID         string
-	Platform          string
-	ProviderIdentity  string
-	ExternalAccountID string
-	AccessToken       string
-	RefreshToken      string
-	AccountName       string
-	AvatarURL         string
-	Scopes            []string
-	Metadata          []byte
-	TokenExpiresAt    time.Time
-	XAppMode          string
-	ConnectSessionID  string
-	Ownership         Ownership
+	WorkspaceID        string
+	ProfileID          string
+	Platform           string
+	ProviderIdentity   string
+	ExternalAccountID  string
+	AccessToken        string
+	RefreshToken       string
+	AccountName        string
+	AvatarURL          string
+	Scopes             []string
+	Metadata           []byte
+	TokenExpiresAt     time.Time
+	XAppMode           string
+	ConnectSessionID   string
+	ReconnectAccountID string
+	Ownership          Ownership
 }
 
 type SaveMode int
@@ -71,6 +74,9 @@ type connectionQueries interface {
 	CreateSocialConnection(context.Context, db.CreateSocialConnectionParams) (db.SocialConnection, error)
 	RefreshSocialConnection(context.Context, db.RefreshSocialConnectionParams) (db.SocialConnection, error)
 	CreateOrReactivateSocialAccountBinding(context.Context, db.CreateOrReactivateSocialAccountBindingParams) (db.SocialAccount, error)
+	GetReconnectRequiredSocialAccountForUpdate(context.Context, db.GetReconnectRequiredSocialAccountForUpdateParams) (db.SocialAccount, error)
+	RecoverReconnectRequiredSocialAccountBinding(context.Context, db.RecoverReconnectRequiredSocialAccountBindingParams) (db.SocialAccount, error)
+	ResolveMigrationConflictsForRecoveredAccount(context.Context, db.ResolveMigrationConflictsForRecoveredAccountParams) error
 	GetResolvedSocialAccountByIDAndWorkspace(context.Context, db.GetResolvedSocialAccountByIDAndWorkspaceParams) (db.GetResolvedSocialAccountByIDAndWorkspaceRow, error)
 	GetSocialConnectionForUpdate(context.Context, db.GetSocialConnectionForUpdateParams) (db.SocialConnection, error)
 	GetProfile(context.Context, string) (db.Profile, error)
@@ -119,6 +125,23 @@ func (s *PostgresStore) SaveVerified(ctx context.Context, mode SaveMode, input C
 		return db.SocialAccount{}, err
 	}
 
+	var reconnectTarget db.SocialAccount
+	if input.ReconnectAccountID != "" {
+		reconnectTarget, err = queries.GetReconnectRequiredSocialAccountForUpdate(ctx, db.GetReconnectRequiredSocialAccountForUpdateParams{
+			ReconnectAccountID: input.ReconnectAccountID,
+			WorkspaceID:        input.WorkspaceID, ProfileID: input.ProfileID, Platform: input.Platform,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.SocialAccount{}, ErrReconnectTargetConflict
+		}
+		if err != nil {
+			return db.SocialAccount{}, fmt.Errorf("lock reconnect target: %w", err)
+		}
+		if err := requireReconnectTargetMatches(reconnectTarget, input); err != nil {
+			return db.SocialAccount{}, err
+		}
+	}
+
 	connection, err := queries.FindCanonicalSocialConnectionForUpdate(ctx, db.FindCanonicalSocialConnectionForUpdateParams{
 		WorkspaceID:      input.WorkspaceID,
 		Platform:         input.Platform,
@@ -133,6 +156,9 @@ func (s *PostgresStore) SaveVerified(ctx context.Context, mode SaveMode, input C
 			return db.SocialAccount{}, fmt.Errorf("check legacy social account identity: %w", lookupErr)
 		}
 		for _, match := range legacyMatches {
+			if input.ReconnectAccountID != "" && match.ID == input.ReconnectAccountID {
+				continue
+			}
 			if !match.ConnectionID.Valid || strings.TrimSpace(match.ConnectionID.String) == "" {
 				return db.SocialAccount{}, ErrLegacyBinding
 			}
@@ -147,7 +173,7 @@ func (s *PostgresStore) SaveVerified(ctx context.Context, mode SaveMode, input C
 	case err != nil:
 		return db.SocialAccount{}, fmt.Errorf("find canonical social connection: %w", err)
 	default:
-		if mode == SaveDirectCreate {
+		if mode == SaveDirectCreate && input.ReconnectAccountID == "" {
 			return db.SocialAccount{}, ErrAlreadyConnected
 		}
 		if err := requireCompatibleOwnership(connection, input.Ownership); err != nil {
@@ -163,9 +189,26 @@ func (s *PostgresStore) SaveVerified(ctx context.Context, mode SaveMode, input C
 		}
 	}
 
-	account, err := queries.CreateOrReactivateSocialAccountBinding(ctx, bindingParams(connection.ID, input))
-	if err != nil {
-		return db.SocialAccount{}, fmt.Errorf("create social account binding: %w", err)
+	var account db.SocialAccount
+	if input.ReconnectAccountID != "" {
+		account, err = queries.RecoverReconnectRequiredSocialAccountBinding(ctx, recoveryParams(connection.ID, input))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.SocialAccount{}, ErrReconnectTargetConflict
+		}
+		if err != nil {
+			return db.SocialAccount{}, fmt.Errorf("recover social account binding: %w", err)
+		}
+		if err := queries.ResolveMigrationConflictsForRecoveredAccount(ctx, db.ResolveMigrationConflictsForRecoveredAccountParams{
+			ReconnectAccountID: input.ReconnectAccountID, ConnectionID: connection.ID,
+			WorkspaceID: input.WorkspaceID, Platform: input.Platform,
+		}); err != nil {
+			return db.SocialAccount{}, fmt.Errorf("resolve social connection migration evidence: %w", err)
+		}
+	} else {
+		account, err = queries.CreateOrReactivateSocialAccountBinding(ctx, bindingParams(connection.ID, input))
+		if err != nil {
+			return db.SocialAccount{}, fmt.Errorf("create social account binding: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.SocialAccount{}, fmt.Errorf("commit social connection save: %w", err)
@@ -358,6 +401,7 @@ func normalizeCredentialInput(mode SaveMode, input CredentialInput) (CredentialI
 	input.Platform = strings.ToLower(strings.TrimSpace(input.Platform))
 	input.ProviderIdentity = strings.TrimSpace(input.ProviderIdentity)
 	input.ExternalAccountID = strings.TrimSpace(input.ExternalAccountID)
+	input.ReconnectAccountID = strings.TrimSpace(input.ReconnectAccountID)
 	input.Ownership.ConnectionType = strings.ToLower(strings.TrimSpace(input.Ownership.ConnectionType))
 	input.Ownership.ExternalUserID = strings.TrimSpace(input.Ownership.ExternalUserID)
 	input.Ownership.ExternalUserEmail = strings.TrimSpace(input.Ownership.ExternalUserEmail)
@@ -384,6 +428,42 @@ func normalizeCredentialInput(mode SaveMode, input CredentialInput) (CredentialI
 		return CredentialInput{}, ErrInvalidCredentialInput
 	}
 	return input, nil
+}
+
+func requireReconnectTargetMatches(target db.SocialAccount, input CredentialInput) error {
+	if target.ID != input.ReconnectAccountID || target.ProfileID != input.ProfileID ||
+		target.Platform != input.Platform || target.ConnectionID.Valid ||
+		target.Status != "reconnect_required" || target.BindingStatus != "active" ||
+		target.ConnectionType != input.Ownership.ConnectionType {
+		return ErrReconnectTargetConflict
+	}
+	if input.Ownership.ConnectionType == "managed" {
+		if target.ExternalUserID.Valid && strings.TrimSpace(target.ExternalUserID.String) != "" &&
+			strings.TrimSpace(target.ExternalUserID.String) != input.Ownership.ExternalUserID {
+			return ErrReconnectTargetConflict
+		}
+	} else if target.ExternalUserID.Valid && strings.TrimSpace(target.ExternalUserID.String) != "" {
+		return ErrReconnectTargetConflict
+	}
+
+	storedProviderIdentity := strings.TrimSpace(target.ExternalAccountID)
+	if input.Platform == "instagram" {
+		var metadata map[string]json.RawMessage
+		if len(target.Metadata) != 0 && json.Unmarshal(target.Metadata, &metadata) != nil {
+			return ErrReconnectTargetConflict
+		}
+		storedProviderIdentity = ""
+		if raw, ok := metadata["instagram_webhook_user_id"]; ok {
+			if err := json.Unmarshal(raw, &storedProviderIdentity); err != nil {
+				return ErrReconnectTargetConflict
+			}
+			storedProviderIdentity = strings.TrimSpace(storedProviderIdentity)
+		}
+	}
+	if storedProviderIdentity != "" && storedProviderIdentity != input.ProviderIdentity {
+		return ErrReconnectTargetConflict
+	}
+	return nil
 }
 
 func requireCompatibleOwnership(connection db.SocialConnection, ownership Ownership) error {
@@ -467,6 +547,20 @@ func bindingParams(connectionID string, input CredentialInput) db.CreateOrReacti
 		ExternalUserID:    nullableText(input.Ownership.ExternalUserID),
 		ExternalUserEmail: nullableText(input.Ownership.ExternalUserEmail), XAppMode: nullableText(input.XAppMode),
 		ConnectionID: textValue(connectionID),
+	}
+}
+
+func recoveryParams(connectionID string, input CredentialInput) db.RecoverReconnectRequiredSocialAccountBindingParams {
+	return db.RecoverReconnectRequiredSocialAccountBindingParams{
+		ConnectionID: textValue(connectionID), LegacyAccessToken: input.AccessToken,
+		LegacyRefreshToken: nullableText(input.RefreshToken), TokenExpiresAt: timestamp(input.TokenExpiresAt),
+		ExternalAccountID: input.ExternalAccountID, AccountName: nullableText(input.AccountName),
+		AccountAvatarUrl: nullableText(input.AvatarURL), Metadata: input.Metadata, Scope: input.Scopes,
+		ConnectionType: input.Ownership.ConnectionType, ConnectSessionID: nullableText(input.ConnectSessionID),
+		ExternalUserID:    nullableText(input.Ownership.ExternalUserID),
+		ExternalUserEmail: nullableText(input.Ownership.ExternalUserEmail), XAppMode: nullableText(input.XAppMode),
+		ReconnectAccountID: input.ReconnectAccountID, WorkspaceID: input.WorkspaceID,
+		ProfileID: input.ProfileID, Platform: input.Platform,
 	}
 }
 

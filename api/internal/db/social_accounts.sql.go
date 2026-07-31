@@ -746,6 +746,7 @@ JOIN profiles p ON p.id = sa.profile_id
 LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = $1
   AND p.workspace_id = $2
+  AND (sa.connection_id IS NULL OR sc.workspace_id = $2)
 `
 
 type GetResolvedSocialAccountByIDAndWorkspaceParams struct {

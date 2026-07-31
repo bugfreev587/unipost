@@ -45,6 +45,28 @@ func TestProcessModeRejectsUnknownMode(t *testing.T) {
 	}
 }
 
+func TestDatabaseApplicationNameCarriesRuntimeDeploymentIdentity(t *testing.T) {
+	got, err := databaseApplicationName(
+		processModePostDeliveryWorker,
+		"service-1",
+		"deployment-1",
+		"0123456789abcdef0123456789abcdef01234567",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "unipost:post-delivery-worker:service-1:deployment-1:0123456789abcdef0123456789abcdef01234567"
+	if got != want {
+		t.Fatalf("application_name = %q, want %q", got, want)
+	}
+}
+
+func TestDatabaseApplicationNameRejectsUnsafeSeparators(t *testing.T) {
+	if _, err := databaseApplicationName("api", "service:other", "deployment", "sha"); err == nil {
+		t.Fatal("application_name accepted an ambiguous separator")
+	}
+}
+
 func TestDBPoolMaxConnsUsesWorkerDefaultInWorkerMode(t *testing.T) {
 	t.Setenv("DATABASE_MAX_CONNS", "")
 	t.Setenv("API_DATABASE_MAX_CONNS", "")

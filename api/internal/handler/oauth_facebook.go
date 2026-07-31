@@ -205,6 +205,7 @@ func (h *OAuthHandler) handleFacebookCallback(
 		UserTokenEncrypted: encLLToken,
 		UserTokenExpiresAt: pgtype.Timestamptz{Time: llExpiresAt, Valid: true},
 		PagesJson:          pagesJSON,
+		ReconnectAccountID: oauthState.ReconnectAccountID,
 	})
 	if err != nil {
 		slog.Error("facebook: failed to write pending connection", "err", err)
@@ -441,6 +442,26 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 		selected = append(selected, page)
 	}
 
+	reconnectExternalID := ""
+	if row.ReconnectAccountID.Valid {
+		target, targetErr := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+			ID: row.ReconnectAccountID.String, WorkspaceID: workspaceID,
+		})
+		if targetErr != nil || target.ProfileID != row.ProfileID || target.Platform != "facebook" || target.Status != "reconnect_required" {
+			writeError(w, http.StatusConflict, "RECONNECT_TARGET_INVALID", "The selected Facebook Page is not eligible for reconnect")
+			return
+		}
+		reconnectExternalID = target.ExternalAccountID
+		selectedTarget := false
+		for _, page := range selected {
+			selectedTarget = selectedTarget || page.ID == reconnectExternalID
+		}
+		if !selectedTarget {
+			writeError(w, http.StatusConflict, "RECONNECT_TARGET_NOT_SELECTED", "Select the Facebook Page being reconnected")
+			return
+		}
+	}
+
 	// Upsert the meta_user_tokens row first — if any subsequent
 	// account creation fails we still want "Add another Page"
 	// later to work without a full re-OAuth.
@@ -459,6 +480,10 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 
 	createdAccounts := make([]string, 0, len(selected))
 	for _, page := range selected {
+		reconnectAccountID := ""
+		if row.ReconnectAccountID.Valid && page.ID == reconnectExternalID {
+			reconnectAccountID = row.ReconnectAccountID.String
+		}
 		scopes := page.Scopes
 		if len(scopes) == 0 {
 			scopes = platform.FacebookOAuthScopes()
@@ -481,7 +506,8 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 				ProviderIdentity: page.ID, ExternalAccountID: page.ID,
 				AccessToken: page.PageAccessTokenEncrypted, AccountName: page.Name,
 				AvatarURL: page.PictureURL, Metadata: metadataJSON, Scopes: scopes,
-				Ownership: socialconnections.Ownership{ConnectionType: "byo"},
+				ReconnectAccountID: reconnectAccountID,
+				Ownership:          socialconnections.Ownership{ConnectionType: "byo"},
 			})
 			if err != nil {
 				slog.Error("facebook finalize: save shared connection failed", "err", err, "page_id", page.ID)

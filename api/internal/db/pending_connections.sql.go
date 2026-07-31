@@ -19,10 +19,11 @@ INSERT INTO pending_connections (
   meta_user_id,
   user_token_encrypted,
   user_token_expires_at,
-  pages_json
+  pages_json,
+  reconnect_account_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, workspace_id, profile_id, platform, meta_user_id, user_token_encrypted, user_token_expires_at, pages_json, expires_at, created_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, workspace_id, profile_id, platform, meta_user_id, user_token_encrypted, user_token_expires_at, pages_json, expires_at, created_at, reconnect_account_id
 `
 
 type CreatePendingConnectionParams struct {
@@ -33,6 +34,7 @@ type CreatePendingConnectionParams struct {
 	UserTokenEncrypted string             `json:"user_token_encrypted"`
 	UserTokenExpiresAt pgtype.Timestamptz `json:"user_token_expires_at"`
 	PagesJson          []byte             `json:"pages_json"`
+	ReconnectAccountID pgtype.Text        `json:"reconnect_account_id"`
 }
 
 // pages_json is JSONB; caller supplies the already-marshalled blob.
@@ -47,6 +49,7 @@ func (q *Queries) CreatePendingConnection(ctx context.Context, arg CreatePending
 		arg.UserTokenEncrypted,
 		arg.UserTokenExpiresAt,
 		arg.PagesJson,
+		arg.ReconnectAccountID,
 	)
 	var i PendingConnection
 	err := row.Scan(
@@ -60,6 +63,7 @@ func (q *Queries) CreatePendingConnection(ctx context.Context, arg CreatePending
 		&i.PagesJson,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.ReconnectAccountID,
 	)
 	return i, err
 }
@@ -85,7 +89,7 @@ func (q *Queries) DeletePendingConnection(ctx context.Context, id string) error 
 }
 
 const getPendingConnection = `-- name: GetPendingConnection :one
-SELECT id, workspace_id, profile_id, platform, meta_user_id, user_token_encrypted, user_token_expires_at, pages_json, expires_at, created_at FROM pending_connections
+SELECT id, workspace_id, profile_id, platform, meta_user_id, user_token_encrypted, user_token_expires_at, pages_json, expires_at, created_at, reconnect_account_id FROM pending_connections
 WHERE id = $1
   AND workspace_id = $2
   AND expires_at > NOW()
@@ -113,6 +117,7 @@ func (q *Queries) GetPendingConnection(ctx context.Context, arg GetPendingConnec
 		&i.PagesJson,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.ReconnectAccountID,
 	)
 	return i, err
 }

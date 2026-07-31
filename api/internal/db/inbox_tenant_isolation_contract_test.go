@@ -171,12 +171,22 @@ func TestInboxPhysicalConnectionDeduplicationContract(t *testing.T) {
 	migration := compactInboxTenantIsolationSQL(readInboxTenantIsolationContractFile(t, "migrations/138_inbox_connection_deduplication.sql"))
 	for _, want := range []string{
 		"add column connection_id text",
-		"partition by sa.connection_id, i.source, i.external_id",
 		"inbox_items_connection_source_external_unique_idx",
 		"where connection_id is not null",
 	} {
 		if !strings.Contains(migration, want) {
 			t.Fatalf("inbox connection dedupe migration missing %q: %s", want, migration)
+		}
+	}
+
+	cutover := compactInboxTenantIsolationSQL(readInboxTenantIsolationContractFile(t, "../socialconnectioncutover/sql/cutover.sql"))
+	for _, want := range []string{
+		"partition by account.connection_id, item.source, item.external_id",
+		"insert into inbox_item_supersessions",
+		"set connection_id = ranked.connection_id",
+	} {
+		if !strings.Contains(cutover, want) {
+			t.Fatalf("explicit cutover missing Inbox reconciliation %q: %s", want, cutover)
 		}
 	}
 

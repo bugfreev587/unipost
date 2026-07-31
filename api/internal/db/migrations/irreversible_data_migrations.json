@@ -9,5 +9,14 @@
       "version": 125,
       "description": "Overwrites existing failed email recipient retryable values."
     }
+  ],
+  "irreversible_operations": [
+    {
+      "key": "social-connections-cutover",
+      "description": "promotes connection authority and quarantines ambiguous historical bindings",
+      "affected_rows_classifier": "the secret-free cutover preflight report counts affected account, delivery, Inbox, result, and daily-ledger rows",
+      "backup_action": "create and lock a fresh exact-environment Railway volume backup immediately before reconciliation",
+      "rollback_action": "restore the exact pre-cutover Railway backup and deploy the Expand-compatible SHA"
+    }
   ]
 }

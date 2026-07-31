@@ -59,6 +59,68 @@ func TestSaveVerifiedFailsClosedWhenLegacyIdentityHasNoConnection(t *testing.T) 
 	}
 }
 
+func TestSaveVerifiedTargetedReconnectRecoversSamePublicAccountID(t *testing.T) {
+	queries := &fakeConnectionQueries{
+		canonicalErr: pgx.ErrNoRows,
+		profile:      db.Profile{ID: "profile-a", WorkspaceID: "workspace-a"},
+		reconnectTarget: db.SocialAccount{
+			ID: "stable-account", ProfileID: "profile-a", Platform: "twitter",
+			ExternalAccountID: "provider-a", Status: "reconnect_required",
+			ConnectionType: "byo", BindingStatus: "active",
+		},
+		created: db.SocialConnection{
+			ID: "connection-a", WorkspaceID: "workspace-a", Platform: "twitter",
+			ProviderIdentity: pgtype.Text{String: "provider-a", Valid: true},
+		},
+		recovered: db.SocialAccount{
+			ID: "stable-account", ProfileID: "profile-a", Platform: "twitter",
+			ConnectionID: pgtype.Text{String: "connection-a", Valid: true}, Status: "active",
+		},
+	}
+	store, tx := newFakePostgresStore(queries)
+	input := byoCredentialInput()
+	input.ReconnectAccountID = "stable-account"
+
+	account, err := store.SaveVerified(context.Background(), SaveOAuthReuse, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account.ID != "stable-account" {
+		t.Fatalf("recovered account ID = %q, want stable-account", account.ID)
+	}
+	if queries.recoverCalls != 1 || queries.bindCalls != 0 || queries.resolveConflictCalls != 1 {
+		t.Fatalf("recover=%d bind=%d resolve=%d", queries.recoverCalls, queries.bindCalls, queries.resolveConflictCalls)
+	}
+	if queries.recoverParams.ReconnectAccountID != "stable-account" || queries.recoverParams.ConnectionID.String != "connection-a" {
+		t.Fatalf("recovery params = %+v", queries.recoverParams)
+	}
+	if tx.commitCalls != 1 {
+		t.Fatalf("commit calls = %d, want 1", tx.commitCalls)
+	}
+}
+
+func TestSaveVerifiedTargetedReconnectRejectsMismatchedVerifiedIdentity(t *testing.T) {
+	queries := &fakeConnectionQueries{
+		profile: db.Profile{ID: "profile-a", WorkspaceID: "workspace-a"},
+		reconnectTarget: db.SocialAccount{
+			ID: "stable-account", ProfileID: "profile-a", Platform: "twitter",
+			ExternalAccountID: "different-provider", Status: "reconnect_required",
+			ConnectionType: "byo", BindingStatus: "active",
+		},
+	}
+	store, tx := newFakePostgresStore(queries)
+	input := byoCredentialInput()
+	input.ReconnectAccountID = "stable-account"
+
+	_, err := store.SaveVerified(context.Background(), SaveOAuthReuse, input)
+	if !errors.Is(err, ErrReconnectTargetConflict) {
+		t.Fatalf("SaveVerified() error = %v, want ErrReconnectTargetConflict", err)
+	}
+	if queries.createCalls != 0 || queries.recoverCalls != 0 || tx.commitCalls != 0 {
+		t.Fatalf("mismatched target mutated state: create=%d recover=%d commits=%d", queries.createCalls, queries.recoverCalls, tx.commitCalls)
+	}
+}
+
 func TestSaveVerifiedReusesDisconnectedConnectionAndReactivatesOnlyRequestedBinding(t *testing.T) {
 	queries := &fakeConnectionQueries{
 		profile: db.Profile{ID: "profile-b", WorkspaceID: "workspace-a"},
@@ -294,17 +356,23 @@ type fakeConnectionQueries struct {
 	unbound                db.SocialAccount
 	disconnectedConnection db.SocialConnection
 	affected               []db.SocialAccount
+	reconnectTarget        db.SocialAccount
+	reconnectTargetErr     error
+	recovered              db.SocialAccount
 
 	createCalls               int
 	refreshCalls              int
 	bindCalls                 int
 	disconnectConnectionCalls int
 	disconnectBindingsCalls   int
+	recoverCalls              int
+	resolveConflictCalls      int
 
 	refreshParams       db.RefreshSocialConnectionParams
 	bindParams          db.CreateOrReactivateSocialAccountBindingParams
 	getConnectionParams db.GetSocialConnectionForUpdateParams
 	unbindParams        db.UnbindSocialAccountBindingParams
+	recoverParams       db.RecoverReconnectRequiredSocialAccountBindingParams
 }
 
 func (f *fakeConnectionQueries) FindCanonicalSocialConnectionForUpdate(context.Context, db.FindCanonicalSocialConnectionForUpdateParams) (db.SocialConnection, error) {
@@ -330,6 +398,21 @@ func (f *fakeConnectionQueries) CreateOrReactivateSocialAccountBinding(_ context
 	f.bindCalls++
 	f.bindParams = params
 	return f.bound, nil
+}
+
+func (f *fakeConnectionQueries) GetReconnectRequiredSocialAccountForUpdate(context.Context, db.GetReconnectRequiredSocialAccountForUpdateParams) (db.SocialAccount, error) {
+	return f.reconnectTarget, f.reconnectTargetErr
+}
+
+func (f *fakeConnectionQueries) RecoverReconnectRequiredSocialAccountBinding(_ context.Context, params db.RecoverReconnectRequiredSocialAccountBindingParams) (db.SocialAccount, error) {
+	f.recoverCalls++
+	f.recoverParams = params
+	return f.recovered, nil
+}
+
+func (f *fakeConnectionQueries) ResolveMigrationConflictsForRecoveredAccount(context.Context, db.ResolveMigrationConflictsForRecoveredAccountParams) error {
+	f.resolveConflictCalls++
+	return nil
 }
 
 func (f *fakeConnectionQueries) GetResolvedSocialAccountByIDAndWorkspace(context.Context, db.GetResolvedSocialAccountByIDAndWorkspaceParams) (db.GetResolvedSocialAccountByIDAndWorkspaceRow, error) {

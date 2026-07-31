@@ -45,6 +45,22 @@ type DatabaseBindingRequest struct {
 	RuntimeDatabaseURL   string
 }
 
+type Deployment struct {
+	ID        string
+	ServiceID string
+	Status    string
+	CommitSHA string
+}
+
+type DeploymentInventoryRequest struct {
+	ProjectID     string
+	EnvironmentID string
+}
+
+type DeploymentInventoryClient interface {
+	ActiveDeployments(context.Context, DeploymentInventoryRequest) ([]Deployment, error)
+}
+
 type Client interface {
 	Identity(context.Context) (Identity, error)
 	VolumeInstanceIdentity(context.Context, string) (VolumeInstanceIdentity, error)
@@ -239,6 +255,74 @@ func (c *GraphQLClient) Identity(ctx context.Context) (Identity, error) {
 		ProjectID:     data.ProjectToken.ProjectID,
 		EnvironmentID: data.ProjectToken.EnvironmentID,
 	}, nil
+}
+
+func (c *GraphQLClient) ActiveDeployments(ctx context.Context, request DeploymentInventoryRequest) ([]Deployment, error) {
+	if strings.TrimSpace(request.ProjectID) == "" || strings.TrimSpace(request.EnvironmentID) == "" {
+		return nil, fmt.Errorf("list Railway active deployments: project and environment IDs are required")
+	}
+	var data struct {
+		Deployments struct {
+			Edges []struct {
+				Node struct {
+					ID        string         `json:"id"`
+					ServiceID string         `json:"serviceId"`
+					Status    string         `json:"status"`
+					Meta      map[string]any `json:"meta"`
+				} `json:"node"`
+			} `json:"edges"`
+			PageInfo struct {
+				HasNextPage bool `json:"hasNextPage"`
+			} `json:"pageInfo"`
+		} `json:"deployments"`
+	}
+	variables := map[string]any{"input": map[string]any{
+		"projectId": request.ProjectID, "environmentId": request.EnvironmentID,
+	}}
+	query := `query($input: DeploymentListInput!) {
+  deployments(input: $input, first: 100) {
+    edges { node { id serviceId status meta } }
+    pageInfo { hasNextPage }
+  }
+}`
+	if err := execute(ctx, c, query, variables, &data); err != nil {
+		return nil, fmt.Errorf("list Railway active deployments: %w", err)
+	}
+	if data.Deployments.PageInfo.HasNextPage {
+		return nil, fmt.Errorf("list Railway active deployments: inventory exceeds one verified page")
+	}
+	activeStatuses := map[string]bool{"BUILDING": true, "DEPLOYING": true, "SUCCESS": true}
+	deployments := make([]Deployment, 0, len(data.Deployments.Edges))
+	for _, edge := range data.Deployments.Edges {
+		status := strings.ToUpper(strings.TrimSpace(edge.Node.Status))
+		if !activeStatuses[status] {
+			continue
+		}
+		deployments = append(deployments, Deployment{
+			ID:        edge.Node.ID,
+			ServiceID: edge.Node.ServiceID,
+			Status:    status,
+			CommitSHA: deploymentCommitSHA(edge.Node.Meta),
+		})
+	}
+	sort.Slice(deployments, func(i, j int) bool { return deployments[i].ID < deployments[j].ID })
+	return deployments, nil
+}
+
+func deploymentCommitSHA(meta map[string]any) string {
+	for _, key := range []string{"commitHash", "commitSha", "commitSHA"} {
+		if value, ok := meta[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	for _, key := range []string{"source", "github"} {
+		if nested, ok := meta[key].(map[string]any); ok {
+			if sha := deploymentCommitSHA(nested); sha != "" {
+				return sha
+			}
+		}
+	}
+	return ""
 }
 
 func (c *GraphQLClient) List(ctx context.Context, volumeInstanceID string) ([]Backup, error) {

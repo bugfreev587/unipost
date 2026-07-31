@@ -5,11 +5,6 @@ ALTER TABLE social_post_results
   ADD COLUMN daily_reservation_operation_key TEXT,
   ADD COLUMN daily_reservation_release_pending BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Block legacy result writers while today's success count is captured and the
--- compatibility trigger is installed. Once this transaction commits, an old
--- pod that records a success automatically advances the durable ledger.
-LOCK TABLE social_post_results IN SHARE ROW EXCLUSIVE MODE;
-
 CREATE TABLE physical_daily_publish_reservations (
   workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   physical_account_id TEXT NOT NULL,
@@ -41,6 +36,9 @@ CREATE INDEX physical_daily_publish_operations_account_idx
     utc_date
   );
 
+-- Seed today's already-published usage under the still-authoritative legacy
+-- binding key. This is additive Expand state, not connection consolidation;
+-- the explicit cutover later conserves and folds these units by connection.
 INSERT INTO physical_daily_publish_reservations (
   workspace_id,
   physical_account_id,

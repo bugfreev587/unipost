@@ -606,7 +606,8 @@ FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = @id
-  AND p.workspace_id = @workspace_id;
+  AND p.workspace_id = @workspace_id
+  AND (sa.connection_id IS NULL OR sc.workspace_id = @workspace_id);
 
 -- name: FindSocialAccountByExternalID :one
 -- Dedup check: find an existing account (active OR disconnected) with the

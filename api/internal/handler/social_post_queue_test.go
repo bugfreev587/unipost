@@ -607,6 +607,12 @@ func TestSocialAccountDisconnectedForPublishTreatsReconnectRequiredAsDisconnecte
 	if socialAccountDisconnectedForPublish(db.SocialAccount{Status: "active"}, true) {
 		t.Fatal("active connected account should be available for publish")
 	}
+	if !socialAccountDisconnectedForPublish(db.SocialAccount{Status: "active", BindingStatus: "unbound"}, true) {
+		t.Fatal("unbound Profile binding should be unavailable for publish")
+	}
+	if !socialAccountUnavailableForDelivery(db.SocialAccount{Status: "active", BindingStatus: "unbound"}, true) {
+		t.Fatal("unbound Profile binding should be unavailable for retry delivery")
+	}
 	if socialAccountDisconnectedForPublish(db.SocialAccount{Status: "reconnect_required"}, false) {
 		t.Fatal("missing account should stay missing so validation can report account ownership")
 	}

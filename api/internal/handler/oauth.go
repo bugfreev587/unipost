@@ -85,9 +85,10 @@ func (h *OAuthHandler) logOAuthEvent(ctx context.Context, workspaceID string, ev
 }
 
 type oauthConnectRequest struct {
-	ProfileID   string `json:"profile_id"`
-	Platform    string `json:"platform"`
-	RedirectURL string `json:"redirect_url"`
+	ProfileID          string `json:"profile_id"`
+	Platform           string `json:"platform"`
+	RedirectURL        string `json:"redirect_url"`
+	ReconnectAccountID string `json:"reconnect_account_id"`
 }
 
 // Connect handles POST /v1/oauth/connect with JSON body.
@@ -96,6 +97,7 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	platformName := chi.URLParam(r, "platform")
 	redirectURL := r.URL.Query().Get("redirect_url")
 	requestedProfileID := ""
+	reconnectAccountID := strings.TrimSpace(r.URL.Query().Get("reconnect_account_id"))
 
 	if platformName == "" {
 		var body oauthConnectRequest
@@ -106,6 +108,7 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		platformName = strings.TrimSpace(body.Platform)
 		redirectURL = strings.TrimSpace(body.RedirectURL)
 		requestedProfileID = strings.TrimSpace(body.ProfileID)
+		reconnectAccountID = strings.TrimSpace(body.ReconnectAccountID)
 	}
 
 	if platformName == "" {
@@ -129,6 +132,16 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	if profileErr != nil {
 		writeError(w, profileErr.status, profileErr.code, profileErr.msg)
 		return
+	}
+	if reconnectAccountID != "" {
+		workspaceID := h.workspaceIDForProfile(r.Context(), profileID)
+		target, targetErr := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+			ID: reconnectAccountID, WorkspaceID: workspaceID,
+		})
+		if targetErr != nil || target.ProfileID != profileID || target.Platform != platformName || target.Status != "reconnect_required" {
+			writeError(w, http.StatusConflict, "RECONNECT_TARGET_INVALID", "The selected account is not eligible for reconnect")
+			return
+		}
 	}
 
 	adapter, err := platform.Get(platformName)
@@ -170,12 +183,13 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 
 	// Store state for verification on callback
 	_, err = h.queries.CreateOAuthState(r.Context(), db.CreateOAuthStateParams{
-		State:        state,
-		ProfileID:    profileID,
-		Platform:     platformName,
-		RedirectUrl:  pgtype.Text{String: redirectURL, Valid: redirectURL != ""},
-		PkceVerifier: pgtype.Text{String: pkceVerifier, Valid: pkceVerifier != ""},
-		XAppMode:     appMode,
+		State:              state,
+		ProfileID:          profileID,
+		Platform:           platformName,
+		RedirectUrl:        pgtype.Text{String: redirectURL, Valid: redirectURL != ""},
+		PkceVerifier:       pgtype.Text{String: pkceVerifier, Valid: pkceVerifier != ""},
+		XAppMode:           appMode,
+		ReconnectAccountID: pgtype.Text{String: reconnectAccountID, Valid: reconnectAccountID != ""},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to store OAuth state")
@@ -380,7 +394,8 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			AccessToken: encAccess, RefreshToken: encRefresh, TokenExpiresAt: result.TokenExpiresAt,
 			AccountName: result.AccountName, AvatarURL: result.AvatarURL, Metadata: metadataJSON,
 			Scopes: result.Scopes, XAppMode: resolvedXAppMode.String,
-			Ownership: socialconnections.Ownership{ConnectionType: "byo"},
+			ReconnectAccountID: oauthState.ReconnectAccountID.String,
+			Ownership:          socialconnections.Ownership{ConnectionType: "byo"},
 		})
 		if saveErr != nil {
 			slog.Error("oauth callback: failed to save shared connection", "error", saveErr)

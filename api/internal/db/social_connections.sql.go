@@ -357,6 +357,79 @@ func (q *Queries) FindCanonicalSocialConnectionForUpdate(ctx context.Context, ar
 	return i, err
 }
 
+const getReconnectRequiredSocialAccountForUpdate = `-- name: GetReconnectRequiredSocialAccountForUpdate :one
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = $1
+  AND p.workspace_id = $2
+  AND sa.profile_id = $3
+  AND sa.platform = $4
+  AND sa.connection_id IS NULL
+  AND sa.status = 'reconnect_required'
+  AND sa.binding_status = 'active'
+  AND EXISTS (
+    SELECT 1
+    FROM social_connection_migration_conflicts conflict
+    WHERE conflict.workspace_id = $2
+      AND conflict.platform = $4
+      AND conflict.resolved_at IS NULL
+      AND sa.id = ANY(conflict.source_account_ids)
+  )
+FOR UPDATE OF sa
+`
+
+type GetReconnectRequiredSocialAccountForUpdateParams struct {
+	ReconnectAccountID string `json:"reconnect_account_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	ProfileID          string `json:"profile_id"`
+	Platform           string `json:"platform"`
+}
+
+// A caller may recover only the exact quarantined public binding selected
+// before provider authentication. Workspace/Profile/platform scope and open
+// migration evidence are all required by the locking read.
+func (q *Queries) GetReconnectRequiredSocialAccountForUpdate(ctx context.Context, arg GetReconnectRequiredSocialAccountForUpdateParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, getReconnectRequiredSocialAccountForUpdate,
+		arg.ReconnectAccountID,
+		arg.WorkspaceID,
+		arg.ProfileID,
+		arg.Platform,
+	)
+	var i SocialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.TokenExpiresAt,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.AccountAvatarUrl,
+		&i.ConnectedAt,
+		&i.DisconnectedAt,
+		&i.Metadata,
+		&i.Scope,
+		&i.Status,
+		&i.ConnectionType,
+		&i.ConnectSessionID,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.LastRefreshedAt,
+		&i.XAppMode,
+		&i.ConnectionID,
+		&i.BindingVersion,
+		&i.BindingStatus,
+	)
+	return i, err
+}
+
 const getSocialConnectionForUpdate = `-- name: GetSocialConnectionForUpdate :one
 SELECT sc.id, sc.workspace_id, sc.platform, sc.provider_identity,
   sc.access_token, sc.refresh_token, sc.token_expires_at, sc.account_name,
@@ -496,6 +569,122 @@ func (q *Queries) ListBoundProfileIDsForAccount(ctx context.Context, arg ListBou
 	return items, nil
 }
 
+const recoverReconnectRequiredSocialAccountBinding = `-- name: RecoverReconnectRequiredSocialAccountBinding :one
+UPDATE social_accounts sa
+SET connection_id = $1,
+    access_token = $2,
+    refresh_token = $3,
+    token_expires_at = $4,
+    external_account_id = $5,
+    account_name = $6,
+    account_avatar_url = $7,
+    metadata = COALESCE($8::jsonb, '{}'::jsonb),
+    scope = $9,
+    connection_type = $10,
+    connect_session_id = $11,
+    external_user_id = $12,
+    external_user_email = $13,
+    last_refreshed_at = NOW(),
+    x_app_mode = $14,
+    binding_status = 'active',
+    binding_version = binding_version + 1,
+    disconnected_at = NULL,
+    status = 'active'
+FROM profiles p
+WHERE sa.id = $15
+  AND sa.profile_id = p.id
+  AND p.workspace_id = $16
+  AND sa.profile_id = $17
+  AND sa.platform = $18
+  AND sa.connection_id IS NULL
+  AND sa.status = 'reconnect_required'
+  AND EXISTS (
+    SELECT 1
+    FROM social_connection_migration_conflicts conflict
+    WHERE conflict.workspace_id = $16
+      AND conflict.platform = $18
+      AND conflict.resolved_at IS NULL
+      AND sa.id = ANY(conflict.source_account_ids)
+  )
+RETURNING sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status
+`
+
+type RecoverReconnectRequiredSocialAccountBindingParams struct {
+	ConnectionID       pgtype.Text        `json:"connection_id"`
+	LegacyAccessToken  string             `json:"legacy_access_token"`
+	LegacyRefreshToken pgtype.Text        `json:"legacy_refresh_token"`
+	TokenExpiresAt     pgtype.Timestamptz `json:"token_expires_at"`
+	ExternalAccountID  string             `json:"external_account_id"`
+	AccountName        pgtype.Text        `json:"account_name"`
+	AccountAvatarUrl   pgtype.Text        `json:"account_avatar_url"`
+	Metadata           []byte             `json:"metadata"`
+	Scope              []string           `json:"scope"`
+	ConnectionType     string             `json:"connection_type"`
+	ConnectSessionID   pgtype.Text        `json:"connect_session_id"`
+	ExternalUserID     pgtype.Text        `json:"external_user_id"`
+	ExternalUserEmail  pgtype.Text        `json:"external_user_email"`
+	XAppMode           pgtype.Text        `json:"x_app_mode"`
+	ReconnectAccountID string             `json:"reconnect_account_id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	ProfileID          string             `json:"profile_id"`
+	Platform           string             `json:"platform"`
+}
+
+func (q *Queries) RecoverReconnectRequiredSocialAccountBinding(ctx context.Context, arg RecoverReconnectRequiredSocialAccountBindingParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, recoverReconnectRequiredSocialAccountBinding,
+		arg.ConnectionID,
+		arg.LegacyAccessToken,
+		arg.LegacyRefreshToken,
+		arg.TokenExpiresAt,
+		arg.ExternalAccountID,
+		arg.AccountName,
+		arg.AccountAvatarUrl,
+		arg.Metadata,
+		arg.Scope,
+		arg.ConnectionType,
+		arg.ConnectSessionID,
+		arg.ExternalUserID,
+		arg.ExternalUserEmail,
+		arg.XAppMode,
+		arg.ReconnectAccountID,
+		arg.WorkspaceID,
+		arg.ProfileID,
+		arg.Platform,
+	)
+	var i SocialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.TokenExpiresAt,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.AccountAvatarUrl,
+		&i.ConnectedAt,
+		&i.DisconnectedAt,
+		&i.Metadata,
+		&i.Scope,
+		&i.Status,
+		&i.ConnectionType,
+		&i.ConnectSessionID,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.LastRefreshedAt,
+		&i.XAppMode,
+		&i.ConnectionID,
+		&i.BindingVersion,
+		&i.BindingStatus,
+	)
+	return i, err
+}
+
 const refreshSocialConnection = `-- name: RefreshSocialConnection :one
 UPDATE social_connections
 SET access_token = $1,
@@ -573,6 +762,44 @@ func (q *Queries) RefreshSocialConnection(ctx context.Context, arg RefreshSocial
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const resolveMigrationConflictsForRecoveredAccount = `-- name: ResolveMigrationConflictsForRecoveredAccount :exec
+UPDATE social_connection_migration_conflicts conflict
+SET resolved_at = NOW(),
+    resolution = JSONB_BUILD_OBJECT(
+      'method', 'verified_targeted_reconnect',
+      'recovered_account_id', $1::TEXT,
+      'connection_id', $2::TEXT
+    )
+WHERE conflict.workspace_id = $3
+  AND conflict.platform = $4
+  AND conflict.resolved_at IS NULL
+  AND $1::TEXT = ANY(conflict.source_account_ids)
+  AND NOT EXISTS (
+    SELECT 1
+    FROM UNNEST(conflict.source_account_ids) AS source(account_id)
+    JOIN social_accounts remaining ON remaining.id = source.account_id
+    WHERE remaining.connection_id IS NULL
+      AND remaining.status = 'reconnect_required'
+  )
+`
+
+type ResolveMigrationConflictsForRecoveredAccountParams struct {
+	ReconnectAccountID string `json:"reconnect_account_id"`
+	ConnectionID       string `json:"connection_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	Platform           string `json:"platform"`
+}
+
+func (q *Queries) ResolveMigrationConflictsForRecoveredAccount(ctx context.Context, arg ResolveMigrationConflictsForRecoveredAccountParams) error {
+	_, err := q.db.Exec(ctx, resolveMigrationConflictsForRecoveredAccount,
+		arg.ReconnectAccountID,
+		arg.ConnectionID,
+		arg.WorkspaceID,
+		arg.Platform,
+	)
+	return err
 }
 
 const unbindSocialAccountBinding = `-- name: UnbindSocialAccountBinding :one

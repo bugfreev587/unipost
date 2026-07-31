@@ -544,9 +544,17 @@ func TestIrreversibleMigrationSafetyManifestMatchesRegistry(t *testing.T) {
 		Version     int64  `json:"version"`
 		Description string `json:"description"`
 	}
+	type operationEntry struct {
+		Key                    string `json:"key"`
+		Description            string `json:"description"`
+		AffectedRowsClassifier string `json:"affected_rows_classifier"`
+		BackupAction           string `json:"backup_action"`
+		RollbackAction         string `json:"rollback_action"`
+	}
 	type safetyManifest struct {
-		BaselineVersion            int64           `json:"baseline_version"`
-		IrreversibleDataMigrations []manifestEntry `json:"irreversible_data_migrations"`
+		BaselineVersion            int64            `json:"baseline_version"`
+		IrreversibleDataMigrations []manifestEntry  `json:"irreversible_data_migrations"`
+		IrreversibleOperations     []operationEntry `json:"irreversible_operations"`
 	}
 
 	body, err := os.ReadFile("migrations/irreversible_data_migrations.json")
@@ -579,6 +587,23 @@ func TestIrreversibleMigrationSafetyManifestMatchesRegistry(t *testing.T) {
 	for version := range registry {
 		if _, ok := marked[version]; !ok {
 			t.Fatalf("runtime registry migration %d is missing from irreversible manifest", version)
+		}
+	}
+	operationRegistry := make(map[string]irreversibleOperation, len(irreversibleOperations))
+	for _, operation := range irreversibleOperations {
+		operationRegistry[operation.Key] = operation
+	}
+	if len(manifest.IrreversibleOperations) != len(operationRegistry) {
+		t.Fatalf("irreversible operation manifest count = %d, registry count = %d", len(manifest.IrreversibleOperations), len(operationRegistry))
+	}
+	for _, entry := range manifest.IrreversibleOperations {
+		operation, ok := operationRegistry[entry.Key]
+		if !ok {
+			t.Fatalf("manifest operation %q is missing from runtime registry", entry.Key)
+		}
+		if entry.Description != operation.Description || entry.AffectedRowsClassifier != operation.AffectedRowsClassifier ||
+			entry.BackupAction != operation.BackupAction || entry.RollbackAction != operation.RollbackAction {
+			t.Fatalf("manifest operation %q does not match runtime registry", entry.Key)
 		}
 	}
 
