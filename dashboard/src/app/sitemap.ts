@@ -24,6 +24,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "/docs/api/accounts/profile", changeFrequency: "monthly", priority: 0.7 },
     { path: "/docs/api/accounts/posts", changeFrequency: "monthly", priority: 0.7 },
     { path: "/docs/guides/inbox-integration", changeFrequency: "monthly", priority: 0.7 },
+    { path: "/docs/guides/x/profile-and-post-history", changeFrequency: "monthly", priority: 0.7 },
     { path: "/docs/guides/x/credits", changeFrequency: "monthly", priority: 0.7 },
     { path: "/docs/api/inbox/list", changeFrequency: "monthly", priority: 0.7 },
     { path: "/docs/api/inbox/reply", changeFrequency: "monthly", priority: 0.7 },

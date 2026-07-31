@@ -57,6 +57,12 @@ package = json.loads(package_json.read_text())
 package["version"] = version
 package_json.write_text(json.dumps(package, indent=2) + "\n")
 
+package_lock_json = root / "sdk-js/package-lock.json"
+package_lock = json.loads(package_lock_json.read_text())
+package_lock["version"] = version
+package_lock["packages"][""]["version"] = version
+package_lock_json.write_text(json.dumps(package_lock, indent=2) + "\n")
+
 replace(
     root / "sdk-js/src/http.ts",
     r'^const SDK_VERSION = "[^"]+";$',
@@ -88,6 +94,12 @@ replace(
     f'SDK_VERSION = "{version}"',
 )
 
+replace(
+    root / "sdk-python/README.md",
+    r'^## Latest release: v[^\s]+$',
+    f'## Latest release: v{version}',
+)
+
 # --- Go ---
 replace(
     root / "sdk-go/unipost/client.go",
@@ -95,11 +107,29 @@ replace(
     f'\tsdkVersion     = "{version}"',
 )
 
+replace(
+    root / "sdk-go/README.md",
+    r'^## Latest release: v[^\s]+$',
+    f'## Latest release: v{version}',
+)
+
+replace(
+    root / "sdk-go/README.md",
+    r'go get github\.com/unipost-dev/sdk-go@v[^\s]+',
+    f'go get github.com/unipost-dev/sdk-go@v{version}',
+)
+
 # --- Java ---
 replace(
     root / "sdk-java/build.gradle.kts",
     r'^version = "[^"]+"$',
     f'version = "{version}"',
+)
+
+replace(
+    root / "sdk-java/README.md",
+    r'^## Latest release: v[^\s]+$',
+    f'## Latest release: v{version}',
 )
 
 replace(

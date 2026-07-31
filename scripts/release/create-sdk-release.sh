@@ -24,6 +24,9 @@ REPOS=(sdk-js sdk-python sdk-go sdk-java)
 UNIPOST_API_KEY="${UNIPOST_API_KEY:-}"
 BASE_URL="${BASE_URL:-https://api.unipost.dev}"
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID:-}"
+TEST_X_ACCOUNT_ID="${TEST_X_ACCOUNT_ID:-}"
+TEST_EXTERNAL_USER_ID="${TEST_EXTERNAL_USER_ID:-}"
+REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="${REQUIRE_X_ACCOUNT_READ_ACCEPTANCE:-true}"
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW:-false}"
 SOURCE_VALIDATION_LOG_DIR="${SOURCE_VALIDATION_LOG_DIR:-${ROOT_DIR}/artifacts/sdk-source-validation-release}"
 
@@ -33,6 +36,7 @@ allowed_release_paths() {
     sdk-js)
       cat <<'EOF'
 package.json
+package-lock.json
 src/http.ts
 dist/
 EOF
@@ -40,6 +44,7 @@ EOF
     sdk-python)
       cat <<'EOF'
 pyproject.toml
+README.md
 unipost/__init__.py
 unipost/http.py
 unipost/async_client.py
@@ -48,6 +53,7 @@ EOF
     sdk-go)
       cat <<'EOF'
 unipost/client.go
+README.md
 EOF
       ;;
     sdk-java)
@@ -60,6 +66,17 @@ src/main/java/dev/unipost/ApiHttpClient.java
 EOF
       ;;
   esac
+}
+
+require_release_symbol() {
+  local repo="$1"
+  local path="$2"
+  local symbol="$3"
+  local public_name="$4"
+  if ! grep -Fq "$symbol" "${SDKS_ROOT}/${repo}/${path}"; then
+    echo "$repo main is missing required 0.7.0 symbol ${public_name} in ${path}" >&2
+    exit 1
+  fi
 }
 
 path_is_allowed_for_repo() {
@@ -148,6 +165,17 @@ for repo in "${REPOS[@]}"; do
   fi
 done
 
+# A version tag must never introduce feature source. These checks require the
+# account-read and Billing feature PRs to already be merged into every main.
+require_release_symbol sdk-js src/resources/accounts.ts "async getProfile(" "getProfile"
+require_release_symbol sdk-js src/resources/billing.ts "async getXCredits(" "getXCredits"
+require_release_symbol sdk-python unipost/resources/accounts.py "def get_profile(" "get_profile"
+require_release_symbol sdk-python unipost/resources/billing.py "def get_x_credits(" "get_x_credits"
+require_release_symbol sdk-go unipost/x_account_reads.go "func (s *AccountsService) Profile(" "Accounts.Profile"
+require_release_symbol sdk-go unipost/billing.go "func (s *BillingService) GetXCredits(" "Billing.GetXCredits"
+require_release_symbol sdk-java src/main/java/dev/unipost/UniPost.java "public JsonNode profile(" "accounts().profile"
+require_release_symbol sdk-java src/main/java/dev/unipost/UniPost.java "public JsonNode getXCredits(" "billing().getXCredits"
+
 # Bump versions in each repo.
 "${ROOT_DIR}/scripts/release/bump-sdk-version.sh" "$VERSION"
 
@@ -176,6 +204,9 @@ UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
 UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
 BASE_URL="${BASE_URL}" \
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
+TEST_X_ACCOUNT_ID="${TEST_X_ACCOUNT_ID}" \
+TEST_EXTERNAL_USER_ID="${TEST_EXTERNAL_USER_ID}" \
+REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="${REQUIRE_X_ACCOUNT_READ_ACCEPTANCE}" \
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
   bash "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-js
 
@@ -184,6 +215,9 @@ UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
 UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
 BASE_URL="${BASE_URL}" \
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
+TEST_X_ACCOUNT_ID="${TEST_X_ACCOUNT_ID}" \
+TEST_EXTERNAL_USER_ID="${TEST_EXTERNAL_USER_ID}" \
+REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="${REQUIRE_X_ACCOUNT_READ_ACCEPTANCE}" \
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
   bash "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-python
 
@@ -192,6 +226,9 @@ UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
 UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
 BASE_URL="${BASE_URL}" \
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
+TEST_X_ACCOUNT_ID="${TEST_X_ACCOUNT_ID}" \
+TEST_EXTERNAL_USER_ID="${TEST_EXTERNAL_USER_ID}" \
+REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="${REQUIRE_X_ACCOUNT_READ_ACCEPTANCE}" \
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
   bash "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-go
 
@@ -200,6 +237,9 @@ UNIPOST_DEV_ROOT="${SDKS_ROOT}" \
 UNIPOST_API_KEY="${UNIPOST_API_KEY}" \
 BASE_URL="${BASE_URL}" \
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID}" \
+TEST_X_ACCOUNT_ID="${TEST_X_ACCOUNT_ID}" \
+TEST_EXTERNAL_USER_ID="${TEST_EXTERNAL_USER_ID}" \
+REQUIRE_X_ACCOUNT_READ_ACCEPTANCE="${REQUIRE_X_ACCOUNT_READ_ACCEPTANCE}" \
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW}" \
   bash "${ROOT_DIR}/scripts/sdk-source-validation/run-suite.sh" sdk-java
 
@@ -208,14 +248,14 @@ for repo in "${REPOS[@]}"; do
   dir="${SDKS_ROOT}/${repo}"
   case "$repo" in
     sdk-js)
-      git -C "$dir" add package.json src/http.ts
+      git -C "$dir" add package.json package-lock.json src/http.ts
       git -C "$dir" add -f dist/
       ;;
     sdk-python)
-      git -C "$dir" add pyproject.toml unipost/__init__.py unipost/http.py unipost/async_client.py
+      git -C "$dir" add pyproject.toml README.md unipost/__init__.py unipost/http.py unipost/async_client.py
       ;;
     sdk-go)
-      git -C "$dir" add unipost/client.go
+      git -C "$dir" add unipost/client.go README.md
       ;;
     sdk-java)
       git -C "$dir" add build.gradle.kts README.md pom.xml src/main/java/dev/unipost/UniPost.java src/main/java/dev/unipost/ApiHttpClient.java
