@@ -311,7 +311,7 @@ func pinterestProviderFailure(operation string, status int, body []byte, stage s
 		reason = "token_invalid"
 		errorCode = "auth_token_invalid"
 		message = "Pinterest rejected this connection. Reconnect the account, then try again."
-	case status == http.StatusForbidden && (operation == "board collection" || operation == "user account"):
+	case status == http.StatusForbidden && (operation == "board collection" || operation == "create board" || operation == "user account"):
 		reason = "missing_permission"
 		errorCode = "missing_permission"
 		message = "Pinterest denied a required account permission. Reconnect the account and update its permissions."
@@ -426,13 +426,13 @@ func (a *PinterestAdapter) CreateBoard(ctx context.Context, accessToken string, 
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("pinterest create board: %w", err)
+		return nil, pinterestTransportFailure("create board", err, "destination_discovery")
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("pinterest create board (%d): %s", resp.StatusCode, string(body))
+		return nil, pinterestProviderFailure("create board", resp.StatusCode, body, "destination_discovery")
 	}
 
 	var board PinterestBoard
@@ -503,46 +503,34 @@ func (a *PinterestAdapter) RefreshToken(ctx context.Context, refreshToken string
 }
 
 func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) ([]PinterestBoard, error) {
-	boards := []PinterestBoard{}
-	bookmark := ""
-
-	for {
-		q := url.Values{}
-		q.Set("page_size", "250")
-		if bookmark != "" {
-			q.Set("bookmark", bookmark)
-		}
-		req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBaseURL()+"/boards?"+q.Encode(), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-
-		resp, err := a.client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("pinterest list boards: %w", err)
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("pinterest list boards (%d): %s", resp.StatusCode, string(body))
-		}
-
-		var raw struct {
-			Items    []PinterestBoard `json:"items"`
-			Bookmark string           `json:"bookmark"`
-		}
-		if err := json.Unmarshal(body, &raw); err != nil {
-			return nil, fmt.Errorf("pinterest list boards decode: %w", err)
-		}
-		boards = append(boards, raw.Items...)
-		if raw.Bookmark == "" || len(raw.Items) == 0 {
-			break
-		}
-		bookmark = raw.Bookmark
+	account, err := a.fetchUserAccount(ctx, accessToken, "destination_discovery")
+	if err != nil {
+		return nil, err
 	}
-
+	resources, complete, _, err := a.walkOwnedPinterestBoards(ctx, accessToken, account.Username, "")
+	if err != nil {
+		return nil, err
+	}
+	if !complete {
+		return nil, pinterestBoardProofTemporaryFailure("collection_incomplete")
+	}
+	boards := make([]PinterestBoard, 0, len(resources))
+	ownedIDs := make(map[string]struct{}, len(resources))
+	for _, board := range resources {
+		boards = append(boards, PinterestBoard{ID: board.ID, Name: board.Name})
+		ownedIDs[board.ID] = struct{}{}
+	}
+	metadata, _ := DispatchMetadataFromContext(ctx)
+	a.storePinterestBoardCache(pinterestBoardCacheKey{
+		AccountID:   strings.TrimSpace(metadata.SocialAccountID),
+		Environment: PinterestEnvironment(),
+	}, pinterestBoardCacheEntry{
+		TokenFingerprint: pinterestTokenFingerprint(accessToken),
+		Username:         strings.TrimSpace(account.Username),
+		OwnedIDs:         ownedIDs,
+		Complete:         true,
+		ExpiresAt:        a.pinterestNow().Add(pinterestBoardCacheTTL),
+	})
 	return boards, nil
 }
 

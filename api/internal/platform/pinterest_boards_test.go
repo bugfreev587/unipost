@@ -469,3 +469,74 @@ func TestPinterestBoardPreflightNeverLeaksBoardAPIURL(t *testing.T) {
 		t.Fatalf("public error leaked destination detail: %q", err)
 	}
 }
+
+func TestPinterestFetchBoardsReturnsOnlyBoardsOwnedByOperationUser(t *testing.T) {
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1", "username": pinterestTestOwner})
+		case "/v5/boards":
+			writePinterestJSON(w, http.StatusOK, map[string]any{
+				"items": []any{
+					map[string]any{"id": "owned_1", "name": "Owned", "owner": map[string]any{"username": pinterestTestOwner}},
+					map[string]any{"id": "shared_1", "name": "Shared", "owner": map[string]any{"username": "another_user"}},
+				},
+				"bookmark": "",
+			})
+		default:
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+
+	boards, err := (&PinterestAdapter{client: srv.Client()}).FetchBoards(context.Background(), "token_1")
+	if err != nil {
+		t.Fatalf("FetchBoards: %v", err)
+	}
+	if len(boards) != 1 || boards[0].ID != "owned_1" || boards[0].Name != "Owned" {
+		t.Fatalf("boards = %#v, want only owned_1", boards)
+	}
+}
+
+func TestPinterestFetchBoardsRejectsDuplicatePages(t *testing.T) {
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	listCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1", "username": pinterestTestOwner})
+		case "/v5/boards":
+			listCalls++
+			bookmark := "next_1"
+			if listCalls == 2 {
+				bookmark = "next_2"
+			}
+			if listCalls > 2 {
+				bookmark = ""
+			}
+			writePinterestJSON(w, http.StatusOK, map[string]any{
+				"items":    []any{map[string]any{"id": "duplicate", "name": "Duplicate", "owner": map[string]any{"username": pinterestTestOwner}}},
+				"bookmark": bookmark,
+			})
+		default:
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+
+	_, err := (&PinterestAdapter{client: srv.Client()}).FetchBoards(context.Background(), "token_1")
+	if err == nil {
+		t.Fatal("expected duplicate-page safety failure")
+	}
+	failureCarrier, ok := err.(interface{ FailureContractFields() map[string]any })
+	if !ok {
+		t.Fatalf("error does not carry failure fields: %T", err)
+	}
+	failure := failureCarrier.FailureContractFields()
+	if failure["error_code"] != "temporary_platform_error" || failure["is_retriable"] != true {
+		t.Fatalf("failure fields = %#v", failure)
+	}
+}

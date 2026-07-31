@@ -137,7 +137,19 @@ func (a *PinterestAdapter) fetchPinterestBoard(ctx context.Context, accessToken,
 }
 
 func (a *PinterestAdapter) fetchOwnedPinterestBoardIDs(ctx context.Context, accessToken, username, targetID string) (map[string]struct{}, bool, bool, error) {
-	ownedIDs := make(map[string]struct{})
+	resources, complete, found, err := a.walkOwnedPinterestBoards(ctx, accessToken, username, targetID)
+	if err != nil {
+		return nil, false, false, err
+	}
+	ownedIDs := make(map[string]struct{}, len(resources))
+	for _, board := range resources {
+		ownedIDs[board.ID] = struct{}{}
+	}
+	return ownedIDs, complete, found, nil
+}
+
+func (a *PinterestAdapter) walkOwnedPinterestBoards(ctx context.Context, accessToken, username, targetID string) ([]pinterestBoardResource, bool, bool, error) {
+	ownedBoards := make([]pinterestBoardResource, 0)
 	seenIDs := make(map[string]struct{})
 	seenBookmarks := make(map[string]struct{})
 	seenPages := make(map[string]struct{})
@@ -188,9 +200,9 @@ func (a *PinterestAdapter) fetchOwnedPinterestBoardIDs(ctx context.Context, acce
 				}
 			}
 			if pinterestUsernameEqual(board.Owner.Username, username) {
-				ownedIDs[id] = struct{}{}
-				if id == targetID {
-					return ownedIDs, false, true, nil
+				ownedBoards = append(ownedBoards, board)
+				if targetID != "" && id == targetID {
+					return ownedBoards, false, true, nil
 				}
 			}
 		}
@@ -204,7 +216,7 @@ func (a *PinterestAdapter) fetchOwnedPinterestBoardIDs(ctx context.Context, acce
 
 		nextBookmark := strings.TrimSpace(result.Bookmark)
 		if nextBookmark == "" {
-			return ownedIDs, true, false, nil
+			return ownedBoards, true, false, nil
 		}
 		if _, seen := seenBookmarks[nextBookmark]; seen {
 			return nil, false, false, pinterestBoardProofTemporaryFailure("repeated_bookmark")
@@ -295,4 +307,8 @@ func (a *PinterestAdapter) InvalidateBoardCache(accountID string) {
 			delete(a.boardCache.entries, key)
 		}
 	}
+}
+
+func (a *PinterestAdapter) InvalidateAccountState(accountID string) {
+	a.InvalidateBoardCache(accountID)
 }
