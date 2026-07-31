@@ -233,20 +233,44 @@ func freshPreviewGateConfig() MigrationGateConfig {
 }
 
 func TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup(t *testing.T) {
-	databaseURL, database := openMigrationGateIntegrationDatabase(t)
-	config := freshPreviewGateConfig()
+	tests := []struct {
+		name            string
+		environmentName string
+		publicDomain    string
+	}{
+		{
+			name:            "legacy PR environment",
+			environmentName: "unipost-pr-301",
+			publicDomain:    "preview-api-unipost-pr-301.up.railway.app",
+		},
+		{
+			name:            "hash scoped PR environment",
+			environmentName: "pr-5ba7dd-299",
+			publicDomain:    "preview-api-pr-5ba7dd-299.up.railway.app",
+		},
+	}
 
-	if err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil); err != nil {
-		t.Fatalf("fresh disposable Preview migration gate: %v", err)
-	}
-	var version int64
-	if err := database.QueryRowContext(context.Background(), `
-		SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
-	`).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if version != 140 {
-		t.Fatalf("fresh disposable Preview final version = %d, want 140", version)
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			databaseURL, database := openMigrationGateIntegrationDatabase(t)
+			config := freshPreviewGateConfig()
+			config.EnvironmentName = test.environmentName
+			config.ServicePublicDomain = test.publicDomain
+
+			if err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil); err != nil {
+				t.Fatalf("fresh disposable Preview migration gate: %v", err)
+			}
+			var version int64
+			if err := database.QueryRowContext(context.Background(), `
+				SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
+			`).Scan(&version); err != nil {
+				t.Fatal(err)
+			}
+			if version != 140 {
+				t.Fatalf("fresh disposable Preview final version = %d, want 140", version)
+			}
+		})
 	}
 }
 

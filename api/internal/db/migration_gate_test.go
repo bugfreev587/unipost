@@ -106,6 +106,52 @@ func testMigrationGateConfig() MigrationGateConfig {
 	}
 }
 
+func TestDisposablePreviewIdentityAcceptsSupportedRailwayEnvironmentNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		environmentName string
+		serviceDomain   string
+		want            bool
+	}{
+		{
+			name:            "legacy PR environment",
+			environmentName: "unipost-pr-301",
+			serviceDomain:   "preview-api-unipost-pr-301.up.railway.app",
+			want:            true,
+		},
+		{
+			name:            "hash scoped PR environment",
+			environmentName: "pr-5ba7dd-299",
+			serviceDomain:   "preview-api-pr-5ba7dd-299.up.railway.app",
+			want:            true,
+		},
+		{
+			name:            "hash scoped domain mismatch",
+			environmentName: "pr-5ba7dd-299",
+			serviceDomain:   "preview-api-pr-ffffff-299.up.railway.app",
+			want:            false,
+		},
+		{
+			name:            "persistent environment",
+			environmentName: "development",
+			serviceDomain:   "dev-api.unipost.dev",
+			want:            false,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isDisposablePreviewIdentity(test.environmentName, test.serviceDomain); got != test.want {
+				t.Fatalf("isDisposablePreviewIdentity(%q, %q) = %t, want %t", test.environmentName, test.serviceDomain, got, test.want)
+			}
+		})
+	}
+}
+
 func TestMigrationGateRejectsMiswiredDatabaseBeforeBackupListOrMigrations(t *testing.T) {
 	config := testMigrationGateConfig()
 	client := &recordingBackupClient{

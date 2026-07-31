@@ -186,7 +186,15 @@ func RunRegisteredIrreversibleOperationWithBackupGate(
 	return RunIrreversibleOperationWithBackupGate(ctx, config, client, affected, operation)
 }
 
-var disposablePreviewEnvironmentPattern = regexp.MustCompile(`^unipost-pr-([1-9][0-9]*)$`)
+var disposablePreviewEnvironmentPattern = regexp.MustCompile(`^(?:unipost-pr-[1-9][0-9]*|pr-[a-f0-9]{6}-[1-9][0-9]*)$`)
+
+func isDisposablePreviewIdentity(environmentName, servicePublicDomain string) bool {
+	environmentName = strings.TrimSpace(environmentName)
+	if !disposablePreviewEnvironmentPattern.MatchString(environmentName) {
+		return false
+	}
+	return strings.TrimSpace(servicePublicDomain) == fmt.Sprintf("preview-api-%s.up.railway.app", environmentName)
+}
 
 func freshDisposablePreviewCanBypassBackup(
 	ctx context.Context,
@@ -204,12 +212,7 @@ func freshDisposablePreviewCanBypassBackup(
 		}
 	}
 	environmentName := strings.TrimSpace(config.EnvironmentName)
-	match := disposablePreviewEnvironmentPattern.FindStringSubmatch(environmentName)
-	if len(match) != 2 {
-		return false, nil
-	}
-	expectedPublicDomain := fmt.Sprintf("preview-api-unipost-pr-%s.up.railway.app", match[1])
-	if strings.TrimSpace(config.ServicePublicDomain) != expectedPublicDomain {
+	if !isDisposablePreviewIdentity(environmentName, config.ServicePublicDomain) {
 		return false, nil
 	}
 	for _, value := range []string{
