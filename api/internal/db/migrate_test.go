@@ -560,7 +560,9 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 		"-- name: ReservePublishingPullObjectUsage :one",
 		"-- name: AbandonPublishingPullObjectUsage :exec",
 		"-- name: UpdatePublishingPullObjectUsagesForPost :exec",
-		"-- name: ClaimPublishingPullObjectsDue :many",
+		"-- name: LockPublishingPullObjectCandidates :many",
+		"-- name: PublishingPullObjectHasActiveUsage :one",
+		"-- name: MarkPublishingPullObjectDeleting :one",
 		"-- name: ReleasePublishingPullObjectClaim :exec",
 		"-- name: HardDeletePublishingPullObject :exec",
 	} {
@@ -582,6 +584,22 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 	}
 	if strings.Contains(queryCompact, "on conflict (object_key, post_id)") {
 		t.Fatalf("publishing pull reservation must insert an independent usage per attempt:\n%s", querySQL)
+	}
+
+	transactionSource, err := os.ReadFile("publishing_pull_objects_transactions.go")
+	if err != nil {
+		t.Fatalf("read publishing pull object transaction wrapper: %v", err)
+	}
+	transactionCompact := strings.Join(strings.Fields(string(transactionSource)), " ")
+	for _, want := range []string{
+		"WithTransaction",
+		"LockPublishingPullObjectCandidates",
+		"PublishingPullObjectHasActiveUsage",
+		"MarkPublishingPullObjectDeleting",
+	} {
+		if !strings.Contains(transactionCompact, want) {
+			t.Fatalf("publishing pull object cleanup must lock then recheck in one transaction; missing %q:\n%s", want, string(transactionSource))
+		}
 	}
 }
 

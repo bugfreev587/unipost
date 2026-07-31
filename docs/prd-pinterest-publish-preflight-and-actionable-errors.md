@@ -336,7 +336,8 @@ Because external media has no media-library row, storage must keep a provider-ne
 - on a terminal post transition, apply the same plan/status retention deadline already used by publishing media;
 - allow one content-addressed object to be shared by multiple posts and workspaces, and delete it only after every usage is past its deadline;
 - mark only the failed attempt's usage immediately eligible for cleanup, so a concurrent successful dispatch for the same post and content remains protected;
-- claim an object before R2 deletion so a concurrent staging request cannot reactivate and then lose the object; release the claim when R2 deletion fails, and retry database-finalization failures safely.
+- coordinate reservation and cleanup through the same per-object database row lock; after cleanup owns that lock, re-evaluate usage eligibility in a subsequent statement inside the same transaction before claiming the object, so a concurrently committed active usage cannot be missed by a stale statement snapshot;
+- claim an eligible object before R2 deletion, release the claim when R2 deletion fails, and retry database-finalization failures safely.
 
 The existing media cleanup worker owns this sweep and includes these objects in its cleanup run counts and byte totals.
 

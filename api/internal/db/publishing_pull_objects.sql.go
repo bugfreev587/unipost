@@ -25,34 +25,37 @@ func (q *Queries) AbandonPublishingPullObjectUsage(ctx context.Context, usageID 
 	return err
 }
 
-const claimPublishingPullObjectsDue = `-- name: ClaimPublishingPullObjectsDue :many
-WITH eligible AS (
-  SELECT candidate.object_key
-  FROM publishing_pull_objects candidate
-  WHERE candidate.cleanup_state IN ('active', 'deleting')
-    AND NOT EXISTS (
-      SELECT 1
-      FROM publishing_pull_object_usages usage
-      WHERE usage.object_key = candidate.object_key
-        AND (
-          usage.cleanup_after_at IS NULL
-          OR usage.cleanup_after_at > NOW()
-        )
-    )
-  ORDER BY candidate.created_at ASC, candidate.object_key ASC
-  LIMIT $1
-  FOR UPDATE OF candidate SKIP LOCKED
-)
-UPDATE publishing_pull_objects candidate
-SET cleanup_state = 'deleting',
-    updated_at = NOW()
-FROM eligible
-WHERE candidate.object_key = eligible.object_key
-RETURNING candidate.object_key, candidate.content_type, candidate.size_bytes, candidate.cleanup_state, candidate.created_at, candidate.updated_at
+const hardDeletePublishingPullObject = `-- name: HardDeletePublishingPullObject :exec
+DELETE FROM publishing_pull_objects
+WHERE object_key = $1
+  AND cleanup_state = 'deleting'
 `
 
-func (q *Queries) ClaimPublishingPullObjectsDue(ctx context.Context, batchSize int32) ([]PublishingPullObject, error) {
-	rows, err := q.db.Query(ctx, claimPublishingPullObjectsDue, batchSize)
+func (q *Queries) HardDeletePublishingPullObject(ctx context.Context, objectKey string) error {
+	_, err := q.db.Exec(ctx, hardDeletePublishingPullObject, objectKey)
+	return err
+}
+
+const lockPublishingPullObjectCandidates = `-- name: LockPublishingPullObjectCandidates :many
+SELECT candidate.object_key, candidate.content_type, candidate.size_bytes, candidate.cleanup_state, candidate.created_at, candidate.updated_at
+FROM publishing_pull_objects candidate
+WHERE candidate.cleanup_state IN ('active', 'deleting')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM publishing_pull_object_usages usage
+    WHERE usage.object_key = candidate.object_key
+      AND (
+        usage.cleanup_after_at IS NULL
+        OR usage.cleanup_after_at > NOW()
+      )
+  )
+ORDER BY candidate.created_at ASC, candidate.object_key ASC
+LIMIT $1
+FOR UPDATE OF candidate SKIP LOCKED
+`
+
+func (q *Queries) LockPublishingPullObjectCandidates(ctx context.Context, batchSize int32) ([]PublishingPullObject, error) {
+	rows, err := q.db.Query(ctx, lockPublishingPullObjectCandidates, batchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -78,15 +81,46 @@ func (q *Queries) ClaimPublishingPullObjectsDue(ctx context.Context, batchSize i
 	return items, nil
 }
 
-const hardDeletePublishingPullObject = `-- name: HardDeletePublishingPullObject :exec
-DELETE FROM publishing_pull_objects
+const markPublishingPullObjectDeleting = `-- name: MarkPublishingPullObjectDeleting :one
+UPDATE publishing_pull_objects
+SET cleanup_state = 'deleting',
+    updated_at = NOW()
 WHERE object_key = $1
-  AND cleanup_state = 'deleting'
+  AND cleanup_state IN ('active', 'deleting')
+RETURNING object_key, content_type, size_bytes, cleanup_state, created_at, updated_at
 `
 
-func (q *Queries) HardDeletePublishingPullObject(ctx context.Context, objectKey string) error {
-	_, err := q.db.Exec(ctx, hardDeletePublishingPullObject, objectKey)
-	return err
+func (q *Queries) MarkPublishingPullObjectDeleting(ctx context.Context, objectKey string) (PublishingPullObject, error) {
+	row := q.db.QueryRow(ctx, markPublishingPullObjectDeleting, objectKey)
+	var i PublishingPullObject
+	err := row.Scan(
+		&i.ObjectKey,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.CleanupState,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const publishingPullObjectHasActiveUsage = `-- name: PublishingPullObjectHasActiveUsage :one
+SELECT EXISTS (
+  SELECT 1
+  FROM publishing_pull_object_usages usage
+  WHERE usage.object_key = $1
+    AND (
+      usage.cleanup_after_at IS NULL
+      OR usage.cleanup_after_at > NOW()
+    )
+)
+`
+
+func (q *Queries) PublishingPullObjectHasActiveUsage(ctx context.Context, objectKey string) (bool, error) {
+	row := q.db.QueryRow(ctx, publishingPullObjectHasActiveUsage, objectKey)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const releasePublishingPullObjectClaim = `-- name: ReleasePublishingPullObjectClaim :exec

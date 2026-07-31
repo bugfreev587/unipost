@@ -52,30 +52,41 @@ SET post_status = sqlc.arg(post_status),
     updated_at = NOW()
 WHERE post_id = sqlc.arg(post_id);
 
--- name: ClaimPublishingPullObjectsDue :many
-WITH eligible AS (
-  SELECT candidate.object_key
-  FROM publishing_pull_objects candidate
-  WHERE candidate.cleanup_state IN ('active', 'deleting')
-    AND NOT EXISTS (
-      SELECT 1
-      FROM publishing_pull_object_usages usage
-      WHERE usage.object_key = candidate.object_key
-        AND (
-          usage.cleanup_after_at IS NULL
-          OR usage.cleanup_after_at > NOW()
-        )
+-- name: LockPublishingPullObjectCandidates :many
+SELECT candidate.*
+FROM publishing_pull_objects candidate
+WHERE candidate.cleanup_state IN ('active', 'deleting')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM publishing_pull_object_usages usage
+    WHERE usage.object_key = candidate.object_key
+      AND (
+        usage.cleanup_after_at IS NULL
+        OR usage.cleanup_after_at > NOW()
+      )
+  )
+ORDER BY candidate.created_at ASC, candidate.object_key ASC
+LIMIT sqlc.arg(batch_size)
+FOR UPDATE OF candidate SKIP LOCKED;
+
+-- name: PublishingPullObjectHasActiveUsage :one
+SELECT EXISTS (
+  SELECT 1
+  FROM publishing_pull_object_usages usage
+  WHERE usage.object_key = sqlc.arg(object_key)
+    AND (
+      usage.cleanup_after_at IS NULL
+      OR usage.cleanup_after_at > NOW()
     )
-  ORDER BY candidate.created_at ASC, candidate.object_key ASC
-  LIMIT sqlc.arg(batch_size)
-  FOR UPDATE OF candidate SKIP LOCKED
-)
-UPDATE publishing_pull_objects candidate
+);
+
+-- name: MarkPublishingPullObjectDeleting :one
+UPDATE publishing_pull_objects
 SET cleanup_state = 'deleting',
     updated_at = NOW()
-FROM eligible
-WHERE candidate.object_key = eligible.object_key
-RETURNING candidate.*;
+WHERE object_key = sqlc.arg(object_key)
+  AND cleanup_state IN ('active', 'deleting')
+RETURNING *;
 
 -- name: ReleasePublishingPullObjectClaim :exec
 UPDATE publishing_pull_objects

@@ -147,6 +147,7 @@ func TestMediaRejectsEmptyAndTypeConfusedBodies(t *testing.T) {
 		{name: "isom with avio compatible brand is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypisom\x00\x00\x00\x00aviomp42"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
 		{name: "isom with unknown compatible brand is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypisom\x00\x00\x00\x00zzzzmp42"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
 		{name: "generic isom brands without video evidence are not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x14ftypisom\x00\x00\x00\x00iso2"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
+		{name: "quicktime with unknown compatible brand is rejected", header: "video/quicktime", body: append([]byte("\x00\x00\x00\x18ftypqt  \x00\x00\x00\x00qt  zzzz"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/quicktime"}, wantKind: ErrorUnsupportedMedia},
 		{name: "incomplete ftyp box is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x04\x00ftypisom\x00\x00\x00\x00mp42"), bytes.Repeat([]byte{0}, 600)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
 		{name: "unknown bmff brand is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypzzzz\x00\x00\x00\x00zzzzzzzz"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
 	}
