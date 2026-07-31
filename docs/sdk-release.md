@@ -48,11 +48,10 @@ The X fixture must have `users.read`, `tweet.read`, and `offline.access`, and
 must preserve the X app identity used when it was connected. Validation performs
 one live profile read, one minimum-size authored-post read, exact idempotent
 replays, an optional cursor continuation, and the Credits snapshot/events path.
-For a dedicated regression workspace, the source-validation runner may resolve
-these two IDs from `GET /v1/accounts` only when exactly one eligible X account is
-available (or `TEST_ACCOUNT_ID` identifies it). Zero or multiple candidates remain
-a hard failure; release jobs should set both values explicitly for deterministic
-acceptance.
+`GET /v1/accounts` intentionally does not expose the Managed User ownership
+identifier, so the source-validation runner never guesses this pair. Release
+jobs must set both values explicitly and use a dedicated Hosted Connect fixture;
+a workspace-owned BYO connection is not a valid substitute.
 
 When `x_credits_billing_v1` is off, account reads must remain available with
 `meta.credits.accounting_enabled=false`, while the dedicated Billing endpoints
