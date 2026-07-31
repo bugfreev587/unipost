@@ -469,6 +469,8 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Connect account (OAuth)", href: "/docs/api/accounts/oauth-connect", method: "POST" },
             { label: "Disconnect account", href: "/docs/api/accounts/disconnect", method: "DELETE" },
             { label: "Get account capabilities", href: "/docs/api/accounts/capabilities", method: "GET" },
+            { label: "Get X account profile", href: "/docs/api/accounts/profile", method: "GET" },
+            { label: "List X authored posts", href: "/docs/api/accounts/posts", method: "GET" },
             { label: "Check account health", href: "/docs/api/accounts/health", method: "GET" },
             { label: "Get account metrics", href: "/docs/api/accounts/metrics", method: "GET" },
             { label: "Get TikTok creator info", href: "/docs/api/accounts/tiktok-creator-info", method: "GET" },

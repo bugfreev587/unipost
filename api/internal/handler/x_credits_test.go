@@ -19,6 +19,8 @@ type fakeXCreditsSnapshotService struct {
 	err      error
 	setting  xcredits.InboundCapSetting
 	update   xcredits.UpdateInboundCapRequest
+	events   xcredits.EventPage
+	list     xcredits.ListEventsRequest
 }
 
 func (f fakeXCreditsSnapshotService) Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error) {
@@ -28,6 +30,11 @@ func (f fakeXCreditsSnapshotService) Snapshot(context.Context, string, time.Time
 func (f *fakeXCreditsSnapshotService) UpdateInboundCap(_ context.Context, req xcredits.UpdateInboundCapRequest) (xcredits.InboundCapSetting, error) {
 	f.update = req
 	return f.setting, f.err
+}
+
+func (f *fakeXCreditsSnapshotService) ListEvents(_ context.Context, req xcredits.ListEventsRequest) (xcredits.EventPage, error) {
+	f.list = req
+	return f.events, f.err
 }
 
 func xCreditsInt64(value int64) *int64 {
@@ -44,6 +51,9 @@ func TestGetXCreditsReturnsMonthlyAllowance(t *testing.T) {
 			PeriodEnd:          end,
 			MonthlyAllowance:   xCreditsInt64(4000),
 			MonthlyUsed:        215,
+			MonthlyFinalized:   175,
+			MonthlyPending:     40,
+			MonthlyEffective:   215,
 			MonthlyRemaining:   xCreditsInt64(3785),
 			InboundDailyUsed:   25,
 			InboundDailyLimit:  xCreditsInt64(400),
@@ -72,6 +82,9 @@ func TestGetXCreditsReturnsMonthlyAllowance(t *testing.T) {
 			Mode               string    `json:"mode"`
 			MonthlyAllowance   *int64    `json:"monthly_allowance"`
 			MonthlyUsed        int64     `json:"monthly_used"`
+			MonthlyFinalized   int64     `json:"monthly_finalized"`
+			MonthlyPending     int64     `json:"monthly_pending"`
+			MonthlyEffective   int64     `json:"monthly_effective"`
 			MonthlyRemaining   *int64    `json:"monthly_remaining"`
 			InboundDailyUsage  int64     `json:"inbound_daily_usage"`
 			InboundDailyLimit  *int64    `json:"inbound_daily_limit"`
@@ -95,6 +108,9 @@ func TestGetXCreditsReturnsMonthlyAllowance(t *testing.T) {
 	if body.Data.MonthlyUsed != 215 || body.Data.MonthlyRemaining == nil || *body.Data.MonthlyRemaining != 3785 {
 		t.Fatalf("data = %+v", body.Data)
 	}
+	if body.Data.MonthlyFinalized != 175 || body.Data.MonthlyPending != 40 || body.Data.MonthlyEffective != 215 {
+		t.Fatalf("usage split = %+v", body.Data)
+	}
 	if body.Data.InboundDailyUsage != 25 || body.Data.InboundDailyLimit == nil || *body.Data.InboundDailyLimit != 400 {
 		t.Fatalf("data = %+v", body.Data)
 	}
@@ -109,6 +125,63 @@ func TestGetXCreditsReturnsMonthlyAllowance(t *testing.T) {
 	}
 	if body.RequestID != "req_x_credits" {
 		t.Fatalf("request_id = %q", body.RequestID)
+	}
+}
+
+func TestListXCreditsEventsIsWorkspaceScopedAndContentFree(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	service := &fakeXCreditsSnapshotService{events: xcredits.EventPage{
+		Items: []xcredits.Event{{
+			OperationID: "xro_1", AccountID: "sa_1", ExternalUserID: "managed_1",
+			Operation: "post.read", CatalogVersion: xcredits.CatalogVersion,
+			Estimated: 500, Reserved: 500, Charged: 320, Released: 180,
+			Status: "finalized", CreatedAt: now, UpdatedAt: now, FinalizedAt: &now,
+		}},
+		NextCursor: "next-page",
+	}}
+	h := (&BillingHandler{}).
+		SetXCreditsService(service).
+		SetFeatureFlags(platformFeatureFlags(true))
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/billing/x-credits/events?account_id=sa_1&external_user_id=managed_1&operation=post.read&status=finalized&limit=25",
+		nil,
+	)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.ListXCreditsEvents(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if service.list.WorkspaceID != "ws_1" || service.list.AccountID != "sa_1" ||
+		service.list.ExternalUserID != "managed_1" || service.list.Operation != "post.read" ||
+		service.list.Status != "finalized" || service.list.Limit != 25 {
+		t.Fatalf("list request=%+v", service.list)
+	}
+	if strings.Contains(rec.Body.String(), "idempotency") || strings.Contains(rec.Body.String(), "response_json") ||
+		strings.Contains(rec.Body.String(), "post text") {
+		t.Fatalf("ledger leaked private fields: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"next_cursor":"next-page"`) ||
+		!strings.Contains(rec.Body.String(), `"charged":320`) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
+func TestListXCreditsEventsUsesExistingFeatureGate(t *testing.T) {
+	service := &fakeXCreditsSnapshotService{}
+	h := (&BillingHandler{}).
+		SetXCreditsService(service).
+		SetFeatureFlags(platformFeatureFlags(false))
+	req := httptest.NewRequest(http.MethodGet, "/v1/billing/x-credits/events", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.ListXCreditsEvents(rec, req)
+
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "FEATURE_NOT_AVAILABLE") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

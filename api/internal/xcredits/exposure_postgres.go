@@ -13,23 +13,39 @@ func (s *PostgresStore) ReserveExposure(
 	ctx context.Context,
 	req StoreExposureReservationRequest,
 ) (ExposureReservation, error) {
+	return s.reserveExposure(ctx, req, nil)
+}
+
+func (s *PostgresStore) ReserveExposureWithMutation(
+	ctx context.Context,
+	req StoreExposureReservationRequest,
+	mutation ExposureMutation,
+) (ExposureReservation, error) {
+	return s.reserveExposure(ctx, req, mutation)
+}
+
+func (s *PostgresStore) reserveExposure(
+	ctx context.Context,
+	req StoreExposureReservationRequest,
+	mutation ExposureMutation,
+) (ExposureReservation, error) {
 	if req.RequestedResources <= 0 || req.MinimumResources <= 0 ||
 		req.UnitsPerResource <= 0 || req.MinimumResources > req.RequestedResources {
-		return ExposureReservation{}, errors.New("invalid X backfill exposure reservation")
+		return ExposureReservation{}, errors.New("invalid X read exposure reservation")
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return ExposureReservation{}, err
 	}
 	defer tx.Rollback(ctx)
-	lockKey := fmt.Sprintf("x-inbound-cap:%s:%s", req.WorkspaceID, req.UTCDate.Format("2006-01-02"))
+	lockKey := fmt.Sprintf("x-read-exposure:%s:%s", req.WorkspaceID, req.UTCDate.Format("2006-01-02"))
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
 		return ExposureReservation{}, err
 	}
 	var existing ExposureReservation
 	err = tx.QueryRow(ctx, `
 		SELECT id, requested_resources, reserved_units, COALESCE(actual_units, 0), status, TRUE
-		FROM x_inbox_backfill_exposure_reservations
+		FROM x_read_exposures
 		WHERE workspace_id = $1 AND idempotency_key = $2
 		FOR UPDATE
 	`, req.WorkspaceID, req.IdempotencyKey).Scan(
@@ -54,25 +70,27 @@ func (s *PostgresStore) ReserveExposure(
 			return ExposureReservation{}, err
 		}
 	}
-	effectiveDailyLimit := req.InboundDailyLimit
-	err = tx.QueryRow(ctx, `
-		SELECT inbound_daily_limit
-		FROM x_inbound_cap_settings
-		WHERE workspace_id = $1
-		FOR UPDATE
-	`, req.WorkspaceID).Scan(&effectiveDailyLimit)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return ExposureReservation{}, err
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO x_inbound_daily_usage (
-			workspace_id, utc_date, weighted_units_used, weighted_units_limit,
-			events_accepted, events_suppressed
-		) VALUES ($1, $2, 0, $3, 0, 0)
-		ON CONFLICT (workspace_id, utc_date)
-		DO UPDATE SET weighted_units_limit = EXCLUDED.weighted_units_limit, updated_at = NOW()
-	`, req.WorkspaceID, req.UTCDate, effectiveDailyLimit); err != nil {
-		return ExposureReservation{}, err
+	if req.SafetyPolicy == ExposureSafetyInboundDailyCap {
+		effectiveDailyLimit := req.InboundDailyLimit
+		err = tx.QueryRow(ctx, `
+			SELECT inbound_daily_limit
+			FROM x_inbound_cap_settings
+			WHERE workspace_id = $1
+			FOR UPDATE
+		`, req.WorkspaceID).Scan(&effectiveDailyLimit)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return ExposureReservation{}, err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO x_inbound_daily_usage (
+				workspace_id, utc_date, weighted_units_used, weighted_units_limit,
+				events_accepted, events_suppressed
+			) VALUES ($1, $2, 0, $3, 0, 0)
+			ON CONFLICT (workspace_id, utc_date)
+			DO UPDATE SET weighted_units_limit = EXCLUDED.weighted_units_limit, updated_at = NOW()
+		`, req.WorkspaceID, req.UTCDate, effectiveDailyLimit); err != nil {
+			return ExposureReservation{}, err
+		}
 	}
 	var monthlyUsed, dailyUsed, dailyLimit int64
 	if req.AccountingEnabled {
@@ -85,27 +103,32 @@ func (s *PostgresStore) ReserveExposure(
 			return ExposureReservation{}, err
 		}
 	}
-	if err := tx.QueryRow(ctx, `
-		SELECT weighted_units_used, weighted_units_limit
-		FROM x_inbound_daily_usage
-		WHERE workspace_id = $1 AND utc_date = $2
-		FOR UPDATE
-	`, req.WorkspaceID, req.UTCDate).Scan(&dailyUsed, &dailyLimit); err != nil {
-		return ExposureReservation{}, err
+	if req.SafetyPolicy == ExposureSafetyInboundDailyCap {
+		if err := tx.QueryRow(ctx, `
+			SELECT weighted_units_used, weighted_units_limit
+			FROM x_inbound_daily_usage
+			WHERE workspace_id = $1 AND utc_date = $2
+			FOR UPDATE
+		`, req.WorkspaceID, req.UTCDate).Scan(&dailyUsed, &dailyLimit); err != nil {
+			return ExposureReservation{}, err
+		}
 	}
 	monthlyResources := int64(req.RequestedResources)
 	if req.AccountingEnabled {
 		monthlyResources = (req.MonthlyAllowance - monthlyUsed) / req.UnitsPerResource
 	}
-	safetyBuffer := dailyLimit / 10
-	if safetyBuffer < 20 {
-		safetyBuffer = 20
+	dailyResources := int64(req.RequestedResources)
+	if req.SafetyPolicy == ExposureSafetyInboundDailyCap {
+		safetyBuffer := dailyLimit / 10
+		if safetyBuffer < 20 {
+			safetyBuffer = 20
+		}
+		dailyRemaining := dailyLimit - dailyUsed - safetyBuffer
+		if dailyRemaining < 0 {
+			dailyRemaining = 0
+		}
+		dailyResources = dailyRemaining / req.UnitsPerResource
 	}
-	dailyRemaining := dailyLimit - dailyUsed - safetyBuffer
-	if dailyRemaining < 0 {
-		dailyRemaining = 0
-	}
-	dailyResources := dailyRemaining / req.UnitsPerResource
 	resources := int64(req.RequestedResources)
 	if monthlyResources < resources {
 		resources = monthlyResources
@@ -129,12 +152,14 @@ func (s *PostgresStore) ReserveExposure(
 			return ExposureReservation{}, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE x_inbound_daily_usage
-		SET weighted_units_used = weighted_units_used + $3, updated_at = NOW()
-		WHERE workspace_id = $1 AND utc_date = $2
-	`, req.WorkspaceID, req.UTCDate, units); err != nil {
-		return ExposureReservation{}, err
+	if req.SafetyPolicy == ExposureSafetyInboundDailyCap {
+		if _, err := tx.Exec(ctx, `
+			UPDATE x_inbound_daily_usage
+			SET weighted_units_used = weighted_units_used + $3, updated_at = NOW()
+			WHERE workspace_id = $1 AND utc_date = $2
+		`, req.WorkspaceID, req.UTCDate, units); err != nil {
+			return ExposureReservation{}, err
+		}
 	}
 	reservation := ExposureReservation{
 		RequestedResources: req.RequestedResources,
@@ -143,17 +168,26 @@ func (s *PostgresStore) ReserveExposure(
 		Status:             "reserved",
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO x_inbox_backfill_exposure_reservations (
+		INSERT INTO x_read_exposures (
 			workspace_id, social_account_id, operation_key, idempotency_key,
 			requested_resources, reserved_units, period_start, period_end, utc_date,
-			reconciliation_deadline, next_attempt_at, accounting_enabled
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11)
+			reconciliation_deadline, next_attempt_at, accounting_enabled,
+			purpose, external_user_id, safety_policy, units_per_resource,
+			catalog_version, app_mode, bypass_reason
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11,
+			$12, NULLIF($13, ''), $14, $15, $16, $17, NULLIF($18, ''))
 		RETURNING id
 	`, req.WorkspaceID, req.SocialAccountID, req.OperationKey, req.IdempotencyKey,
 		req.RequestedResources, units, req.PeriodStart, req.PeriodEnd, req.UTCDate,
-		req.Now.Add(30*time.Minute), req.AccountingEnabled).Scan(&reservation.ID)
+		req.ReconciliationDeadline, req.AccountingEnabled, req.Purpose, req.ExternalUserID,
+		req.SafetyPolicy, req.UnitsPerResource, req.CatalogVersion, req.AppMode, req.BypassReason).Scan(&reservation.ID)
 	if err != nil {
 		return ExposureReservation{}, err
+	}
+	if mutation != nil {
+		if err := mutation(ctx, tx, reservation); err != nil {
+			return ExposureReservation{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ExposureReservation{}, err
@@ -162,12 +196,21 @@ func (s *PostgresStore) ReserveExposure(
 }
 
 func (s *PostgresStore) FinalizeExposure(ctx context.Context, id string, actualUnits int64) error {
-	return s.settleExposure(ctx, id, actualUnits, "finalized")
+	return s.settleExposure(ctx, id, actualUnits, "finalized", nil)
+}
+
+func (s *PostgresStore) FinalizeExposureWithMutation(
+	ctx context.Context,
+	id string,
+	actualUnits int64,
+	mutation ExposureSettlementMutation,
+) error {
+	return s.settleExposure(ctx, id, actualUnits, "finalized", mutation)
 }
 
 func (s *PostgresStore) MarkExposureReadStarted(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE x_inbox_backfill_exposure_reservations
+		UPDATE x_read_exposures
 		SET status = 'read_started',
 		    next_attempt_at = reconciliation_deadline,
 		    updated_at = NOW()
@@ -189,11 +232,36 @@ func (s *PostgresStore) MarkExposureFinalizePending(
 	actualUnits int64,
 	message string,
 ) error {
+	return s.markExposureFinalizePending(ctx, id, actualUnits, message, nil)
+}
+
+func (s *PostgresStore) MarkExposureFinalizePendingWithMutation(
+	ctx context.Context,
+	id string,
+	actualUnits int64,
+	message string,
+	mutation ExposureSettlementMutation,
+) error {
+	return s.markExposureFinalizePending(ctx, id, actualUnits, message, mutation)
+}
+
+func (s *PostgresStore) markExposureFinalizePending(
+	ctx context.Context,
+	id string,
+	actualUnits int64,
+	message string,
+	mutation ExposureSettlementMutation,
+) error {
 	if actualUnits < 0 {
 		return errors.New("actual X backfill exposure cannot be negative")
 	}
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE x_inbox_backfill_exposure_reservations
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+		UPDATE x_read_exposures
 		SET status = 'finalize_pending',
 		    actual_units = $2,
 		    last_error = LEFT($3, 1000),
@@ -209,11 +277,16 @@ func (s *PostgresStore) MarkExposureFinalizePending(
 	if tag.RowsAffected() != 1 {
 		return errors.New("X exposure finalize-pending state was not persisted")
 	}
-	return nil
+	if mutation != nil {
+		if err := mutation(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PostgresStore) ReleaseExposure(ctx context.Context, id string) error {
-	return s.settleExposure(ctx, id, 0, "released")
+	return s.settleExposure(ctx, id, 0, "released", nil)
 }
 
 func (s *PostgresStore) MarkExposureReleasePending(
@@ -222,7 +295,7 @@ func (s *PostgresStore) MarkExposureReleasePending(
 	message string,
 ) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE x_inbox_backfill_exposure_reservations
+		UPDATE x_read_exposures
 		SET status = 'release_pending',
 		    last_error = LEFT($2, 1000),
 		    next_attempt_at = NOW(),
@@ -244,7 +317,7 @@ func (s *PostgresStore) claimStaleReservedExposureForRelease(
 	id string,
 ) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE x_inbox_backfill_exposure_reservations
+		UPDATE x_read_exposures
 		SET status = 'release_pending',
 		    last_error = 'Reserved X read exposure expired before the upstream call started',
 		    next_attempt_at = NOW(),
@@ -262,6 +335,7 @@ func (s *PostgresStore) settleExposure(
 	id string,
 	actualUnits int64,
 	finalStatus string,
+	mutation ExposureSettlementMutation,
 ) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -271,18 +345,32 @@ func (s *PostgresStore) settleExposure(
 	var workspaceID, status string
 	var periodStart, periodEnd time.Time
 	var utcDate time.Time
-	var reservedUnits int64
+	var reservedUnits, storedActualUnits int64
 	var accountingEnabled bool
+	var safetyPolicy string
 	err = tx.QueryRow(ctx, `
-		SELECT workspace_id, period_start, period_end, utc_date, reserved_units, status, accounting_enabled
-		FROM x_inbox_backfill_exposure_reservations
+		SELECT workspace_id, period_start, period_end, utc_date, reserved_units, status,
+		       COALESCE(actual_units, 0),
+		       accounting_enabled, safety_policy
+		FROM x_read_exposures
 		WHERE id = $1
 		FOR UPDATE
-	`, id).Scan(&workspaceID, &periodStart, &periodEnd, &utcDate, &reservedUnits, &status, &accountingEnabled)
+	`, id).Scan(
+		&workspaceID, &periodStart, &periodEnd, &utcDate, &reservedUnits, &status, &storedActualUnits,
+		&accountingEnabled, &safetyPolicy,
+	)
 	if err != nil {
 		return err
 	}
 	if status == "finalized" || status == "released" {
+		if actualUnits != storedActualUnits {
+			return errors.New("finalized X exposure units do not match the account-read receipt")
+		}
+		if mutation != nil {
+			if err := mutation(ctx, tx); err != nil {
+				return err
+			}
+		}
 		return tx.Commit(ctx)
 	}
 	if actualUnits < 0 || actualUnits > reservedUnits {
@@ -299,20 +387,29 @@ func (s *PostgresStore) settleExposure(
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE x_inbound_daily_usage
-			SET weighted_units_used = weighted_units_used - $3, updated_at = NOW()
-			WHERE workspace_id = $1 AND utc_date = $2
-		`, workspaceID, utcDate, delta); err != nil {
-			return err
+		if safetyPolicy == ExposureSafetyInboundDailyCap {
+			if _, err := tx.Exec(ctx, `
+				UPDATE x_inbound_daily_usage
+				SET weighted_units_used = weighted_units_used - $3, updated_at = NOW()
+				WHERE workspace_id = $1 AND utc_date = $2
+			`, workspaceID, utcDate, delta); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE x_inbox_backfill_exposure_reservations
-		SET actual_units = $2, status = $3, last_error = NULL, updated_at = NOW()
+		UPDATE x_read_exposures
+		SET actual_units = $2, status = $3, last_error = NULL,
+		    finalized_at = CASE WHEN $3 IN ('finalized', 'released') THEN NOW() ELSE finalized_at END,
+		    updated_at = NOW()
 		WHERE id = $1
 	`, id, actualUnits, finalStatus); err != nil {
 		return err
+	}
+	if mutation != nil {
+		if err := mutation(ctx, tx); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -323,7 +420,7 @@ func (s *PostgresStore) MarkExposureNeedsReconciliation(
 	message string,
 ) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE x_inbox_backfill_exposure_reservations
+		UPDATE x_read_exposures
 		SET status = 'needs_reconciliation',
 		    last_error = LEFT($2, 1000),
 		    updated_at = NOW()
@@ -346,8 +443,9 @@ func (s *PostgresStore) ReconcilePendingExposures(
 	stats := ExposureReleaseReconcileStats{}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, status, COALESCE(actual_units, reserved_units)
-		FROM x_inbox_backfill_exposure_reservations
+		FROM x_read_exposures
 		WHERE status IN ('reserved', 'read_started', 'finalize_pending', 'release_pending')
+		  AND purpose = 'inbox_backfill'
 		  AND next_attempt_at <= $1
 		ORDER BY created_at
 		LIMIT $2
@@ -411,7 +509,7 @@ func (s *PostgresStore) ReconcilePendingExposures(
 		if reconcileErr != nil {
 			stats.Deferred++
 			_, _ = s.pool.Exec(ctx, `
-				UPDATE x_inbox_backfill_exposure_reservations
+				UPDATE x_read_exposures
 				SET reconciliation_attempts = reconciliation_attempts + 1,
 				    next_attempt_at = $2,
 				    last_error = LEFT($3, 1000),

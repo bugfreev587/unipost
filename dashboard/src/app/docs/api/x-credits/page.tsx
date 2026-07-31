@@ -15,7 +15,10 @@ const RESPONSE_FIELDS: ParamRow[] = [
   { name: "mode", type: "string", required: true, description: 'Always "monthly_allowance" in the bounded-usage phase.' },
   { name: "plan_id", type: "string", required: true, description: "Workspace plan used to select the included allowance." },
   { name: "monthly_allowance", type: "integer | null", required: true, description: "Included X Credits for the billing period. Enterprise returns null for contract-defined capacity." },
-  { name: "monthly_used", type: "integer", required: true, description: "Finalized and provisional weighted usage in the current billing period." },
+  { name: "monthly_used", type: "integer", required: true, description: "Compatibility alias for monthly_effective." },
+  { name: "monthly_finalized", type: "integer", required: true, description: "Settled weighted usage in the current billing period." },
+  { name: "monthly_pending", type: "integer", required: true, description: "Credits currently reserved or awaiting reconciliation." },
+  { name: "monthly_effective", type: "integer", required: true, description: "Finalized plus pending usage used for admission decisions." },
   { name: "monthly_remaining", type: "integer | null", required: true, description: "Remaining included X Credits. Enterprise returns null." },
   { name: "billing_period_start", type: "string", required: true, description: "ISO-8601 start of the current allowance period." },
   { name: "billing_period_end", type: "string", required: true, description: "ISO-8601 reset boundary for the current allowance period." },
@@ -31,6 +34,9 @@ const RESPONSE_EXAMPLE = `{
     "plan_id": "basic",
     "monthly_allowance": 4000,
     "monthly_used": 215,
+    "monthly_finalized": 175,
+    "monthly_pending": 40,
+    "monthly_effective": 215,
     "monthly_remaining": 3785,
     "billing_period_start": "2026-07-01T00:00:00Z",
     "billing_period_end": "2026-08-01T00:00:00Z",
@@ -41,6 +47,32 @@ const RESPONSE_EXAMPLE = `{
   },
   "request_id": "req_123"
 }`;
+
+const EVENT_QUERY_FIELDS: ParamRow[] = [
+  { name: "account_id", type: "string", required: false, description: "Filter by connected account ID." },
+  { name: "external_user_id", type: "string", required: false, description: "Filter by Managed User boundary." },
+  { name: "operation", type: "string", required: false, description: "Filter by catalog operation such as user.read or post.read." },
+  { name: "status", type: "string", required: false, description: "Filter by reserved, finalized, released, reconciliation_pending, or bypassed." },
+  { name: "start_time", type: "string", required: false, description: "Inclusive RFC 3339 lower bound." },
+  { name: "end_time", type: "string", required: false, description: "Exclusive RFC 3339 upper bound." },
+  { name: "cursor", type: "string", required: false, description: "Opaque cursor from the previous response." },
+  { name: "limit", type: "integer", required: false, description: "1 to 100 events. Defaults to 50." },
+];
+
+const EVENT_RESPONSE_FIELDS: ParamRow[] = [
+  { name: "data[].operation_id", type: "string", required: true, description: "Stable receipt or usage-event identifier." },
+  { name: "data[].account_id", type: "string", required: false, description: "Connected account associated with the operation." },
+  { name: "data[].external_user_id", type: "string", required: false, description: "Managed User associated with account reads." },
+  { name: "data[].operation", type: "string", required: true, description: "Versioned X Credits catalog operation." },
+  { name: "data[].catalog_version", type: "string", required: true, description: "Catalog version frozen when the operation began." },
+  { name: "data[].estimated", type: "integer", required: true, description: "Credits estimated before the provider call." },
+  { name: "data[].reserved", type: "integer", required: true, description: "Credits held for admission." },
+  { name: "data[].charged", type: "integer", required: true, description: "Final settled Credits." },
+  { name: "data[].released", type: "integer", required: true, description: "Unused reservation returned to the workspace." },
+  { name: "data[].status", type: "string", required: true, description: "Public settlement state." },
+  { name: "data[].created_at", type: "string", required: true, description: "RFC 3339 operation creation time." },
+  { name: "meta.next_cursor", type: "string", required: false, description: "Next-page cursor when more events exist." },
+];
 
 export default async function XCreditsReferencePage() {
   const publicFeatureFlags = await requirePublicDocsFeature("x_credits_billing_v1");
@@ -86,11 +118,61 @@ export default async function XCreditsReferencePage() {
           </div>
         </DocSection>
 
+        <DocSection id="events" title="Credits events">
+          <EndpointHeader
+            method="GET"
+            path="/v1/billing/x-credits/events"
+            description="Lists workspace-scoped reservations and settlement outcomes for reconciliation. The ledger never includes post text, profile biographies, access tokens, or raw provider payloads."
+            badges={["Bearer token", "Workspace scoped", "Cursor paginated"]}
+          />
+          <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+            This endpoint uses the same <code>x_credits_billing_v1</code> gate as the allowance snapshot. Use
+            <code> operation_id</code> to reconcile an API response with the ledger without logging customer content.
+          </p>
+          <ParamTable params={EVENT_QUERY_FIELDS} />
+          <div style={{ marginTop: 18 }}>
+            <CodeTabs snippets={[{
+              lang: "curl",
+              label: "cURL",
+              code: `curl "https://api.unipost.dev/v1/billing/x-credits/events?account_id=sa_x_123&operation=post.read&limit=50" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+            }]} />
+          </div>
+          <div style={{ marginTop: 18 }}>
+            <ParamTable params={EVENT_RESPONSE_FIELDS} />
+          </div>
+          <div style={{ marginTop: 18 }}>
+            <CodeTabs snippets={[{
+              lang: "json",
+              label: "200",
+              code: `{
+  "data": [{
+    "operation_id": "xread_01J...",
+    "account_id": "sa_x_123",
+    "external_user_id": "user_42",
+    "operation": "post.read",
+    "catalog_version": "${X_CREDITS_CATALOG_VERSION}",
+    "estimated": 100,
+    "reserved": 100,
+    "charged": 75,
+    "released": 25,
+    "status": "finalized",
+    "created_at": "2026-07-29T18:42:10Z",
+    "updated_at": "2026-07-29T18:42:11Z",
+    "finalized_at": "2026-07-29T18:42:11Z"
+  }],
+  "meta": { "has_more": false, "limit": 50 },
+  "request_id": "req_123"
+}`,
+            }]} />
+          </div>
+        </DocSection>
+
         <DocSection id="operation-catalog" title="Operation catalog">
           <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", marginTop: 0 }}>
             The public catalog is versioned. X Credits are weighted units, not dollars, and are separate from the
             workspace&apos;s posts/month allowance. The table includes the shipped X Inbox read, inbound, reply, and legacy
-            DM operations used by the list, reply, and sync workflows.
+            DM operations plus live X profile and authored-post reads.
           </p>
           <div style={{ overflowX: "auto" }}>
             <table className="docs-table">
