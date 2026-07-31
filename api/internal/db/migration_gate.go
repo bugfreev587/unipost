@@ -43,6 +43,7 @@ type AffectedMigration struct {
 }
 
 type MigrationGateConfig struct {
+	DatabaseURL          string
 	ProjectID            string
 	EnvironmentID        string
 	EnvironmentName      string
@@ -66,6 +67,7 @@ func RunMigrationsWithBackupGate(
 	client railwaybackup.Client,
 ) error {
 	config.databaseURL = databaseURL
+	config.DatabaseURL = databaseURL
 	database, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return fmt.Errorf("open database for migration backup gate: %w", err)
@@ -128,6 +130,19 @@ func RunMigrationsWithBackupGate(
 	return runAfterBackupGate(ctx, config, client, affected, func(context.Context) error {
 		return runMigrations(ctx, database, false)
 	})
+}
+
+func RunIrreversibleOperationWithBackupGate(
+	ctx context.Context,
+	config MigrationGateConfig,
+	client railwaybackup.Client,
+	affected []AffectedMigration,
+	operation func(context.Context) error,
+) error {
+	if strings.TrimSpace(config.databaseURL) == "" {
+		config.databaseURL = strings.TrimSpace(config.DatabaseURL)
+	}
+	return runAfterBackupGate(ctx, config, client, affected, operation)
 }
 
 var disposablePreviewEnvironmentPattern = regexp.MustCompile(`^unipost-pr-([1-9][0-9]*)$`)

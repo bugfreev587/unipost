@@ -87,6 +87,7 @@ func (p DeploymentProof) Verify(ctx context.Context) error {
 	}
 	allowedModes := map[string]bool{
 		"api": true, "post-delivery-worker": true, "media-worker": true,
+		"social-connection-cutover": true,
 	}
 	for _, session := range sessions {
 		if !strings.HasPrefix(session.ApplicationName, "unipost:") {

@@ -104,6 +104,7 @@ CREATE TABLE social_connection_rollout_state (
   cutover_application_sha    TEXT,
   cutover_environment_id     TEXT,
   cutover_completed_at       TIMESTAMPTZ,
+  cutover_backend_pid        INTEGER,
   last_legacy_write_at       TIMESTAMPTZ,
   updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -138,15 +139,20 @@ DECLARE
   rollout_phase TEXT;
   profile_workspace_id TEXT;
   authority social_connections%ROWTYPE;
+  cutover_backend_pid INTEGER;
+  cutover_internal BOOLEAN;
 BEGIN
-  SELECT state.phase, profile.workspace_id
-  INTO STRICT rollout_phase, profile_workspace_id
+  SELECT state.phase, profile.workspace_id, state.cutover_backend_pid
+  INTO STRICT rollout_phase, profile_workspace_id, cutover_backend_pid
   FROM social_connection_rollout_state state
   JOIN profiles profile ON profile.id = NEW.profile_id
   WHERE state.id = 'global';
 
+  cutover_internal := rollout_phase = 'cutting_over'
+    AND cutover_backend_pid = pg_backend_pid();
+
   IF NEW.connection_id IS NULL THEN
-    IF rollout_phase IN ('cutting_over', 'cutover') THEN
+    IF rollout_phase IN ('cutting_over', 'cutover') AND NOT cutover_internal THEN
       RAISE EXCEPTION 'cutover social account bindings require a connection'
         USING ERRCODE = '23514';
     END IF;
@@ -239,7 +245,7 @@ BEGIN
 
   -- After cutover the connection is authoritative. Projection writes are only
   -- accepted when they already agree with the authority row.
-  IF rollout_phase IN ('cutting_over', 'cutover') AND (
+  IF rollout_phase IN ('cutting_over', 'cutover') AND NOT cutover_internal AND (
        NEW.access_token IS DISTINCT FROM authority.access_token
        OR NEW.refresh_token IS DISTINCT FROM authority.refresh_token
        OR NEW.token_expires_at IS DISTINCT FROM authority.token_expires_at

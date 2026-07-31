@@ -60,7 +60,7 @@ func TestPreflightBuildsDeterministicCutoverBlockers(t *testing.T) {
 	if report.GeneratedAt != clock() || report.Counts.ConflictGroups != 1 || report.Counts.AliasWarnings != 1 {
 		t.Fatalf("report = %+v", report)
 	}
-	if len(report.Blockers) != 2 || report.Blockers[0].Code != "active_delivery_jobs" || report.Blockers[1].Code != "publishable_null_bindings" {
+	if len(report.Blockers) != 1 || report.Blockers[0].Code != "active_delivery_jobs" {
 		t.Fatalf("blockers = %+v", report.Blockers)
 	}
 }

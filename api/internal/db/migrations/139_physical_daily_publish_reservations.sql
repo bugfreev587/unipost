@@ -36,6 +36,34 @@ CREATE INDEX physical_daily_publish_operations_account_idx
     utc_date
   );
 
+-- Seed today's already-published usage under the still-authoritative legacy
+-- binding key. This is additive Expand state, not connection consolidation;
+-- the explicit cutover later conserves and folds these units by connection.
+INSERT INTO physical_daily_publish_reservations (
+  workspace_id,
+  physical_account_id,
+  platform,
+  utc_date,
+  reserved_count
+)
+SELECT
+  p.workspace_id,
+  COALESCE(sa.connection_id, sa.id),
+  sa.platform,
+  (result.published_at AT TIME ZONE 'UTC')::DATE,
+  COUNT(*)::INTEGER
+FROM social_post_results result
+JOIN social_accounts sa ON sa.id = result.social_account_id
+JOIN profiles p ON p.id = sa.profile_id
+WHERE result.published_at IS NOT NULL
+  AND result.published_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')
+  AND result.published_at < date_trunc('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day'
+GROUP BY
+  p.workspace_id,
+  COALESCE(sa.connection_id, sa.id),
+  sa.platform,
+  (result.published_at AT TIME ZONE 'UTC')::DATE;
+
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION reserve_physical_daily_publish(
   requested_workspace_id TEXT,

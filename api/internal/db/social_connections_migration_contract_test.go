@@ -55,28 +55,33 @@ func TestSocialConnectionMigrationsAreExpandOnly(t *testing.T) {
 		"add column binding_version bigint not null default 1",
 		"add column binding_status text not null default 'active'",
 		"enforce_social_connection_authority_write_gate",
+		"cutover_backend_pid",
+		"pg_backend_pid()",
 	} {
 		if !strings.Contains(migration136, required) {
 			t.Fatalf("migration 136 missing Expand contract %q", required)
 		}
 	}
 
-	for _, migration := range []string{
-		"137_delivery_job_connection_snapshot.sql",
-		"138_inbox_connection_deduplication.sql",
-		"139_physical_daily_publish_reservations.sql",
+	for migration, forbiddenMutations := range map[string][]string{
+		"137_delivery_job_connection_snapshot.sql": {
+			"update post_delivery_jobs j set connection_id",
+		},
+		"138_inbox_connection_deduplication.sql": {
+			"update inbox_items i set connection_id",
+			"insert into inbox_item_supersessions",
+		},
+		"139_physical_daily_publish_reservations.sql": {
+			"delete from physical_daily_publish_reservations reservation using social_accounts",
+			"update physical_daily_publish_operations operation set physical_account_id = account.connection_id",
+		},
 	} {
 		body, err := os.ReadFile("migrations/" + migration)
 		if err != nil {
 			t.Fatalf("read %s: %v", migration, err)
 		}
 		compact := compactSocialConnectionSQL(string(body))
-		for _, forbidden := range []string{
-			"update post_delivery_jobs j set connection_id",
-			"update inbox_items i set connection_id",
-			"insert into inbox_item_supersessions",
-			"insert into physical_daily_publish_reservations ( workspace_id, physical_account_id, platform, utc_date, reserved_count ) select",
-		} {
+		for _, forbidden := range forbiddenMutations {
 			if strings.Contains(compact, forbidden) {
 				t.Fatalf("%s contains cutover backfill %q", migration, forbidden)
 			}

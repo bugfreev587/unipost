@@ -88,6 +88,15 @@ func main() {
 
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
+	if handled, commandErr := handleSocialConnectionCommand(
+		context.Background(), os.Args, os.Getenv, os.Stdout,
+	); handled {
+		if commandErr != nil {
+			slog.Error("social connection command failed", "error", commandErr)
+			os.Exit(1)
+		}
+		return
+	}
 	if handled, commandErr := handleMigrationCommand(
 		context.Background(),
 		os.Args,

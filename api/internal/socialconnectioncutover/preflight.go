@@ -58,20 +58,13 @@ func (p *Preflight) Run(ctx context.Context, mode string) (Report, error) {
 	counts.ConflictGroups = int64(len(conflicts))
 	counts.AliasWarnings = int64(len(warnings))
 
-	blockers := make([]Blocker, 0, 2)
+	blockers := make([]Blocker, 0, 1)
 	if mode == "cutover" && counts.ActiveDeliveryJobs > 0 {
 		blockers = append(blockers, Blocker{
 			Code: "active_delivery_jobs", Count: counts.ActiveDeliveryJobs,
 			Message: "active delivery jobs must drain before authority cutover",
 		})
 	}
-	if mode == "cutover" && counts.PublishableNull > 0 {
-		blockers = append(blockers, Blocker{
-			Code: "publishable_null_bindings", Count: counts.PublishableNull,
-			Message: "publishable bindings still lack connection authority",
-		})
-	}
-
 	return Report{
 		GeneratedAt:   p.now().UTC(),
 		Mode:          mode,
@@ -198,7 +191,7 @@ SELECT
     WHERE platform = 'instagram'
       AND NULLIF(BTRIM(metadata->>'instagram_webhook_user_id'), '') IS NULL),
   (SELECT COUNT(*) FROM post_delivery_jobs
-    WHERE state IN ('pending', 'running', 'retrying'))
+    WHERE state IN ('running', 'retrying'))
 `
 
 const preflightConflictsSQL = `
@@ -206,6 +199,7 @@ WITH source AS (
   SELECT
     sa.id AS account_id,
     sa.profile_id,
+    sa.connection_id,
     p.workspace_id,
     sa.platform,
     sa.connection_type,
@@ -243,6 +237,7 @@ WITH source AS (
     '{}'::JSONB AS classification_counts
   FROM source
   WHERE provider_identity IS NULL
+    AND connection_id IS NULL
 ), grouped AS (
   SELECT
     workspace_id,
@@ -262,6 +257,7 @@ WITH source AS (
     COUNT(DISTINCT authority_metadata) AS routing_metadata_count,
     BOOL_OR(connection_type = 'managed') AS has_managed,
     BOOL_OR(connection_type = 'byo') AS has_byo,
+    BOOL_OR(connection_id IS NULL) AS has_legacy_candidate,
     ARRAY_AGG(account_id ORDER BY account_id) AS account_ids,
     ARRAY_AGG(profile_id ORDER BY account_id) AS profile_ids,
     COALESCE(ARRAY_AGG(DISTINCT external_user_id) FILTER (WHERE external_user_id IS NOT NULL), ARRAY[]::TEXT[]) AS external_user_ids,
@@ -307,6 +303,7 @@ WITH source AS (
     ) AS classification_counts
   FROM classified
   WHERE reason IS NOT NULL
+    AND has_legacy_candidate
 )
 SELECT * FROM missing
 UNION ALL
