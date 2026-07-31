@@ -614,9 +614,9 @@ func (f *scheduledExecutionQuotaTestDB) Query(context.Context, string, ...interf
 
 func (f *scheduledExecutionQuotaTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
-	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+	case strings.Contains(query, "-- name: GetResolvedSocialAccountByIDAndWorkspace"):
 		id := args[0].(string)
-		return scanRow{values: socialAccountValues(db.SocialAccount{
+		return scanRow{values: inboxTenantIsolationResolvedSocialAccountValues(db.SocialAccount{
 			ID:                id,
 			ProfileID:         "prof_1",
 			Platform:          "youtube",
@@ -750,6 +750,8 @@ func socialPostResultScanRow(result db.SocialPostResult) scanRow {
 		result.XCreditOperation,
 		result.XCreditCatalogVersion,
 		result.XCreditBillingMode,
+		result.DailyReservationOperationKey,
+		result.DailyReservationReleasePending,
 	}}
 }
 
@@ -800,5 +802,9 @@ func socialAccountValues(a db.SocialAccount) []any {
 		a.ExternalUserID,
 		a.ExternalUserEmail,
 		a.LastRefreshedAt,
+		a.XAppMode,
+		a.ConnectionID,
+		a.BindingVersion,
+		a.BindingStatus,
 	}
 }

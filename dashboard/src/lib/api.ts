@@ -777,6 +777,9 @@ export interface SocialAccount {
   external_user_id?: string;
   external_user_email?: string;
   scope?: string[];
+  shared_connection?: boolean;
+  bound_profile_ids?: string[];
+  sibling_account_ids?: string[];
 }
 
 export async function listSocialAccounts(
@@ -871,6 +874,30 @@ export async function disconnectSocialAccount(
     token,
     { method: "DELETE" }
   );
+}
+
+export async function bindSocialAccount(
+  token: string,
+  accountId: string,
+  profileId: string,
+  externalUserId?: string
+): Promise<ApiResponse<SocialAccount>> {
+  return request(`/v1/accounts/${accountId}/bindings`, token, {
+    method: "POST",
+    body: JSON.stringify({
+      profile_id: profileId,
+      ...(externalUserId ? { external_user_id: externalUserId } : {}),
+    }),
+  });
+}
+
+export async function unbindSocialAccount(
+  token: string,
+  accountId: string
+): Promise<ApiResponse<{ unbound: boolean }>> {
+  return request(`/v1/accounts/${accountId}/binding`, token, {
+    method: "DELETE",
+  });
 }
 
 export async function dismissSocialAccount(

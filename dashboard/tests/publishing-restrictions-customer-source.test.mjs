@@ -30,7 +30,8 @@ test("Composer disables restricted accounts with an accessible persistent notice
   const grid = read("src/components/posts/create-post/account-card-grid.tsx");
 
   assert.match(grid, /disabledIds/);
-  assert.match(grid, /disabled=\{disabled\}/);
+  assert.match(grid, /const isDisabled = disabled \|\| !!selectedSiblingId/);
+  assert.match(grid, /disabled=\{isDisabled\}/);
   assert.match(grid, /aria-describedby/);
   assert.match(grid, /restrictionNoticeId/);
 

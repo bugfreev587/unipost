@@ -63,15 +63,15 @@ func (s *PostgresIngestionStore) AccountForApp(
 	)
 }
 
-func (s *PostgresIngestionStore) AccountsForExternalUser(
+func (s *PostgresIngestionStore) AccountsForProviderUser(
 	ctx context.Context,
 	routeKey string,
-	externalUserID string,
+	providerUserID string,
 ) ([]InboxAccount, error) {
-	rows, err := s.queries.FindXInboxAccountsForExternalUserApp(
+	rows, err := s.queries.FindXInboxAccountsForProviderUserApp(
 		ctx,
-		db.FindXInboxAccountsForExternalUserAppParams{
-			ExternalUserID:         nullableText(externalUserID),
+		db.FindXInboxAccountsForProviderUserAppParams{
+			ProviderUserID:         providerUserID,
 			WebhookRouteKey:        routeKey,
 			ManagedWebhookRouteKey: s.managedWebhookRouteKey,
 		},

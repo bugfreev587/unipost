@@ -3,10 +3,37 @@ package worker
 import (
 	"errors"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
+
+func TestAnalyticsRefreshUsesConnectionCredentialsAndTokenUpdates(t *testing.T) {
+	querySource, err := os.ReadFile("../db/queries/post_analytics.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := strings.ToLower(string(querySource))
+	for _, want := range []string{
+		"left join social_connections sc on sc.id = sa.connection_id",
+		"coalesce(sc.access_token, sa.access_token) as access_token",
+		"sa.connection_id",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("analytics refresh query missing %q", want)
+		}
+	}
+
+	workerSource, err := os.ReadFile("analytics_refresh.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(workerSource), "UpdateSocialConnectionTokens") {
+		t.Fatal("analytics refresh must persist migrated tokens on social_connections")
+	}
+}
 
 func TestAnalyticsRefreshFailurePolicy(t *testing.T) {
 	t.Parallel()

@@ -56,6 +56,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/requesteventpartitions"
 	"github.com/xiaoboyu/unipost-api/internal/requestevents"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
+	"github.com/xiaoboyu/unipost-api/internal/socialconnections"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/trials"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
@@ -758,8 +759,10 @@ func main() {
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	cliSetupTokenHandler := handler.NewCLISetupTokenHandler(queries).WithAPIBaseURL(os.Getenv("API_BASE_URL"))
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
+	socialConnectionStore := socialconnections.NewPostgresStore(pool)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker).
-		SetXTokenRefresher(xTokenRefresher)
+		SetXTokenRefresher(xTokenRefresher).
+		SetConnectionStore(socialConnectionStore)
 	xAccountReadStore := xaccountreads.NewPostgresStore(pool)
 	xAccountReadCursorKey := strings.TrimSpace(os.Getenv("X_ACCOUNT_READ_CURSOR_KEY"))
 	if xAccountReadCursorKey == "" {
@@ -802,7 +805,9 @@ func main() {
 		xAccountReadRecoveryWorker := worker.NewXAccountReadRecoveryWorker(xAccountReadService)
 		go xAccountReadRecoveryWorker.Start(workerCtx)
 	}
-	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
+	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).
+		SetIntegrationLogger(integrationLogger).
+		SetConnectionStore(socialConnectionStore)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr).
 		SetXCreditsService(xCreditsService).
@@ -842,7 +847,9 @@ func main() {
 	// Sprint 3 PR5: Bluesky Connect form handler. No API key — the
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
-	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus, connectOwnershipStore).SetIntegrationLogger(integrationLogger)
+	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus, connectOwnershipStore).
+		SetConnectionStore(socialConnectionStore).
+		SetIntegrationLogger(integrationLogger)
 	// Sprint 4 PR5: Managed Users view (one row per end user across
 	// all their connected social accounts).
 	managedUsersHandler := handler.NewManagedUsersHandler(queries)
@@ -875,7 +882,9 @@ func main() {
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
-	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry, apiBaseURL, superAdminChecker, connectOwnershipStore).SetIntegrationLogger(integrationLogger)
+	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry, apiBaseURL, superAdminChecker, connectOwnershipStore).
+		SetIntegrationLogger(integrationLogger).
+		SetConnectionStore(socialConnectionStore)
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
@@ -1195,6 +1204,8 @@ func main() {
 		// Accounts (workspace-wide).
 		r.Get("/v1/accounts", socialAccountHandler.List)
 		r.Post("/v1/accounts/connect", socialAccountHandler.Connect)
+		r.Post("/v1/accounts/{id}/bindings", socialAccountHandler.Bind)
+		r.Delete("/v1/accounts/{id}/binding", socialAccountHandler.Unbind)
 		r.Delete("/v1/accounts/{id}", socialAccountHandler.Disconnect)
 		r.Post("/v1/accounts/{id}/dismiss", socialAccountHandler.Dismiss)
 		r.Get("/v1/accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
@@ -1229,6 +1240,8 @@ func main() {
 		// profile switcher to scope by current profile).
 		r.Get("/v1/profiles/{profileID}/accounts", socialAccountHandler.List)
 		r.Post("/v1/profiles/{profileID}/accounts/connect", socialAccountHandler.Connect)
+		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/bindings", socialAccountHandler.Bind)
+		r.Delete("/v1/profiles/{profileID}/accounts/{accountID}/binding", socialAccountHandler.Unbind)
 		r.Delete("/v1/profiles/{profileID}/accounts/{accountID}", socialAccountHandler.Disconnect)
 		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/dismiss", socialAccountHandler.Dismiss)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/metrics", socialAccountHandler.AccountMetrics)

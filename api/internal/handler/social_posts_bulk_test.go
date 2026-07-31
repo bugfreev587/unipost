@@ -2,8 +2,48 @@ package handler
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
+
+func TestProcessBulkOneRejectsDuplicateSocialConnectionBeforePublish(t *testing.T) {
+	h := &SocialPostHandler{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/bulk", nil)
+	body := publishRequestBody{PlatformPosts: []platformPostBody{
+		{AccountID: "sa_dev", Caption: "same"},
+		{AccountID: "sa_prod", Caption: "different"},
+	}}
+	accounts := map[string]platform.ValidateAccount{
+		"sa_dev":  {Platform: "twitter", ConnectionID: "conn_1", ProfileID: "pr_dev"},
+		"sa_prod": {Platform: "twitter", ConnectionID: "conn_1", ProfileID: "pr_prod"},
+	}
+
+	result, accepted := h.processBulkOne(
+		req,
+		"ws_1",
+		body,
+		accounts,
+		quota.FreePlanHardBlockGate{},
+		0,
+		make(publishingRestrictionPolicySnapshot),
+	)
+	if result.Status != http.StatusUnprocessableEntity || result.Error == nil {
+		t.Fatalf("result = %#v, want duplicate 422", result)
+	}
+	if result.Error.Code != "DUPLICATE_SOCIAL_CONNECTION" {
+		t.Fatalf("error code = %q", result.Error.Code)
+	}
+	if accepted != 0 {
+		t.Fatalf("accepted quota units = %d, want 0", accepted)
+	}
+	if len(result.Error.Issues) != 2 || result.Error.Details["payloads_match"] != false {
+		t.Fatalf("error = %#v", result.Error)
+	}
+}
 
 // TestBulkRequest_RejectEmpty — empty posts array → 422.
 // Pure structural unit test that doesn't need a DB.

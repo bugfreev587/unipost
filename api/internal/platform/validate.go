@@ -32,7 +32,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +90,8 @@ type ValidateAccount struct {
 	Disconnected   bool
 	ConnectionType string
 	AppMode        string
+	ConnectionID   string
+	ProfileID      string
 }
 
 // ValidateMedia (Sprint 2) is what the validator needs to know about
@@ -177,6 +181,30 @@ type ValidationResult struct {
 	Warnings []Issue `json:"warnings"`
 }
 
+// DuplicateSocialConnectionConflict describes one physical connection selected
+// through multiple public account bindings. ConnectionID is intentionally not
+// present so this value is safe to use when constructing public responses.
+type DuplicateSocialConnectionConflict struct {
+	Platform            string
+	AccountIDs          []string
+	ProfileIDs          []string
+	PlatformPostIndexes []int
+	PayloadsMatch       bool
+	Issues              []Issue
+}
+
+// PublicDetails returns the stable, caller-safe conflict details. Internal
+// connection identifiers are never exposed.
+func (c DuplicateSocialConnectionConflict) PublicDetails() map[string]any {
+	return map[string]any{
+		"platform":              c.Platform,
+		"account_ids":           c.AccountIDs,
+		"profile_ids":           c.ProfileIDs,
+		"platform_post_indexes": c.PlatformPostIndexes,
+		"payloads_match":        c.PayloadsMatch,
+	}
+}
+
 // Severities.
 const (
 	SeverityError   = "error"
@@ -186,29 +214,30 @@ const (
 // Validation error codes. The full list lives here so handler /
 // dashboard / SDK can switch on them without hard-coding strings.
 const (
-	CodeExceedsMaxLength       = "exceeds_max_length"
-	CodeBelowMinLength         = "below_min_length"
-	CodeMissingRequired        = "missing_required"
-	CodeUnsupportedFormat      = "unsupported_format"
-	CodeFileTooLarge           = "file_too_large"
-	CodeDimensionsOutOfRange   = "dimensions_out_of_range"
-	CodeAspectRatioUnsupported = "aspect_ratio_unsupported"
-	CodeDurationOutOfRange     = "duration_out_of_range"
-	CodeAccountDisconnected    = "account_disconnected"
-	CodeAccountTokenExpired    = "account_token_expired"
-	CodeQuotaExceeded          = "quota_exceeded"
-	CodeScheduledTooSoon       = "scheduled_too_soon"
-	CodeScheduledTooFar        = "scheduled_too_far"
-	CodeUnsupportedInReplyTo   = "unsupported_in_reply_to"
-	CodeUnknownPlatform        = "unknown_platform"
-	CodeAccountNotFound        = "account_not_found"
-	CodeAccountNotInWorkspace  = "account_not_in_workspace"
-	CodeMaxImagesExceeded      = "max_images_exceeded"
-	CodeMaxVideosExceeded      = "max_videos_exceeded"
-	CodeMixedMediaUnsupported  = "mixed_media_unsupported"
-	CodeEmptyPosts             = "empty_posts"
-	CodeTooManyPosts           = "too_many_posts"
-	CodeUnknown                = "unknown"
+	CodeExceedsMaxLength          = "exceeds_max_length"
+	CodeBelowMinLength            = "below_min_length"
+	CodeMissingRequired           = "missing_required"
+	CodeUnsupportedFormat         = "unsupported_format"
+	CodeFileTooLarge              = "file_too_large"
+	CodeDimensionsOutOfRange      = "dimensions_out_of_range"
+	CodeAspectRatioUnsupported    = "aspect_ratio_unsupported"
+	CodeDurationOutOfRange        = "duration_out_of_range"
+	CodeAccountDisconnected       = "account_disconnected"
+	CodeAccountTokenExpired       = "account_token_expired"
+	CodeQuotaExceeded             = "quota_exceeded"
+	CodeScheduledTooSoon          = "scheduled_too_soon"
+	CodeScheduledTooFar           = "scheduled_too_far"
+	CodeUnsupportedInReplyTo      = "unsupported_in_reply_to"
+	CodeUnknownPlatform           = "unknown_platform"
+	CodeAccountNotFound           = "account_not_found"
+	CodeAccountNotInWorkspace     = "account_not_in_workspace"
+	CodeMaxImagesExceeded         = "max_images_exceeded"
+	CodeMaxVideosExceeded         = "max_videos_exceeded"
+	CodeMixedMediaUnsupported     = "mixed_media_unsupported"
+	CodeEmptyPosts                = "empty_posts"
+	CodeTooManyPosts              = "too_many_posts"
+	CodeDuplicateSocialConnection = "duplicate_social_connection"
+	CodeUnknown                   = "unknown"
 
 	// CodePlanPlatformNotAllowed fires when a post targets a platform
 	// the workspace's billing plan disallows. Caller computes the
@@ -563,9 +592,114 @@ func ValidatePlatformPosts(opts ValidateOptions) ValidationResult {
 	// Run AFTER the per-post pass so an LLM sees both kinds of error
 	// in one shot rather than having to fix per-post issues first.
 	validateThreads(opts, &res)
+	for _, conflict := range FindDuplicateSocialConnectionConflicts(opts.Posts, opts.Accounts) {
+		res.Errors = append(res.Errors, conflict.Issues...)
+	}
 
 	res.Valid = len(res.Errors) == 0
 	return res
+}
+
+// FindDuplicateSocialConnectionConflicts groups public account bindings by
+// physical connection. Repeating one account ID (for example, a valid thread)
+// is allowed; selecting two distinct account IDs backed by the same nonempty
+// connection ID is not. Legacy rows without a connection ID remain isolated by
+// account ID and therefore are never accidentally collapsed together.
+func FindDuplicateSocialConnectionConflicts(posts []PlatformPostInput, accounts map[string]ValidateAccount) []DuplicateSocialConnectionConflict {
+	type group struct {
+		platform   string
+		accountIDs map[string]struct{}
+		profileIDs map[string]struct{}
+		indexes    []int
+		payloads   []PlatformPostInput
+	}
+
+	groups := make(map[string]*group)
+	for index, post := range posts {
+		account, ok := accounts[post.AccountID]
+		if !ok || strings.TrimSpace(post.AccountID) == "" {
+			continue
+		}
+		connectionID := strings.TrimSpace(account.ConnectionID)
+		if connectionID == "" {
+			// A legacy account without a migrated connection cannot prove
+			// physical equivalence to any other row. Give it a private key.
+			connectionID = "legacy-account:" + post.AccountID
+		}
+		g := groups[connectionID]
+		if g == nil {
+			g = &group{
+				platform:   strings.ToLower(strings.TrimSpace(account.Platform)),
+				accountIDs: make(map[string]struct{}),
+				profileIDs: make(map[string]struct{}),
+			}
+			groups[connectionID] = g
+		}
+		g.accountIDs[post.AccountID] = struct{}{}
+		if profileID := strings.TrimSpace(account.ProfileID); profileID != "" {
+			g.profileIDs[profileID] = struct{}{}
+		}
+		g.indexes = append(g.indexes, index)
+		payload := post
+		payload.AccountID = ""
+		g.payloads = append(g.payloads, payload)
+	}
+
+	conflicts := make([]DuplicateSocialConnectionConflict, 0)
+	for _, g := range groups {
+		if len(g.accountIDs) < 2 {
+			continue
+		}
+		accountIDs := sortedStringSet(g.accountIDs)
+		profileIDs := sortedStringSet(g.profileIDs)
+		indexes := append([]int(nil), g.indexes...)
+		sort.Ints(indexes)
+		payloadsMatch := true
+		for i := 1; i < len(g.payloads); i++ {
+			if !reflect.DeepEqual(g.payloads[0], g.payloads[i]) {
+				payloadsMatch = false
+				break
+			}
+		}
+
+		issues := make([]Issue, 0, len(indexes))
+		for _, index := range indexes {
+			issues = append(issues, Issue{
+				PlatformPostIndex: index,
+				AccountID:         posts[index].AccountID,
+				Platform:          g.platform,
+				Field:             "platform_posts.account_id",
+				Code:              CodeDuplicateSocialConnection,
+				Message:           "This physical social connection is selected through multiple account bindings.",
+				Severity:          SeverityError,
+			})
+		}
+		conflicts = append(conflicts, DuplicateSocialConnectionConflict{
+			Platform:            g.platform,
+			AccountIDs:          accountIDs,
+			ProfileIDs:          profileIDs,
+			PlatformPostIndexes: indexes,
+			PayloadsMatch:       payloadsMatch,
+			Issues:              issues,
+		})
+	}
+
+	sort.Slice(conflicts, func(i, j int) bool {
+		if conflicts[i].Platform != conflicts[j].Platform {
+			return conflicts[i].Platform < conflicts[j].Platform
+		}
+		return strings.Join(conflicts[i].AccountIDs, "\x00") < strings.Join(conflicts[j].AccountIDs, "\x00")
+	})
+	return conflicts
+}
+
+func sortedStringSet(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // validateThreads enforces the Sprint 2 thread rules:

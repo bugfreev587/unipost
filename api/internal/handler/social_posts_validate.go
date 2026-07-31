@@ -270,6 +270,8 @@ func loadValidateAccountsWithQueries(ctx context.Context, queries *db.Queries, w
 			Disconnected:   socialAccountDisconnectedForPublish(a, true),
 			ConnectionType: a.ConnectionType,
 			AppMode:        a.XAppMode.String,
+			ConnectionID:   a.ConnectionID.String,
+			ProfileID:      a.ProfileID,
 		}
 	}
 	return out, nil

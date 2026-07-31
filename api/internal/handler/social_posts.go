@@ -898,6 +898,21 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// — those are still recorded as failed results below to preserve
 	// legacy soft-failure semantics.
 	vr := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accountMap)
+	if conflict, ok := firstDuplicateSocialConnectionConflict(parsed.Posts, accountMap); ok {
+		h.logPublishingEvent(r.Context(), integrationlogs.Event{
+			WorkspaceID: workspaceID,
+			Level:       integrationlogs.LevelWarn,
+			Status:      integrationlogs.StatusError,
+			Action:      integrationlogs.ActionPostValidateFailed,
+			Message:     "Post creation selected one physical connection through multiple bindings.",
+			ErrorCode:   platform.CodeDuplicateSocialConnection,
+			ResponsePayload: map[string]any{
+				"errors": conflict.Issues,
+			},
+		})
+		writeDuplicateSocialConnectionError(w, conflict)
+		return
+	}
 	// Drafts (Sprint 2): persist with status='draft', skip the
 	// publish loop entirely, but still SURFACE validation results in
 	// the response so the user can see what's wrong before publishing.
@@ -1740,7 +1755,8 @@ func (h *SocialPostHandler) executePublishLoop(
 	dailyTracker := quota.NewPerPlatformDailyTracker(
 		r.Context(),
 		h.queries,
-		dailyTargetsFor(parsed.Posts, accountMap),
+		workspaceID,
+		dailyTargetsFor(parsed.Posts, dbAccounts, accountMap),
 	)
 
 	// Plan-platform gate (migration 057). Validate already blocked
@@ -1840,6 +1856,11 @@ func (h *SocialPostHandler) executePublishLoop(
 			ErrorMessage:    errMsg,
 			PublishedAt:     pubAt,
 			Url:             postURL,
+			DailyReservationOperationKey: pgtype.Text{
+				String: oc.dailyReservationOperationKey,
+				Valid:  oc.dailyReservationOperationKey != "",
+			},
+			DailyReservationReleasePending: oc.dailyReservationReleasePending,
 			// Publishing diagnostics are persisted asynchronously after this
 			// business write succeeds. The legacy business column remains empty.
 			DebugCurl:       pgtype.Text{},
@@ -2312,7 +2333,7 @@ func (h *SocialPostHandler) publishOne(
 	dailyTracker *quota.PerPlatformDailyTracker,
 	disallowedPlatforms map[string]bool,
 ) (oc publishOneOutcome) {
-	return h.publishOneContext(r.Context(), workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
+	return h.publishOneContext(r.Context(), workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms, "")
 }
 
 func (h *SocialPostHandler) publishOneContext(
@@ -2325,6 +2346,7 @@ func (h *SocialPostHandler) publishOneContext(
 	tracker *quota.PerAccountTracker,
 	dailyTracker *quota.PerPlatformDailyTracker,
 	disallowedPlatforms map[string]bool,
+	dailyResultID string,
 ) (oc publishOneOutcome) {
 	// Resolve account.
 	acc, ok := dbAccounts[pp.AccountID]
@@ -2361,16 +2383,6 @@ func (h *SocialPostHandler) publishOneContext(
 	// adapter shouldn't be making.
 	if disallowedPlatforms[acc.Platform] {
 		oc.err = ErrPlanPlatformNotAllowed
-		return
-	}
-
-	// Per-platform daily safety cap (PR2). Cheaper than the per-
-	// account monthly check (snapshot lookup, no per-dispatch DB
-	// hit) so it runs first. Caps protect the connected account
-	// from platform-side spam flagging — the cap reset is UTC
-	// midnight, captured in the customer-facing error.
-	if !dailyTracker.Allow(acc.ID, acc.Platform) {
-		oc.err = quota.ErrPerPlatformDailyCapExceeded
 		return
 	}
 
@@ -2446,6 +2458,26 @@ func (h *SocialPostHandler) publishOneContext(
 		mediaURLs = append(mediaURLs, extra...)
 	}
 
+	dailyOperationKey := usageKey + ":main"
+	if !dailyTracker.Allow(physicalAccountKey(acc), acc.Platform, dailyOperationKey) {
+		oc.err = quota.ErrPerPlatformDailyCapExceeded
+		return
+	}
+	if dailyTracker.Reserved(dailyOperationKey) {
+		oc.dailyReservationOperationKey = dailyOperationKey
+		if dailyResultID != "" {
+			if err := h.queries.SetSocialPostResultDailyReservationOperation(ctx, db.SetSocialPostResultDailyReservationOperationParams{
+				OperationKey: pgtype.Text{String: dailyOperationKey, Valid: true},
+				ID:           dailyResultID,
+			}); err != nil {
+				releaseErr := dailyTracker.Release(dailyOperationKey)
+				oc.dailyReservationReleasePending = releaseErr != nil
+				oc.err = errors.Join(fmt.Errorf("persist daily reservation operation: %w", err), releaseErr)
+				return
+			}
+		}
+	}
+
 	// Per-platform routing log — emitted at INFO so smoke-tests can
 	// verify each PlatformPostInput is reaching the right adapter
 	// with the right caption. Mirrors the same line in scheduler.go
@@ -2465,7 +2497,9 @@ func (h *SocialPostHandler) publishOneContext(
 
 	usageEvent, usageErr := h.reserveManagedXUsage(dispatchCtx, workspaceID, usageKey+":main", acc, pp.Caption)
 	if usageErr != nil {
-		oc.err = usageErr
+		releaseErr := dailyTracker.Release(dailyOperationKey)
+		oc.dailyReservationReleasePending = releaseErr != nil
+		oc.err = errors.Join(usageErr, releaseErr)
 		return
 	}
 	if acc.Platform == "twitter" {
@@ -2487,6 +2521,14 @@ func (h *SocialPostHandler) publishOneContext(
 	oc.result = postResult
 	oc.err = err
 	oc.debugCurl = debugRec.Serialize()
+	if err == nil {
+		dailyTracker.Finalize(dailyOperationKey)
+	} else if !providerWriteOutcomeUnknown(err) {
+		if releaseErr := dailyTracker.Release(dailyOperationKey); releaseErr != nil {
+			oc.dailyReservationReleasePending = true
+			oc.err = errors.Join(err, fmt.Errorf("release daily publish reservation: %w", releaseErr))
+		}
+	}
 	if settleErr := settleManagedXUsage(ctx, h.xUsage, usageEvent, err); settleErr != nil {
 		if errors.Is(settleErr, ErrXWriteOutcomePending) {
 			oc.err = settleErr
@@ -2642,6 +2684,25 @@ func xWriteOutcomeUnknown(err error) bool {
 		strings.HasPrefix(message, "create_dm canceled")
 }
 
+func providerWriteOutcomeUnknown(err error) bool {
+	if err == nil {
+		return false
+	}
+	if xWriteOutcomeUnknown(err) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"timeout", "timed out", "context deadline", "context canceled",
+		"connection reset", "broken pipe", "unexpected eof",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func xUsageKeyForResult(resultID string) string {
 	return "social-post-result:" + resultID
 }
@@ -2724,15 +2785,17 @@ func truncateForLog(s string, n int) string {
 // successfully but the first_comment failed. The main result still
 // reports status='published' — the comment failure is informational.
 type publishOneOutcome struct {
-	platform            string
-	accountName         string
-	result              *platform.PostResult
-	err                 error
-	firstCommentWarning string
-	xCreditsCounted     int64
-	xCreditOperation    string
-	xCreditCatalog      string
-	xCreditBillingMode  string
+	platform                       string
+	accountName                    string
+	result                         *platform.PostResult
+	err                            error
+	firstCommentWarning            string
+	xCreditsCounted                int64
+	xCreditOperation               string
+	xCreditCatalog                 string
+	xCreditBillingMode             string
+	dailyReservationOperationKey   string
+	dailyReservationReleasePending bool
 	// debugCurl is the serialized curl+response dump of every non-2xx
 	// HTTP request the adapter made during this dispatch (see
 	// internal/debugrt). Populated whenever entries exist, but only
@@ -2830,7 +2893,14 @@ var ErrXWriteOutcomePending = errors.New("x_write_outcome_pending_reconciliation
 // the input post slice — no extra DB hits. Returns an empty (non-nil)
 // slice if no posts have a resolved platform; the tracker handles
 // that as a no-op.
-func dailyTargetsFor(posts []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount) []quota.PerPlatformDailyTarget {
+func physicalAccountKey(account db.SocialAccount) string {
+	if account.ConnectionID.Valid && strings.TrimSpace(account.ConnectionID.String) != "" {
+		return strings.TrimSpace(account.ConnectionID.String)
+	}
+	return account.ID
+}
+
+func dailyTargetsFor(posts []platform.PlatformPostInput, dbAccounts map[string]db.SocialAccount, accountMap map[string]platform.ValidateAccount) []quota.PerPlatformDailyTarget {
 	seen := make(map[string]struct{})
 	out := make([]quota.PerPlatformDailyTarget, 0, len(posts))
 	for _, p := range posts {
@@ -2838,12 +2908,16 @@ func dailyTargetsFor(posts []platform.PlatformPostInput, accountMap map[string]p
 		if !ok || acc.Platform == "" {
 			continue
 		}
-		if _, dup := seen[p.AccountID]; dup {
+		physicalID := p.AccountID
+		if dbAccount, exists := dbAccounts[p.AccountID]; exists {
+			physicalID = physicalAccountKey(dbAccount)
+		}
+		if _, dup := seen[physicalID]; dup {
 			continue
 		}
-		seen[p.AccountID] = struct{}{}
+		seen[physicalID] = struct{}{}
 		out = append(out, quota.PerPlatformDailyTarget{
-			AccountID: p.AccountID,
+			AccountID: physicalID,
 			Platform:  acc.Platform,
 		})
 	}
@@ -2881,23 +2955,24 @@ func (h *SocialPostHandler) disallowedPlatformsForDispatch(ctx context.Context, 
 // record them as per-account failures and let the rest succeed —
 // preserves legacy partial-success semantics.
 var fatalErrorCodes = map[string]bool{
-	platform.CodeExceedsMaxLength:       true,
-	platform.CodeBelowMinLength:         true,
-	platform.CodeMissingRequired:        true,
-	platform.CodeMaxImagesExceeded:      true,
-	platform.CodeMaxVideosExceeded:      true,
-	platform.CodeMixedMediaUnsupported:  true,
-	platform.CodeUnsupportedInReplyTo:   true,
-	platform.CodeScheduledTooSoon:       true,
-	platform.CodeScheduledTooFar:        true,
-	platform.CodeUnknownPlatform:        true,
-	platform.CodeEmptyPosts:             true,
-	platform.CodeTooManyPosts:           true,
-	platform.CodeUnsupportedFormat:      true,
-	platform.CodeFileTooLarge:           true,
-	platform.CodeDimensionsOutOfRange:   true,
-	platform.CodeAspectRatioUnsupported: true,
-	platform.CodeDurationOutOfRange:     true,
+	platform.CodeDuplicateSocialConnection: true,
+	platform.CodeExceedsMaxLength:          true,
+	platform.CodeBelowMinLength:            true,
+	platform.CodeMissingRequired:           true,
+	platform.CodeMaxImagesExceeded:         true,
+	platform.CodeMaxVideosExceeded:         true,
+	platform.CodeMixedMediaUnsupported:     true,
+	platform.CodeUnsupportedInReplyTo:      true,
+	platform.CodeScheduledTooSoon:          true,
+	platform.CodeScheduledTooFar:           true,
+	platform.CodeUnknownPlatform:           true,
+	platform.CodeEmptyPosts:                true,
+	platform.CodeTooManyPosts:              true,
+	platform.CodeUnsupportedFormat:         true,
+	platform.CodeFileTooLarge:              true,
+	platform.CodeDimensionsOutOfRange:      true,
+	platform.CodeAspectRatioUnsupported:    true,
+	platform.CodeDurationOutOfRange:        true,
 	// Sprint 2 thread codes — fatal because the post can't be
 	// dispatched in a meaningful way without the structure being
 	// intelligible.

@@ -76,7 +76,7 @@ func TestDecideOwnership(t *testing.T) {
 			want:           Decision{Kind: Conflict, ConflictClass: ConflictOwnerBYO, MatchCount: 1},
 		},
 		{
-			name: "same managed user in a different profile conflicts",
+			name: "same managed user in a different profile reuses connection",
 			matches: []db.SocialAccount{{
 				ID:             "account-a",
 				ProfileID:      "profile-other",
@@ -84,7 +84,17 @@ func TestDecideOwnership(t *testing.T) {
 			}},
 			profileID:      "profile-a",
 			externalUserID: "managed-a",
-			want:           Decision{Kind: Conflict, ConflictClass: ConflictProfileMismatch, MatchCount: 1},
+			want:           Decision{Kind: Reconnect, AccountID: "account-a"},
+		},
+		{
+			name: "sibling bindings for one connection remain one ownership match",
+			matches: []db.SocialAccount{
+				{ID: "account-a", ProfileID: "profile-a", ConnectionID: pgtype.Text{String: "connection-a", Valid: true}, ExternalUserID: pgtype.Text{String: "managed-a", Valid: true}},
+				{ID: "account-b", ProfileID: "profile-b", ConnectionID: pgtype.Text{String: "connection-a", Valid: true}, ExternalUserID: pgtype.Text{String: "managed-a", Valid: true}},
+			},
+			profileID:      "profile-c",
+			externalUserID: "managed-a",
+			want:           Decision{Kind: Reconnect, AccountID: "account-a"},
 		},
 		{
 			name: "multiple active matches conflict even when one is an exact reconnect",
@@ -149,7 +159,7 @@ func TestConnectOwnershipQuery(t *testing.T) {
 	for _, want := range []string{
 		"select sa.id, sa.profile_id, sa.platform, sa.access_token",
 		"sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email",
-		"sa.last_refreshed_at, sa.x_app_mode from social_accounts sa",
+		"sa.last_refreshed_at, sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status from social_accounts sa",
 		"join profiles p on p.id = sa.profile_id",
 		"p.workspace_id = @workspace_id",
 		"sa.platform = @platform",

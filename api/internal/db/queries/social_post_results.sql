@@ -2,9 +2,10 @@
 INSERT INTO social_post_results (
   post_id, social_account_id, caption, status, external_id, error_message,
   published_at, url, debug_curl, fb_media_type,
-  x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+  x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode,
+  daily_reservation_operation_key, daily_reservation_release_pending
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 RETURNING *;
 
 -- name: UpdateProcessingSocialPostResultAfterProviderPoll :one
@@ -82,7 +83,9 @@ SET
   next_action = NULL,
   error_source = NULL,
   error_temporality = NULL,
-  provider_error = NULL
+  provider_error = NULL,
+  daily_reservation_operation_key = COALESCE(sqlc.narg('daily_reservation_operation_key'), daily_reservation_operation_key),
+  daily_reservation_release_pending = sqlc.arg('daily_reservation_release_pending')
 WHERE id = $1
   AND status <> 'published'
 RETURNING *;
@@ -138,6 +141,37 @@ WHERE social_account_id = $1
   AND published_at IS NOT NULL
   AND published_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')
   AND published_at <  date_trunc('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day';
+
+-- name: CountPublishedTodayByPhysicalAccount :one
+-- Shared Profile bindings consume one provider-account safety budget. Legacy
+-- rows without a connection retain the prior binding-scoped behavior.
+SELECT COUNT(*)::INTEGER AS count
+FROM social_post_results result
+JOIN social_accounts sa ON sa.id = result.social_account_id
+WHERE COALESCE(sa.connection_id, sa.id) = @physical_account_id::TEXT
+  AND result.published_at IS NOT NULL
+  AND result.published_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')
+  AND result.published_at <  date_trunc('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day';
+
+-- name: ReservePhysicalDailyPublish :one
+SELECT reserve_physical_daily_publish(
+  @workspace_id,
+  @physical_account_id,
+  @platform,
+  @operation_key,
+  @daily_cap
+);
+
+-- name: ReleasePhysicalDailyPublish :one
+SELECT release_physical_daily_publish(@workspace_id, @operation_key) AS released;
+
+-- name: FinalizePhysicalDailyPublish :one
+SELECT finalize_physical_daily_publish(@workspace_id, @operation_key) AS finalized;
+
+-- name: SetSocialPostResultDailyReservationOperation :exec
+UPDATE social_post_results
+SET daily_reservation_operation_key = @operation_key
+WHERE id = @id;
 
 -- name: ListRecentResultsByAccount :many
 -- Most recent N results for an account, for the account health

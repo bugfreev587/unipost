@@ -35,8 +35,9 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
     endpoints: [
       { label: "List accounts", method: "GET", path: "/v1/accounts", href: "/docs/api/accounts/list", description: "List connected social accounts." },
       { label: "Connect account", method: "POST", path: "/v1/accounts/connect", href: "/docs/api/accounts/connect", description: "Create an OAuth connection request." },
+      { label: "Bind account to Profile", method: "POST", path: "/v1/accounts/{id}/bindings", href: "/docs/api/accounts/bind", description: "Reuse one physical connection in another Profile." },
       { label: "OAuth connect", method: "POST", path: "/v1/oauth/connect", href: "/docs/api/accounts/oauth-connect", description: "Start an OAuth flow from API clients." },
-      { label: "Disconnect account", method: "DELETE", path: "/v1/accounts/{id}", href: "/docs/api/accounts/disconnect", description: "Disconnect a social account." },
+      { label: "Disconnect account", method: "DELETE", path: "/v1/accounts/{id}", href: "/docs/api/accounts/disconnect", description: "Disconnect a physical account and all Profile bindings." },
       { label: "Account capabilities", method: "GET", path: "/v1/accounts/{id}/capabilities", href: "/docs/api/accounts/capabilities", description: "Inspect publish and media support." },
       { label: "X account profile", method: "GET", path: "/v1/accounts/{id}/profile", href: "/docs/api/accounts/profile", description: "Read the live profile for a connected X account." },
       { label: "X authored posts", method: "GET", path: "/v1/accounts/{id}/posts", href: "/docs/api/accounts/posts", description: "Read a cursor-paginated page of posts authored by a connected X account." },

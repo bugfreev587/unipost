@@ -22,8 +22,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/jackc/pgx/v5"
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
@@ -61,7 +61,7 @@ func (h *SocialAccountHandler) AccountHealth(w http.ResponseWriter, r *http.Requ
 		accountID = chi.URLParam(r, "accountID")
 	}
 
-	acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+	resolved, err := h.queries.GetResolvedSocialAccountByIDAndWorkspace(r.Context(), db.GetResolvedSocialAccountByIDAndWorkspaceParams{
 		ID:          accountID,
 		WorkspaceID: workspaceID,
 	})
@@ -73,6 +73,7 @@ func (h *SocialAccountHandler) AccountHealth(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load account")
 		return
 	}
+	acc := resolvedSocialAccountFromRow(resolved)
 
 	resp := accountHealthResponse{
 		SocialAccountID: acc.ID,

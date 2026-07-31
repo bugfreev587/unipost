@@ -20,6 +20,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/socialconnections"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -32,6 +33,12 @@ type OAuthHandler struct {
 	// behaves as "no super admins configured" — every FB attempt
 	// returns 403. Non-FB platforms ignore it.
 	superAdminChecker *auth.SuperAdminChecker
+	connections       socialconnections.Store
+}
+
+func (h *OAuthHandler) SetConnectionStore(store socialconnections.Store) *OAuthHandler {
+	h.connections = store
+	return h
 }
 
 func NewOAuthHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, superAdmins *auth.SuperAdminChecker) *OAuthHandler {
@@ -355,6 +362,48 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			h.redirectWithError(w, r, oauthState.RedirectUrl.String, accountNotAvailableOnFreePlanMessage)
 			return
 		}
+	}
+
+	if h.connections != nil {
+		if profErr != nil {
+			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to load Profile")
+			return
+		}
+		providerIdentity, identityErr := socialconnections.ProviderIdentity(platformName, result.ExternalAccountID, result.Metadata)
+		if identityErr != nil {
+			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Provider account identity is missing")
+			return
+		}
+		account, saveErr := h.connections.SaveVerified(r.Context(), socialconnections.SaveOAuthReuse, socialconnections.CredentialInput{
+			WorkspaceID: profile.WorkspaceID, ProfileID: oauthState.ProfileID, Platform: platformName,
+			ProviderIdentity: providerIdentity, ExternalAccountID: result.ExternalAccountID,
+			AccessToken: encAccess, RefreshToken: encRefresh, TokenExpiresAt: result.TokenExpiresAt,
+			AccountName: result.AccountName, AvatarURL: result.AvatarURL, Metadata: metadataJSON,
+			Scopes: result.Scopes, XAppMode: resolvedXAppMode.String,
+			Ownership: socialconnections.Ownership{ConnectionType: "byo"},
+		})
+		if saveErr != nil {
+			slog.Error("oauth callback: failed to save shared connection", "error", saveErr)
+			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to save account")
+			return
+		}
+		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+			Level: integrationlogs.LevelInfo, Status: integrationlogs.StatusSuccess,
+			Action:    integrationlogs.ActionAccountConnectCallbackOK,
+			Message:   "OAuth callback completed and account binding is active.",
+			ProfileID: oauthState.ProfileID, Platform: platformName,
+			Metadata: map[string]any{"flow": "dashboard_oauth", "account_id": account.ID, "external_account_id": result.ExternalAccountID, "connection_type": "byo"},
+		})
+		redirectURL := oauthState.RedirectUrl.String
+		if redirectURL == "" {
+			redirectURL = "https://app.unipost.dev"
+		}
+		separator := "?"
+		if strings.Contains(redirectURL, "?") {
+			separator = "&"
+		}
+		http.Redirect(w, r, redirectURL+separator+"status=success&account_name="+result.AccountName, http.StatusFound)
+		return
 	}
 
 	// Dedup: check if this platform account is already connected in the workspace

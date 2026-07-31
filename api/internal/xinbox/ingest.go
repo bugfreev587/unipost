@@ -111,7 +111,7 @@ type IngestionResult struct {
 
 type IngestionStore interface {
 	AccountForApp(context.Context, string, string) (InboxAccount, error)
-	AccountsForExternalUser(context.Context, string, string) ([]InboxAccount, error)
+	AccountsForProviderUser(context.Context, string, string) ([]InboxAccount, error)
 	InsertInboxItem(context.Context, InboxItem) (InboxItem, bool, error)
 }
 
@@ -216,9 +216,9 @@ func (s *IngestionService) IngestActivityEvent(ctx context.Context, appClientID 
 		}
 		accounts = []InboxAccount{account}
 	} else {
-		externalUserID := firstNonEmptyString(event.ExternalUserID, event.RecipientID)
+		providerUserID := firstNonEmptyString(event.ExternalUserID, event.RecipientID)
 		var err error
-		accounts, err = s.store.AccountsForExternalUser(ctx, appClientID, externalUserID)
+		accounts, err = s.store.AccountsForProviderUser(ctx, appClientID, providerUserID)
 		if err != nil {
 			return err
 		}

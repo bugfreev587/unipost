@@ -36,6 +36,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/socialconnections"
 )
 
 // pendingFacebookPage is how we serialize each Page inside the
@@ -474,6 +475,23 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 			metadata["business_relationship"] = page.BusinessRelationship
 		}
 		metadataJSON, _ := json.Marshal(metadata)
+		if h.connections != nil {
+			account, err := h.connections.SaveVerified(r.Context(), socialconnections.SaveOAuthReuse, socialconnections.CredentialInput{
+				WorkspaceID: workspaceID, ProfileID: row.ProfileID, Platform: "facebook",
+				ProviderIdentity: page.ID, ExternalAccountID: page.ID,
+				AccessToken: page.PageAccessTokenEncrypted, AccountName: page.Name,
+				AvatarURL: page.PictureURL, Metadata: metadataJSON, Scopes: scopes,
+				Ownership: socialconnections.Ownership{ConnectionType: "byo"},
+			})
+			if err != nil {
+				slog.Error("facebook finalize: save shared connection failed", "err", err, "page_id", page.ID)
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("Failed to save Page %q", page.Name))
+				return
+			}
+			createdAccounts = append(createdAccounts, account.ID)
+			h.subscribePageToWebhooks(r, fbAdapter, page)
+			continue
+		}
 
 		existing, findErr := h.queries.FindSocialAccountByExternalID(r.Context(), db.FindSocialAccountByExternalIDParams{
 			Platform:          "facebook",

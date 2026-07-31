@@ -80,7 +80,7 @@ const PLATFORM_POST_FIELDS: ApiFieldItem[] = [
   {
     name: "platform_posts[].account_id",
     type: "string",
-    description: "Connected social account to publish to.",
+    description: "Profile-scoped account binding to publish to. Do not add a profile_id or internal connection identifier. A request may select only one binding for each physical provider connection.",
   },
   {
     name: "platform_posts[].caption?",
@@ -470,12 +470,26 @@ const RESPONSE_SNIPPETS = [
   },
   {
     lang: "json",
-    label: "422",
+    label: "422 duplicate connection",
     code: `{
   "error": {
-    "code": "VALIDATION_ERROR",
-    "normalized_code": "validation_error",
-    "message": "Caption exceeds maximum length for twitter (280 characters)"
+    "code": "DUPLICATE_SOCIAL_CONNECTION",
+    "normalized_code": "duplicate_social_connection",
+    "message": "A post can target only one Profile binding for the same physical social connection.",
+    "issues": [
+      {
+        "platform_post_index": 1,
+        "account_id": "sa_twitter_staging",
+        "field": "platform_posts[].account_id",
+        "code": "duplicate_social_connection",
+        "message": "This account is another Profile binding for a physical connection already selected by this post.",
+        "severity": "error"
+      }
+    ],
+    "details": {
+      "account_ids": ["sa_twitter_development", "sa_twitter_staging"],
+      "profile_ids": ["pr_development", "pr_staging"]
+    }
   },
   "request_id": "req_123"
 }`,

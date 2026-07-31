@@ -31,8 +31,9 @@ const (
 )
 
 var (
-	deliveryAccessTokenParamPattern = regexp.MustCompile(`(?i)(access_token=)[^&\s"'<>]+`)
-	deliveryBearerTokenPattern      = regexp.MustCompile(`(?i)(authorization:\s*bearer\s+)[^\s"'<>]+`)
+	deliveryAccessTokenParamPattern   = regexp.MustCompile(`(?i)(access_token=)[^&\s"'<>]+`)
+	deliveryBearerTokenPattern        = regexp.MustCompile(`(?i)(authorization:\s*bearer\s+)[^\s"'<>]+`)
+	errDeliveryBindingVersionMismatch = errors.New("the selected social account binding changed after this delivery was queued")
 )
 
 type postQueueSummary struct {
@@ -137,16 +138,23 @@ func findPostInputIndexForResult(post db.SocialPost, result db.SocialPostResult)
 func (h *SocialPostHandler) loadDBAccountsByIDs(ctx context.Context, workspaceID string, ids []string) map[string]db.SocialAccount {
 	out := make(map[string]db.SocialAccount, len(ids))
 	for _, id := range ids {
-		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(ctx, db.GetSocialAccountByIDAndWorkspaceParams{
+		resolved, err := h.queries.GetResolvedSocialAccountByIDAndWorkspace(ctx, db.GetResolvedSocialAccountByIDAndWorkspaceParams{
 			ID:          id,
 			WorkspaceID: workspaceID,
 		})
 		if err != nil {
 			continue
 		}
-		out[id] = acc
+		out[id] = resolved.AsSocialAccount()
 	}
 	return out
+}
+
+func deliveryBindingSnapshot(acc db.SocialAccount) (pgtype.Text, pgtype.Int8) {
+	if !acc.ConnectionID.Valid || strings.TrimSpace(acc.ConnectionID.String) == "" {
+		return pgtype.Text{}, pgtype.Int8{}
+	}
+	return acc.ConnectionID, pgtype.Int8{Int64: acc.BindingVersion, Valid: true}
 }
 
 func summarizeAccountValidation(dbAcc db.SocialAccount, ok bool, fallback platform.ValidateAccount) (platformName string, err error) {
@@ -322,11 +330,14 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveriesWithQuotaBlocks(
 			continue
 		}
 
+		connectionID, bindingVersion := deliveryBindingSnapshot(acc)
 		job, err := h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
 			PostID:             post.ID,
 			SocialPostResultID: res.ID,
 			WorkspaceID:        post.WorkspaceID,
 			SocialAccountID:    pp.AccountID,
+			ConnectionID:       connectionID,
+			BindingVersion:     bindingVersion,
 			Platform:           acc.Platform,
 			PostInputIndex:     int32(idx),
 			Kind:               "dispatch",
@@ -593,7 +604,22 @@ func (h *SocialPostHandler) enqueueClaimedScheduledPost(ctx context.Context, pos
 		accountMap[pp.AccountID] = platform.ValidateAccount{
 			Platform:     acc.Platform,
 			Disconnected: socialAccountDisconnectedForPublish(acc, ok),
+			ConnectionID: acc.ConnectionID.String,
+			ProfileID:    acc.ProfileID,
 		}
+	}
+	if conflict, ok := firstDuplicateSocialConnectionConflict(parsed, accountMap); ok {
+		terminalErr := fmt.Errorf("DUPLICATE_SOCIAL_CONNECTION: %s: %v", duplicateSocialConnectionMessage, conflict.AccountIDs)
+		if err := h.failScheduledPostForDuplicateConnection(ctx, post, parsed, accountMap, terminalErr.Error()); err != nil {
+			return outcome, err
+		}
+		post.Status = "failed"
+		post.PublishedAt = pgtype.Timestamptz{}
+		outcome.terminalErr = terminalErr
+		outcome.retentionPost = post
+		outcome.retentionStatus = post.Status
+		outcome.syncOrdinaryRetention = postMediaRetentionSyncSkipped(ctx)
+		return outcome, nil
 	}
 	blockedTargets, policyErr := h.evaluatePublishingRestrictions(ctx, post.WorkspaceID, parsed, accountMap)
 	if policyErr != nil {
@@ -779,6 +805,54 @@ func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post 
 			ID:      post.ID,
 			Column2: strings.Join(summaries, "; "),
 		})
+	}
+	return nil
+}
+
+func (h *SocialPostHandler) failScheduledPostForDuplicateConnection(
+	ctx context.Context,
+	post db.SocialPost,
+	parsed []platform.PlatformPostInput,
+	accountMap map[string]platform.ValidateAccount,
+	message string,
+) error {
+	summaries := make([]string, 0, len(parsed))
+	for _, pp := range parsed {
+		res, err := h.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
+			PostID: post.ID, SocialAccountID: pp.AccountID, Caption: pp.Caption, Status: "failed",
+			ExternalID: pgtype.Text{}, ErrorMessage: pgtype.Text{String: message, Valid: true},
+			PublishedAt: pgtype.Timestamptz{}, Url: pgtype.Text{}, DebugCurl: pgtype.Text{}, FbMediaType: pgtype.Text{},
+		})
+		if err != nil {
+			return err
+		}
+		failure := postfailures.BuildParams(
+			post.ID, res.ID, post.WorkspaceID, pp.AccountID, accountMap[pp.AccountID].Platform,
+			"validation", message, message,
+		)
+		failure.ErrorCode = "duplicate_social_connection"
+		failure.IsRetriable = false
+		failure.ErrorSource = pgtype.Text{String: postfailures.ErrorSourceUnipost, Valid: true}
+		failure.ErrorTemporality = pgtype.Text{String: postfailures.ErrorTemporalityPermanent, Valid: true}
+		if _, err := h.queries.CreatePostFailure(ctx, failure); err != nil {
+			return err
+		}
+		if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
+			return err
+		}
+		summaries = append(summaries, fmt.Sprintf("[%s] %s", pp.AccountID, message))
+	}
+	if err := h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
+		ID: post.ID, Status: "failed", PublishedAt: pgtype.Timestamptz{},
+	}); err != nil {
+		return err
+	}
+	if len(summaries) > 0 {
+		if err := h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
+			ID: post.ID, Column2: strings.Join(summaries, "; "),
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1001,7 +1075,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		return h.finalizeJobLoadFailure(ctx, job, res, post, err)
 	}
 
-	acc, err := h.queries.GetSocialAccountByIDAndWorkspace(ctx, db.GetSocialAccountByIDAndWorkspaceParams{
+	resolvedAccount, err := h.queries.GetResolvedSocialAccountByIDAndWorkspace(ctx, db.GetResolvedSocialAccountByIDAndWorkspaceParams{
 		ID:          pp.AccountID,
 		WorkspaceID: post.WorkspaceID,
 	})
@@ -1014,6 +1088,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		}
 		return err
 	}
+	acc := resolvedAccount.AsSocialAccount()
 	unavailable := socialAccountUnavailableForDelivery(acc, true)
 	dbAccounts := map[string]db.SocialAccount{pp.AccountID: acc}
 	accountMap := map[string]platform.ValidateAccount{
@@ -1040,6 +1115,17 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		if policyDecision.Restricted {
 			return h.finalizeRestrictedDeliveryJob(ctx, job, res, post, policyDecision)
 		}
+	}
+
+	bindingValid, err := h.queries.ValidateDeliveryBindingSnapshot(ctx, db.ValidateDeliveryBindingSnapshotParams{
+		ID:          job.ID,
+		WorkspaceID: job.WorkspaceID,
+	})
+	if err != nil {
+		return err
+	}
+	if !bindingValid {
+		return h.finalizeJobLoadFailure(ctx, job, res, post, errDeliveryBindingVersionMismatch)
 	}
 
 	// Idempotent-publish wiring (IG/TikTok). Let the adapter resume from a
@@ -1082,8 +1168,9 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		dbAccounts,
 		accountMap,
 		h.buildPerAccountTracker(ctx, post.WorkspaceID, pp.AccountID),
-		quota.NewPerPlatformDailyTracker(ctx, h.queries, dailyTargetsFor([]platform.PlatformPostInput{pp}, accountMap)),
+		quota.NewPerPlatformDailyTracker(ctx, h.queries, post.WorkspaceID, dailyTargetsFor([]platform.PlatformPostInput{pp}, dbAccounts, accountMap)),
 		h.disallowedPlatformsForDispatch(ctx, post.WorkspaceID, []platform.PlatformPostInput{pp}, accountMap),
+		res.ID,
 	)
 	if oc.err != nil {
 		return h.handleJobDispatchFailure(ctx, post, res, job, oc)
@@ -1125,6 +1212,11 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 			String: oc.xCreditBillingMode,
 			Valid:  oc.xCreditBillingMode != "",
 		},
+		DailyReservationOperationKey: pgtype.Text{
+			String: oc.dailyReservationOperationKey,
+			Valid:  oc.dailyReservationOperationKey != "",
+		},
+		DailyReservationReleasePending: oc.dailyReservationReleasePending,
 	}
 	var updated db.SocialPostResult
 	newlyPublished := false
@@ -1450,9 +1542,17 @@ func (h *SocialPostHandler) recordPostFailureHistory(ctx context.Context, failur
 
 func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.PostDeliveryJob, res db.SocialPostResult, post db.SocialPost, dispatchErr error) error {
 	msg := sanitizeDeliveryErrorText(dispatchErr.Error())
+	errorCode := "validation_error"
+	if errors.Is(dispatchErr, errDeliveryBindingVersionMismatch) {
+		errorCode = "binding_version_mismatch"
+	}
 	failure := postfailures.BuildParams(
 		post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, job.Platform, "dispatch_prepare", msg, msg,
 	)
+	failure.ErrorCode = errorCode
+	if errorCode == "binding_version_mismatch" {
+		failure.IsRetriable = false
+	}
 	var pendingEvent *pendingParentPostStatusEvent
 	failureApplied := false
 	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
@@ -1477,7 +1577,7 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 			job,
 			"dead",
 			pgtype.Text{String: "dispatch_prepare", Valid: true},
-			pgtype.Text{String: "validation_error", Valid: true},
+			pgtype.Text{String: errorCode, Valid: true},
 			pgtype.Text{},
 			pgtype.Text{String: msg, Valid: true},
 			pgtype.Timestamptz{},
@@ -1527,7 +1627,7 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 		PostID:          post.ID,
 		SocialAccountID: res.SocialAccountID,
 		Platform:        job.Platform,
-		ErrorCode:       "validation_error",
+		ErrorCode:       errorCode,
 		Metadata: map[string]any{
 			"job_id":    job.ID,
 			"result_id": res.ID,
@@ -1674,6 +1774,8 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 				SocialPostResultID: res.ID,
 				WorkspaceID:        post.WorkspaceID,
 				SocialAccountID:    res.SocialAccountID,
+				ConnectionID:       job.ConnectionID,
+				BindingVersion:     job.BindingVersion,
 				Platform:           job.Platform,
 				PostInputIndex:     job.PostInputIndex,
 				Kind:               "retry",
@@ -1910,6 +2012,8 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 				SocialPostResultID: result.ID,
 				WorkspaceID:        post.WorkspaceID,
 				SocialAccountID:    result.SocialAccountID,
+				ConnectionID:       job.ConnectionID,
+				BindingVersion:     job.BindingVersion,
 				Platform:           job.Platform,
 				PostInputIndex:     job.PostInputIndex,
 				Kind:               "retry",

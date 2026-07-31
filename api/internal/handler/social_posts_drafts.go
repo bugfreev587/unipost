@@ -152,6 +152,7 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	var queuedPosts []platform.PlatformPostInput
 	var failureKind string
 	var fatalIssues []platform.Issue
+	var duplicateConnectionConflict platform.DuplicateSocialConnectionConflict
 	var restrictedDecision publishingrestrictions.Decision
 	var blockedQuota quota.QuotaStatus
 	var blockedQuotaUnits int
@@ -213,6 +214,11 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 			return accountErr
 		}
 		validation := txHandler.runPublishValidation(r, workspaceID, posts, nil, accountMap)
+		if conflict, ok := firstDuplicateSocialConnectionConflict(posts, accountMap); ok {
+			failureKind = "duplicate_connection"
+			duplicateConnectionConflict = conflict
+			return errors.New("draft targets the same physical social connection more than once")
+		}
 		fatalIssues = filterFatalIssues(validation.Errors)
 		if len(fatalIssues) > 0 {
 			failureKind = "validation"
@@ -279,6 +285,8 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
 		case "validation":
 			writeValidationErrors(w, fatalIssues)
+		case "duplicate_connection":
+			writeDuplicateSocialConnectionError(w, duplicateConnectionConflict)
 		case "policy":
 			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
 		case "restricted":
@@ -885,6 +893,10 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	parsed.resolveLegacyPlatformOptions(accountMap)
+	if conflict, ok := firstDuplicateSocialConnectionConflict(parsed.Posts, accountMap); ok {
+		writeDuplicateSocialConnectionError(w, conflict)
+		return
+	}
 
 	var metaJSON []byte
 	if existing.Status == "scheduled" || existing.Status == "quota_hold" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
@@ -59,35 +60,28 @@ func CapForPlatform(platform string) int {
 	return PerPlatformDailyCapDefault
 }
 
-// PerPlatformDailyTracker is a per-request, in-memory budget for
-// per-(account, platform) dispatches in the current UTC day. Snapshots
-// "remaining publishes today" once per unique social_account_id at the
-// top of a publish request, then atomically decrements as each
-// dispatch fires.
-//
-// Why per-request and not global: counting at the start of each
-// request gives a tight enough bound for the safety-belt purpose
-// (preventing one runaway script from posting 200 X tweets in a
-// minute) without paying a DB round-trip per dispatch. The next
-// request will re-fetch the count from social_post_results.published_at
-// so the cap stays accurate at minute-scale granularity, which is
-// well within the platform-flagging timescale we care about.
-//
-// Race scope: protects against parallel dispatch groups within ONE
-// request hitting the same account at the same instant (threads run
-// serial within a group; groups run parallel). It does NOT prevent
-// two API replicas from concurrently dispatching to the same account
-// — that's a soft-cap acceptance documented in the PRD §5.5. The cap
-// is a runaway-script safety belt, not a billing-grade hard limit;
-// the next request will see the updated DB count and clamp itself.
+// PerPlatformDailyTracker reserves a durable provider-account daily budget.
+// Production calls are serialized by a conditional database upsert; the local
+// maps remain only as a no-database fallback for focused unit tests.
 //
 // All trackers carry a non-empty cap map (built per-request from
 // PerPlatformDailyCap). A nil tracker short-circuits Allow() to true
 // — used by tests and any future code path that wants to opt out.
 type PerPlatformDailyTracker struct {
-	mu        sync.Mutex
-	remaining map[string]int // social_account_id → remaining for current UTC day
-	cap       map[string]int // social_account_id → cap that applies (per platform)
+	mu            sync.Mutex
+	ctx           context.Context
+	queries       dailyReservationStore
+	workspaceID   string
+	remaining     map[string]int // test/failover fallback budget
+	cap           map[string]int // physical account ID → platform cap
+	newlyReserved map[string]bool
+	reserved      map[string]bool
+}
+
+type dailyReservationStore interface {
+	ReservePhysicalDailyPublish(context.Context, db.ReservePhysicalDailyPublishParams) (int32, error)
+	ReleasePhysicalDailyPublish(context.Context, db.ReleasePhysicalDailyPublishParams) (bool, error)
+	FinalizePhysicalDailyPublish(context.Context, db.FinalizePhysicalDailyPublishParams) (bool, error)
 }
 
 // PerPlatformDailyTarget is one (account_id, platform) tuple the
@@ -99,23 +93,23 @@ type PerPlatformDailyTarget struct {
 }
 
 // NewPerPlatformDailyTracker builds a tracker for one publish request.
-// Pass the deduped list of (account, platform) pairs the request will
-// dispatch to. Counts are loaded once, up front, so the dispatch loop
-// doesn't pay a DB round-trip per dispatch. Returns a tracker that's
-// safe to share across goroutines.
-//
-// Best-effort on count load: a DB failure for one account degrades to
-// "assume zero used today, allow this request" rather than 500ing the
-// whole request. The legacy behavior — no daily cap enforcement —
-// is the safer fallback if the partial index briefly stalls.
+// Pass the deduped physical (account, platform) pairs the request will dispatch
+// to. Reservation errors fail open to preserve the existing publishing path;
+// reaching the cap (pgx.ErrNoRows) fails closed for that target.
 func NewPerPlatformDailyTracker(
 	ctx context.Context,
-	queries *db.Queries,
+	queries dailyReservationStore,
+	workspaceID string,
 	targets []PerPlatformDailyTarget,
 ) *PerPlatformDailyTracker {
 	t := &PerPlatformDailyTracker{
-		remaining: make(map[string]int, len(targets)),
-		cap:       make(map[string]int, len(targets)),
+		ctx:           ctx,
+		queries:       queries,
+		workspaceID:   workspaceID,
+		remaining:     make(map[string]int, len(targets)),
+		cap:           make(map[string]int, len(targets)),
+		newlyReserved: make(map[string]bool, len(targets)),
+		reserved:      make(map[string]bool, len(targets)),
 	}
 	for _, tgt := range targets {
 		if _, seen := t.cap[tgt.AccountID]; seen {
@@ -123,16 +117,7 @@ func NewPerPlatformDailyTracker(
 		}
 		cap := CapForPlatform(tgt.Platform)
 		t.cap[tgt.AccountID] = cap
-		count, err := queries.CountPublishedTodayByAccount(ctx, tgt.AccountID)
-		if err != nil {
-			t.remaining[tgt.AccountID] = cap
-			continue
-		}
-		left := cap - int(count)
-		if left < 0 {
-			left = 0
-		}
-		t.remaining[tgt.AccountID] = left
+		t.remaining[tgt.AccountID] = cap
 	}
 	return t
 }
@@ -144,10 +129,38 @@ func NewPerPlatformDailyTracker(
 // Nil receivers are safe and always return true — used by tests
 // and the optional fallback path. Unknown account_ids (defensive
 // corner case) get a fresh budget sized for the named platform.
-func (t *PerPlatformDailyTracker) Allow(accountID, platform string) bool {
+func (t *PerPlatformDailyTracker) Allow(accountID, platform, operationKey string) bool {
 	if t == nil {
 		return true
 	}
+	cap := CapForPlatform(platform)
+	if configuredCap, ok := t.cap[accountID]; ok {
+		cap = configuredCap
+	}
+	if t.queries != nil && t.workspaceID != "" {
+		result, err := t.queries.ReservePhysicalDailyPublish(t.ctx, db.ReservePhysicalDailyPublishParams{
+			WorkspaceID:       t.workspaceID,
+			PhysicalAccountID: accountID,
+			Platform:          platform,
+			OperationKey:      operationKey,
+			DailyCap:          int32(cap),
+		})
+		if err != nil {
+			return true
+		}
+		if result == 2 {
+			t.mu.Lock()
+			t.newlyReserved[operationKey] = true
+			t.reserved[operationKey] = true
+			t.mu.Unlock()
+		} else if result == 1 {
+			t.mu.Lock()
+			t.reserved[operationKey] = true
+			t.mu.Unlock()
+		}
+		return result > 0
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	left, ok := t.remaining[accountID]
@@ -155,7 +168,6 @@ func (t *PerPlatformDailyTracker) Allow(accountID, platform string) bool {
 		// Defensive: account wasn't in the snapshot. Snapshot upstream
 		// should always cover every dispatch target — if we get here,
 		// give the dispatch a fresh budget rather than crashing.
-		cap := CapForPlatform(platform)
 		t.cap[accountID] = cap
 		left = cap
 	}
@@ -165,4 +177,80 @@ func (t *PerPlatformDailyTracker) Allow(accountID, platform string) bool {
 	}
 	t.remaining[accountID] = left - 1
 	return true
+}
+
+// Release removes only a slot created by this tracker invocation. A retry that
+// reused an earlier outcome-unknown reservation must not release that older
+// safety record when its new attempt fails definitively.
+func (t *PerPlatformDailyTracker) Release(operationKey string) error {
+	if t == nil || t.queries == nil || t.workspaceID == "" {
+		return nil
+	}
+	t.mu.Lock()
+	created := t.newlyReserved[operationKey]
+	t.mu.Unlock()
+	if !created {
+		return nil
+	}
+
+	// Settlement must survive request cancellation: once a pre-provider or
+	// definite provider failure is known, leaving the durable reservation behind
+	// would falsely consume the account's budget until the UTC day rolls over.
+	// Retry a transient database failure within a short detached window and keep
+	// local ownership unless the operation is confirmed released/already absent.
+	base := t.ctx
+	if base == nil {
+		base = context.Background()
+	}
+	settlementCtx, cancel := context.WithTimeout(context.WithoutCancel(base), 2*time.Second)
+	defer cancel()
+	var releaseErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		_, releaseErr = t.queries.ReleasePhysicalDailyPublish(settlementCtx, db.ReleasePhysicalDailyPublishParams{
+			WorkspaceID: t.workspaceID, OperationKey: operationKey,
+		})
+		if releaseErr == nil {
+			t.mu.Lock()
+			delete(t.newlyReserved, operationKey)
+			delete(t.reserved, operationKey)
+			t.mu.Unlock()
+			return nil
+		}
+		if settlementCtx.Err() != nil {
+			break
+		}
+		if attempt < 2 {
+			backoff := time.Duration(1<<attempt) * 50 * time.Millisecond
+			timer := time.NewTimer(backoff)
+			select {
+			case <-timer.C:
+			case <-settlementCtx.Done():
+				timer.Stop()
+				return releaseErr
+			}
+		}
+	}
+	return releaseErr
+}
+
+func (t *PerPlatformDailyTracker) Finalize(operationKey string) {
+	if t == nil || t.queries == nil || t.workspaceID == "" {
+		return
+	}
+	t.mu.Lock()
+	delete(t.newlyReserved, operationKey)
+	delete(t.reserved, operationKey)
+	t.mu.Unlock()
+	_, _ = t.queries.FinalizePhysicalDailyPublish(t.ctx, db.FinalizePhysicalDailyPublishParams{
+		WorkspaceID: t.workspaceID, OperationKey: operationKey,
+	})
+}
+
+func (t *PerPlatformDailyTracker) Reserved(operationKey string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.reserved[operationKey]
 }

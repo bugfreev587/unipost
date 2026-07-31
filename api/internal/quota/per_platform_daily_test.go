@@ -1,8 +1,13 @@
 package quota
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
 // TestCapForPlatform_KnownAndDefault — the cap table covers every
@@ -42,7 +47,7 @@ func TestCapForPlatform_KnownAndDefault(t *testing.T) {
 func TestPerPlatformDailyTracker_NilReceiver_AlwaysAllows(t *testing.T) {
 	var tr *PerPlatformDailyTracker
 	for i := 0; i < 1000; i++ {
-		if !tr.Allow("acct-1", "twitter") {
+		if !tr.Allow("acct-1", "twitter", fmt.Sprintf("nil-%d", i)) {
 			t.Fatalf("nil tracker denied at iter %d", i)
 		}
 	}
@@ -59,14 +64,14 @@ func TestPerPlatformDailyTracker_DecrementsAndExhausts(t *testing.T) {
 		cap:       map[string]int{"acct-1": 3},
 	}
 	for i := 0; i < 3; i++ {
-		if !tr.Allow("acct-1", "twitter") {
+		if !tr.Allow("acct-1", "twitter", fmt.Sprintf("op-%d", i)) {
 			t.Errorf("dispatch %d should have been allowed", i)
 		}
 	}
-	if tr.Allow("acct-1", "twitter") {
+	if tr.Allow("acct-1", "twitter", "op-4") {
 		t.Error("4th dispatch should have been denied")
 	}
-	if tr.Allow("acct-1", "twitter") {
+	if tr.Allow("acct-1", "twitter", "op-5") {
 		t.Error("5th dispatch should still be denied")
 	}
 }
@@ -80,12 +85,12 @@ func TestPerPlatformDailyTracker_PerAccountIndependent(t *testing.T) {
 		remaining: map[string]int{"a": 2, "b": 2},
 		cap:       map[string]int{"a": 2, "b": 2},
 	}
-	tr.Allow("a", "twitter")
-	tr.Allow("a", "twitter")
-	if tr.Allow("a", "twitter") {
+	tr.Allow("a", "twitter", "a-1")
+	tr.Allow("a", "twitter", "a-2")
+	if tr.Allow("a", "twitter", "a-3") {
 		t.Error("a should be exhausted")
 	}
-	if !tr.Allow("b", "twitter") {
+	if !tr.Allow("b", "twitter", "b-1") {
 		t.Error("b should still have budget")
 	}
 }
@@ -101,7 +106,7 @@ func TestPerPlatformDailyTracker_AlreadyOverCap(t *testing.T) {
 		remaining: map[string]int{"a": 0}, // simulate clamp from over-cap
 		cap:       map[string]int{"a": 20},
 	}
-	if tr.Allow("a", "twitter") {
+	if tr.Allow("a", "twitter", "a-over") {
 		t.Error("should deny when remaining is already 0")
 	}
 }
@@ -119,7 +124,7 @@ func TestPerPlatformDailyTracker_UnknownAccountFreshBudget(t *testing.T) {
 	// dispatches before exhausting.
 	allowed := 0
 	for i := 0; i < 25; i++ {
-		if tr.Allow("surprise", "twitter") {
+		if tr.Allow("surprise", "twitter", fmt.Sprintf("surprise-%d", i)) {
 			allowed++
 		}
 	}
@@ -144,17 +149,159 @@ func TestPerPlatformDailyTracker_ConcurrentAllow(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 200; i++ {
 		wg.Add(1)
-		go func() {
+		go func(index int) {
 			defer wg.Done()
-			if tr.Allow("a", "linkedin") {
+			if tr.Allow("a", "linkedin", fmt.Sprintf("concurrent-%d", index)) {
 				mu.Lock()
 				allowed++
 				mu.Unlock()
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
 	if allowed != int64(cap) {
 		t.Errorf("expected exactly %d allows under contention, got %d", cap, allowed)
+	}
+}
+
+type atomicDailyReservationFake struct {
+	mu         sync.Mutex
+	counts     map[string]int32
+	operations map[string]string
+	releaseErr error
+}
+
+func (f *atomicDailyReservationFake) ReservePhysicalDailyPublish(
+	_ context.Context,
+	params db.ReservePhysicalDailyPublishParams,
+) (int32, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	operationKey := params.WorkspaceID + ":" + params.OperationKey
+	if _, exists := f.operations[operationKey]; exists {
+		return 1, nil
+	}
+	key := params.WorkspaceID + ":" + params.PhysicalAccountID + ":" + params.Platform
+	if f.counts[key] >= params.DailyCap {
+		return 0, nil
+	}
+	f.counts[key]++
+	f.operations[operationKey] = key
+	return 2, nil
+}
+
+func (f *atomicDailyReservationFake) ReleasePhysicalDailyPublish(
+	_ context.Context,
+	params db.ReleasePhysicalDailyPublishParams,
+) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.releaseErr != nil {
+		err := f.releaseErr
+		f.releaseErr = nil
+		return false, err
+	}
+	operationKey := params.WorkspaceID + ":" + params.OperationKey
+	counterKey, exists := f.operations[operationKey]
+	if !exists {
+		return false, nil
+	}
+	delete(f.operations, operationKey)
+	if f.counts[counterKey] > 0 {
+		f.counts[counterKey]--
+	}
+	return true, nil
+}
+
+func TestPerPlatformDailyTracker_ReleaseRetriesWithDetachedSettlementAndKeepsOwnershipUntilConfirmed(t *testing.T) {
+	store := &atomicDailyReservationFake{
+		counts:     make(map[string]int32),
+		operations: make(map[string]string),
+		releaseErr: errors.New("database temporarily unavailable"),
+	}
+	tracker := NewPerPlatformDailyTracker(
+		context.Background(),
+		store,
+		"workspace-a",
+		[]PerPlatformDailyTarget{{AccountID: "connection-a", Platform: "twitter"}},
+	)
+	if !tracker.Allow("connection-a", "twitter", "release-retry") {
+		t.Fatal("reservation denied")
+	}
+
+	if err := tracker.Release("release-retry"); err != nil {
+		t.Fatalf("Release() did not settle a transient database failure: %v", err)
+	}
+	if got := store.counts["workspace-a:connection-a:twitter"]; got != 0 {
+		t.Fatalf("released count=%d, want 0", got)
+	}
+	if tracker.Reserved("release-retry") {
+		t.Fatal("tracker retained ownership after confirmed release")
+	}
+}
+
+func (f *atomicDailyReservationFake) FinalizePhysicalDailyPublish(
+	_ context.Context,
+	params db.FinalizePhysicalDailyPublishParams,
+) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, exists := f.operations[params.WorkspaceID+":"+params.OperationKey]
+	return exists, nil
+}
+
+func TestPerPlatformDailyTracker_ConcurrentRequestsShareAtomicReservation(t *testing.T) {
+	store := &atomicDailyReservationFake{counts: make(map[string]int32), operations: make(map[string]string)}
+	targets := []PerPlatformDailyTarget{{AccountID: "connection-a", Platform: "twitter"}}
+	trackers := []*PerPlatformDailyTracker{
+		NewPerPlatformDailyTracker(context.Background(), store, "workspace-a", targets),
+		NewPerPlatformDailyTracker(context.Background(), store, "workspace-a", targets),
+	}
+
+	var allowed int
+	var allowedMu sync.Mutex
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			if trackers[index%len(trackers)].Allow("connection-a", "twitter", fmt.Sprintf("request-%d", index)) {
+				allowedMu.Lock()
+				allowed++
+				allowedMu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	if allowed != CapForPlatform("twitter") {
+		t.Fatalf("two concurrent request trackers allowed %d publishes, want exactly %d", allowed, CapForPlatform("twitter"))
+	}
+}
+
+func TestPerPlatformDailyTracker_RetryIsIdempotentAndOnlyCreatorReleases(t *testing.T) {
+	store := &atomicDailyReservationFake{counts: make(map[string]int32), operations: make(map[string]string)}
+	targets := []PerPlatformDailyTarget{{AccountID: "connection-a", Platform: "twitter"}}
+	first := NewPerPlatformDailyTracker(context.Background(), store, "workspace-a", targets)
+	retry := NewPerPlatformDailyTracker(context.Background(), store, "workspace-a", targets)
+
+	if !first.Allow("connection-a", "twitter", "stable-operation") {
+		t.Fatal("first reservation denied")
+	}
+	if !retry.Allow("connection-a", "twitter", "stable-operation") {
+		t.Fatal("idempotent retry reservation denied")
+	}
+	physicalKey := "workspace-a:connection-a:twitter"
+	if got := store.counts[physicalKey]; got != 1 {
+		t.Fatalf("retry consumed %d slots, want 1", got)
+	}
+
+	retry.Release("stable-operation")
+	if got := store.counts[physicalKey]; got != 1 {
+		t.Fatalf("non-creator retry released prior reservation; count=%d", got)
+	}
+	first.Release("stable-operation")
+	if got := store.counts[physicalKey]; got != 0 {
+		t.Fatalf("definite failure did not release newly-created reservation; count=%d", got)
 	}
 }

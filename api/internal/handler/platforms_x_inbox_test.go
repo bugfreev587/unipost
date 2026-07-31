@@ -261,9 +261,12 @@ func (r xCapabilityAccountRow) Scan(dest ...any) error {
 		pgtype.Timestamptz{}, []byte(`{}`), r.scopes, "active", "byo",
 		pgtype.Text{}, pgtype.Text{String: r.externalUser, Valid: r.externalUser != ""}, pgtype.Text{}, pgtype.Timestamptz{},
 	}
-	if len(dest) == len(values)+1 {
-		values = append(values, pgtype.Text{String: r.appMode, Valid: r.appMode != ""})
-	}
+	values = append(values,
+		pgtype.Text{String: r.appMode, Valid: r.appMode != ""},
+		pgtype.Text{},
+		int64(1),
+		"active",
+	)
 	return scanRow{values: values}.Scan(dest...)
 }
 

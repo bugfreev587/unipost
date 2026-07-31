@@ -4,7 +4,7 @@ import { X } from "lucide-react";
 import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { PLATFORM_LABELS, PLATFORM_BRAND_COLORS } from "./use-create-post-form";
 import type { SocialAccount } from "@/lib/api";
-import { getAccountDisplayName } from "./account-labels";
+import { getAccountDisplayName, getAccountIdentityKey } from "./account-labels";
 
 // --- Connected Accounts section (clickable cards to select/deselect) ---
 
@@ -49,6 +49,11 @@ export function ConnectedAccountsGrid({
     );
   }
 
+  const selectedByIdentity = new Map<string, string>();
+  for (const account of accounts) {
+    if (selectedIds.has(account.id)) selectedByIdentity.set(getAccountIdentityKey(account), account.id);
+  }
+
   return (
     <div>
       {onToggleAll && (
@@ -67,16 +72,21 @@ export function ConnectedAccountsGrid({
         </div>
       )}
       <div className="grid grid-cols-2 gap-2">
-        {accounts.map((account) => (
-          <AccountCardSmall
-            key={account.id}
-            account={account}
-            selected={selectedIds.has(account.id)}
-            onToggle={onToggle}
-            disabled={disabledIds.has(account.id)}
-            restrictionNoticeId={restrictionNoticeId}
-          />
-        ))}
+        {accounts.map((account) => {
+          const selectedAccountId = selectedByIdentity.get(getAccountIdentityKey(account));
+          const selectedSiblingId = selectedAccountId && selectedAccountId !== account.id ? selectedAccountId : null;
+          return (
+            <AccountCardSmall
+              key={account.id}
+              account={account}
+              selected={selectedIds.has(account.id)}
+              selectedSiblingId={selectedSiblingId}
+              onToggle={onToggle}
+              disabled={disabledIds.has(account.id)}
+              restrictionNoticeId={restrictionNoticeId}
+            />
+          );
+        })}
       </div>
       {profileName && (
         <div className="mt-3 text-[11px] font-mono" style={{ color: "var(--dmuted2)" }}>
@@ -91,12 +101,14 @@ export function ConnectedAccountsGrid({
 function AccountCardSmall({
   account,
   selected,
+  selectedSiblingId,
   onToggle,
   disabled,
   restrictionNoticeId,
 }: {
   account: SocialAccount;
   selected: boolean;
+  selectedSiblingId: string | null;
   onToggle: (id: string) => void;
   disabled: boolean;
   restrictionNoticeId?: string;
@@ -106,14 +118,16 @@ function AccountCardSmall({
   const iconBackground = account.platform === "youtube" ? "color-mix(in srgb, var(--dmuted) 12%, transparent)" : `${brandColor}20`;
   const label = accountSourceLabel(account);
   const accountLabel = getAccountDisplayName(account);
+  const isDisabled = disabled || !!selectedSiblingId;
 
   return (
     <button
       type="button"
       onClick={() => onToggle(account.id)}
-      disabled={disabled}
+      disabled={isDisabled}
       aria-describedby={disabled ? restrictionNoticeId : undefined}
-      aria-label={`${selected ? "Unselect" : "Select"} ${label} ${accountLabel}`}
+      aria-label={selectedSiblingId ? `Already selected from another Profile: ${label} ${accountLabel}` : `${selected ? "Unselect" : "Select"} ${label} ${accountLabel}`}
+      title={selectedSiblingId ? "Already selected from another Profile" : undefined}
       className="relative rounded-lg border p-2.5 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] disabled:cursor-not-allowed disabled:opacity-55"
       style={
         selected
@@ -204,7 +218,7 @@ export function PostToGrid({
       </div>
       {duplicateIds && duplicateIds.size > 0 && (
         <div className="mt-2 text-[10px] font-mono" style={{ color: "var(--warning)" }}>
-          Duplicate accounts detected — only one post per platform account will be sent.
+          This physical account is selected through more than one Profile. Remove one before publishing.
         </div>
       )}
     </div>

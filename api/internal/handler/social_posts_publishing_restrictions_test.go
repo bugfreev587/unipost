@@ -1027,12 +1027,12 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 		return socialPostScanRow(f.post)
 	case strings.Contains(query, "scheduled_execution_reservation_period") && strings.Contains(query, "UPDATE social_posts"):
 		return scanRow{values: []any{f.post.ID}}
-	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+	case strings.Contains(query, "-- name: GetResolvedSocialAccountByIDAndWorkspace"):
 		account, ok := f.accounts[args[0].(string)]
 		if !ok {
 			return scanRow{err: pgx.ErrNoRows}
 		}
-		return policySnapshotSocialAccountRow(account)
+		return scanRow{values: inboxTenantIsolationResolvedSocialAccountValues(account)}
 	case strings.Contains(query, "-- name: GetSocialAccount :one"):
 		account, ok := f.accounts[args[0].(string)]
 		if !ok {
@@ -1062,12 +1062,14 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 			SocialPostResultID: args[1].(string),
 			WorkspaceID:        args[2].(string),
 			SocialAccountID:    args[3].(string),
-			Platform:           args[4].(string),
-			PostInputIndex:     args[5].(int32),
-			Kind:               args[6].(string),
-			State:              args[7].(string),
-			Attempts:           args[8].(int32),
-			MaxAttempts:        args[9].(int32),
+			ConnectionID:       args[4].(pgtype.Text),
+			BindingVersion:     args[5].(pgtype.Int8),
+			Platform:           args[6].(string),
+			PostInputIndex:     args[7].(int32),
+			Kind:               args[8].(string),
+			State:              args[9].(string),
+			Attempts:           args[10].(int32),
+			MaxAttempts:        args[11].(int32),
 			CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		}
 		f.jobs = append(f.jobs, job)
@@ -1143,7 +1145,8 @@ func policySnapshotSocialAccountValues(account db.SocialAccount) []any {
 		account.TokenExpiresAt, account.ExternalAccountID, account.AccountName, account.AccountAvatarUrl,
 		account.ConnectedAt, account.DisconnectedAt, account.Metadata, account.Scope, account.Status,
 		account.ConnectionType, account.ConnectSessionID, account.ExternalUserID, account.ExternalUserEmail,
-		account.LastRefreshedAt, account.XAppMode,
+		account.LastRefreshedAt, account.XAppMode, account.ConnectionID, account.BindingVersion,
+		account.BindingStatus,
 	}
 }
 

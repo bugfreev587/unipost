@@ -1104,7 +1104,7 @@ func (fakeXInboxIngestionStore) AccountForApp(context.Context, string, string) (
 	return xinbox.InboxAccount{}, errors.New("not used")
 }
 
-func (fakeXInboxIngestionStore) AccountsForExternalUser(context.Context, string, string) ([]xinbox.InboxAccount, error) {
+func (fakeXInboxIngestionStore) AccountsForProviderUser(context.Context, string, string) ([]xinbox.InboxAccount, error) {
 	return nil, errors.New("not used")
 }
 
@@ -1868,6 +1868,12 @@ func TestInboxManagedScopeReplyCompletedIdempotentReloadPreservesExactScope(t *t
 			if recorder.Code != http.StatusOK {
 				t.Fatalf("status=%d, want 200; body=%s calls=%#v", recorder.Code, recorder.Body.String(), store.calls)
 			}
+			if !store.called("-- name: GetResolvedSocialAccountByIDAndWorkspace") {
+				t.Fatal("Reply did not resolve physical connection credentials")
+			}
+			if store.called("-- name: GetSocialAccountByIDAndWorkspace") {
+				t.Fatal("Reply loaded stale binding-local credentials")
+			}
 			calls := store.callsFor("-- name: GetInboxItem")
 			if len(calls) != 2 {
 				t.Fatalf("GetInboxItem calls=%d, want initial+reload; calls=%#v", len(calls), store.calls)
@@ -2309,6 +2315,17 @@ func (f *inboxTenantIsolationDB) QueryRow(_ context.Context, query string, args 
 			return metaWebhookRoutingRow{values: inboxTenantIsolationSocialAccountValues(f.account)}
 		}
 		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: GetResolvedSocialAccountByIDAndWorkspace"):
+		accountID, _ := args[0].(string)
+		for _, account := range f.accounts {
+			if account.ID == accountID {
+				return metaWebhookRoutingRow{values: inboxTenantIsolationResolvedSocialAccountValues(account)}
+			}
+		}
+		if f.account.ID == accountID {
+			return metaWebhookRoutingRow{values: inboxTenantIsolationResolvedSocialAccountValues(f.account)}
+		}
+		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
 	case strings.Contains(query, "-- name: GetSocialAccount :one"):
 		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
 	default:
@@ -2439,6 +2456,7 @@ func inboxTenantIsolationItemValues(item db.InboxItem) []any {
 		item.ThreadStatus,
 		item.AssignedTo,
 		item.LinkedPostID,
+		item.ConnectionID,
 	}
 }
 
@@ -2493,7 +2511,31 @@ func inboxTenantIsolationSocialAccountValues(account db.SocialAccount) []any {
 		account.ExternalUserEmail,
 		account.LastRefreshedAt,
 		account.XAppMode,
+		account.ConnectionID,
+		account.BindingVersion,
+		account.BindingStatus,
 	}
+}
+
+func inboxTenantIsolationResolvedSocialAccountValues(account db.SocialAccount) []any {
+	values := inboxTenantIsolationSocialAccountValues(account)
+	return append(values,
+		account.AccessToken,
+		account.RefreshToken.String,
+		account.TokenExpiresAt,
+		account.AccountName.String,
+		account.AccountAvatarUrl.String,
+		account.ConnectedAt,
+		account.DisconnectedAt,
+		account.Metadata,
+		account.Scope,
+		account.Status,
+		account.ConnectionType,
+		account.ExternalUserID.String,
+		account.ExternalUserEmail.String,
+		account.LastRefreshedAt,
+		account.XAppMode.String,
+	)
 }
 
 type xBackfillConfirmationTx struct {
