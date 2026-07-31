@@ -141,7 +141,7 @@ export async function signInSyntheticUser(page, config, identity, dependencies =
   });
 }
 
-async function establishPreviewBypassCookie(page, config) {
+export async function establishPreviewBypassCookie(page, config) {
   if (!config.vercelBypassSecret) return;
   const response = await page.request.get(`${config.baseURL}/pricing`, {
     headers: {

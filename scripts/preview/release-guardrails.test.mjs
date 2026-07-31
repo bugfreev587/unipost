@@ -510,6 +510,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   );
   assert.match(
     previewTest,
+    /establishPreviewBypassCookie/,
+    "browser navigation must establish the bypass cookie with the redirect-safe shared helper",
+  );
+  assert.match(
+    previewTest,
     /VERCEL_AUTOMATION_BYPASS_SECRET\?\.trim\(\)/,
     "preview tests must strip accidental whitespace from the automation bypass secret",
   );
