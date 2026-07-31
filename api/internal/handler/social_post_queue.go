@@ -258,6 +258,32 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveriesWithQuotaBlocks(
 		evaluations[index].validationErr = errors.New(message)
 		evaluations[index].quotaFailure = true
 	}
+	reservedAccountIDs := make([]string, 0, len(parsed))
+	reservedConnectionIDs := make([]string, 0, len(parsed))
+	for index, pp := range parsed {
+		if evaluations[index].validationErr != nil {
+			continue
+		}
+		reservedAccountIDs = append(reservedAccountIDs, pp.AccountID)
+		connectionID := ""
+		if evaluations[index].account.ConnectionID.Valid {
+			connectionID = strings.TrimSpace(evaluations[index].account.ConnectionID.String)
+		}
+		reservedConnectionIDs = append(reservedConnectionIDs, connectionID)
+	}
+	if len(reservedAccountIDs) > 0 {
+		if err := h.queries.ReserveSocialPostPhysicalTargets(ctx, db.ReserveSocialPostPhysicalTargetsParams{
+			PostID:        post.ID,
+			AccountIds:    reservedAccountIDs,
+			ConnectionIds: reservedConnectionIDs,
+		}); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.ConstraintName == "social_post_physical_target_binding_check" {
+				return nil, nil, fmt.Errorf("DUPLICATE_SOCIAL_CONNECTION: %s: %w", duplicateSocialConnectionMessage, err)
+			}
+			return nil, nil, err
+		}
+	}
 	results := make([]db.SocialPostResult, 0, len(parsed))
 	jobs := make([]db.PostDeliveryJob, 0, len(parsed))
 	failureSummaries := make([]string, 0)
@@ -389,16 +415,11 @@ func (h *SocialPostHandler) queueImmediatePost(
 	blockedTargets map[string]publishingrestrictions.Decision,
 ) (socialPostResponse, error) {
 	var response socialPostResponse
-	var err error
-	if hasRestrictedPublishingTarget(blockedTargets) {
-		err = h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
-			var txErr error
-			response, txErr = h.withQueueQueries(txQueries).queueImmediatePostInTransaction(ctx, workspaceID, parsed, accountMap, blockedTargets)
-			return txErr
-		})
-	} else {
-		response, err = h.queueImmediatePostInTransaction(ctx, workspaceID, parsed, accountMap, blockedTargets)
-	}
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		var txErr error
+		response, txErr = h.withQueueQueries(txQueries).queueImmediatePostInTransaction(ctx, workspaceID, parsed, accountMap, blockedTargets)
+		return txErr
+	})
 	if err == nil {
 		h.logQueuedPost(ctx, workspaceID, response.ID, "immediate", parsed.Posts, len(response.Results), response.ActiveJobCount)
 	}
@@ -452,16 +473,11 @@ func (h *SocialPostHandler) enqueueExistingPostDeliveries(
 	blockedTargets map[string]publishingrestrictions.Decision,
 ) (socialPostResponse, error) {
 	var response socialPostResponse
-	var err error
-	if hasRestrictedPublishingTarget(blockedTargets) {
-		err = h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
-			var txErr error
-			response, txErr = h.withQueueQueries(txQueries).enqueueExistingPostDeliveriesInTransaction(ctx, post, parsed, accountMap, blockedTargets)
-			return txErr
-		})
-	} else {
-		response, err = h.enqueueExistingPostDeliveriesInTransaction(ctx, post, parsed, accountMap, blockedTargets)
-	}
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		var txErr error
+		response, txErr = h.withQueueQueries(txQueries).enqueueExistingPostDeliveriesInTransaction(ctx, post, parsed, accountMap, blockedTargets)
+		return txErr
+	})
 	if err == nil {
 		h.logQueuedPost(ctx, post.WorkspaceID, post.ID, "draft_publish", parsed, len(response.Results), response.ActiveJobCount)
 	}

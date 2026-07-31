@@ -965,6 +965,8 @@ func (f *policySnapshotTx) Conn() *pgx.Conn { return nil }
 
 func (f *policySnapshotDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	switch {
+	case strings.Contains(query, "-- name: ReserveSocialPostPhysicalTargets"):
+		return pgconn.CommandTag{}, nil
 	case strings.Contains(query, "-- name: UpdateSocialPostStatus"):
 		f.updatedStatus = args[1].(string)
 		f.post.Status = f.updatedStatus
@@ -1242,6 +1244,40 @@ func TestQueuedPolicyPreflightPrecedesEveryResultAndJobWrite(t *testing.T) {
 	}
 	if strings.Count(fn, "publishingRestrictions.Evaluate") != 0 {
 		t.Fatal("persistence loop must not perform policy reads")
+	}
+}
+
+func TestQueuedPhysicalTargetsAreReservedBeforeEveryResultAndJobWrite(t *testing.T) {
+	source, err := os.ReadFile("social_post_queue.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (h *SocialPostHandler) enqueueParsedPostDeliveriesWithQuotaBlocks")
+	end := strings.Index(text[start:], "func (h *SocialPostHandler) queueImmediatePost")
+	if start < 0 || end < 0 {
+		t.Fatal("enqueueParsedPostDeliveriesWithQuotaBlocks boundaries not found")
+	}
+	fn := text[start : start+end]
+	reserveAt := strings.Index(fn, "ReserveSocialPostPhysicalTargets")
+	resultAt := strings.Index(fn, "CreateSocialPostResult")
+	jobAt := strings.Index(fn, "CreatePostDeliveryJob")
+	if reserveAt < 0 || resultAt < 0 || jobAt < 0 || reserveAt > resultAt || reserveAt > jobAt {
+		t.Fatalf("physical reservation/result/job order = %d/%d/%d", reserveAt, resultAt, jobAt)
+	}
+
+	for _, wrapper := range []string{"queueImmediatePost", "enqueueExistingPostDeliveries"} {
+		wrapperAt := strings.Index(text, "func (h *SocialPostHandler) "+wrapper+"(")
+		if wrapperAt < 0 {
+			t.Fatalf("%s not found", wrapper)
+		}
+		body := text[wrapperAt:]
+		if next := strings.Index(body[len("func "):], "\nfunc "); next >= 0 {
+			body = body[:len("func ")+next]
+		}
+		if !strings.Contains(body, ".WithTransaction(") {
+			t.Fatalf("%s must always create one reservation/results/jobs transaction", wrapper)
+		}
 	}
 }
 

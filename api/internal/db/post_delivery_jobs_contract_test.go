@@ -145,6 +145,55 @@ func TestPostDeliveryJobConnectionSnapshotMigrationContract(t *testing.T) {
 	}
 }
 
+func TestPostDeliveryJobPhysicalTargetConstraintContract(t *testing.T) {
+	source, err := os.ReadFile("migrations/137_delivery_job_connection_snapshot.sql")
+	if err != nil {
+		t.Fatalf("read connection snapshot migration: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"CREATE TABLE social_post_physical_targets",
+		"PRIMARY KEY (post_id, physical_target_key)",
+		"selected_social_account_id",
+		"migration_conflict",
+		"reserve_post_delivery_job_physical_target",
+		"BEFORE INSERT ON post_delivery_jobs",
+		"social_post_physical_target_binding_check",
+		"reserved.selected_social_account_id <> NEW.social_account_id",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("physical target migration missing %q", want)
+		}
+	}
+}
+
+func TestPostPhysicalTargetBatchReservationContract(t *testing.T) {
+	migration, err := os.ReadFile("migrations/137_delivery_job_connection_snapshot.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"reserve_social_post_physical_targets",
+		"CARDINALITY(requested_account_ids)",
+		"UNNEST(requested_account_ids, requested_connection_ids)",
+		"ORDER BY target_key, account_id",
+		"social_post_physical_target_binding_check",
+	} {
+		if !strings.Contains(string(migration), want) {
+			t.Fatalf("batch reservation migration missing %q", want)
+		}
+	}
+
+	query, err := os.ReadFile("queries/social_connection_rollout.sql")
+	if err != nil {
+		t.Fatalf("read rollout queries: %v", err)
+	}
+	if !strings.Contains(string(query), "-- name: ReserveSocialPostPhysicalTargets :exec") ||
+		!strings.Contains(string(query), "reserve_social_post_physical_targets") {
+		t.Fatal("rollout queries must expose transactional physical-target reservation")
+	}
+}
+
 func TestPostDeliveryJobPhysicalConnectionClaimContract(t *testing.T) {
 	source, err := os.ReadFile("post_delivery_jobs.sql.go")
 	if err != nil {
