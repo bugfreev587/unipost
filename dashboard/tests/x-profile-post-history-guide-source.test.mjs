@@ -97,3 +97,25 @@ test("guide discovery is public and Credits AI chunks remain feature gated", asy
     /required_feature:\s*"x_credits_billing_v1"/,
   );
 });
+
+test("X profile history guide documents safe traversal and is linked from the X platform page", async () => {
+  const [guide, platforms] = await Promise.all([
+    source("src/app/docs/guides/x/profile-and-post-history/page.tsx"),
+    source("src/app/docs/platforms/[platform]/_data.tsx"),
+  ]);
+  const twitterStart = platforms.indexOf("  twitter: {");
+  const blueskyStart = platforms.indexOf("\n\n  bluesky: {", twitterStart);
+  assert.notEqual(twitterStart, -1);
+  assert.notEqual(blueskyStart, -1);
+  const twitter = platforms.slice(twitterStart, blueskyStart);
+
+  assert.match(guide, /title="Read X profiles and post history"/);
+  assert.match(guide, /durable/i);
+  assert.match(guide, /deduplicat(?:e|ion)[\s\S]{0,180}<code>external_post_id<\/code>/i);
+  assert.match(guide, /across pages and retries/i);
+  assert.match(guide, /<code>exclude_replies_to_others<\/code>=true[\s\S]{0,240}replies to other users/i);
+  assert.match(guide, /self-repl(?:y|ies)[\s\S]{0,120}thread continuity/i);
+  assert.match(guide, /href="\/docs\/api\/authentication"/);
+  assert.match(guide, /href="\/docs\/api\/errors"/);
+  assert.match(twitter, /href: "\/docs\/guides\/x\/profile-and-post-history"/);
+});

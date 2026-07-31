@@ -164,7 +164,7 @@ export default async function XProfilePostHistoryGuidePage() {
   return (
     <DocsPage
       eyebrow="X Guides"
-      title="Read an X profile and authored post history"
+      title="Read X profiles and post history"
       lead="Use a connected account to read its current X profile and walk authored posts without exposing credentials, crossing Managed User boundaries, or duplicating a paid read."
       className="docs-page-guide-redesign"
     >
@@ -181,6 +181,10 @@ export default async function XProfilePostHistoryGuidePage() {
         user. It must match the Managed User that owns the connected account. The connection must retain its{" "}
         <strong>persisted X app identity</strong>: UniPost-managed credentials stay managed, while a workspace-owned X
         app stays customer-owned.
+      </p>
+      <p>
+        Follow <Link href="/docs/api/authentication">Authentication</Link> to send the Bearer token securely from your
+        server.
       </p>
       <p>
         The profile read requires <code>users.read</code> and <code>offline.access</code>. Authored post history also
@@ -205,6 +209,10 @@ export default async function XProfilePostHistoryGuidePage() {
         <code>meta.returned_count</code> can be smaller than <code>meta.scanned_count</code>. See the{" "}
         <Link href="/docs/api/accounts/posts">authored posts API Reference</Link> for all normalized post fields.
       </p>
+      <p>
+        Setting <code>exclude_replies_to_others</code>=true excludes replies to other users while preserving
+        self-replies for thread continuity.
+      </p>
       <DocsCodeTabs snippets={POSTS_SNIPPETS} />
 
       <h2 id="pagination">4. Continue with an opaque cursor</h2>
@@ -213,6 +221,10 @@ export default async function XProfilePostHistoryGuidePage() {
         User. That cursor selects a new logical page, so give it a new logical-page key. If the network result is
         uncertain, retry that exact page with the same key. Do not decode or edit cursors, and do not reuse a key across
         a different cursor or filter set.
+      </p>
+      <p>
+        Enforce durable deduplication by <code>external_post_id</code> across pages and retries before storing or
+        processing each post.
       </p>
       <DocsCodeTabs snippets={[{ lang: "javascript", label: "JavaScript", code: NEXT_PAGE }]} />
       <p className="docs-guide-note">
@@ -225,7 +237,8 @@ export default async function XProfilePostHistoryGuidePage() {
       <p>
         Read <code>error.code</code>, <code>error.is_retriable</code>, the HTTP <code>Retry-After</code> header, and
         <code>request_id</code>. Preserve the original key and exact parameters for retriable states; never rotate a key
-        merely because a timeout made the outcome uncertain.
+        merely because a timeout made the outcome uncertain. See the general <Link href="/docs/api/errors">Errors</Link>{" "}
+        reference for the response shape.
       </p>
       <ul className="docs-checklist">
         <li><code>VALIDATION_ERROR</code> or <code>IDEMPOTENCY_KEY_REQUIRED</code>: correct the request before sending a new logical operation.</li>
