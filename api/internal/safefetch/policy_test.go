@@ -90,6 +90,9 @@ func TestAddressPolicyRejectsProhibitedRanges(t *testing.T) {
 		{name: "ipv6 link local", addr: "fe80::1"},
 		{name: "ipv6 multicast", addr: "ff00::1"},
 		{name: "ipv6 documentation", addr: "2001:db8::1"},
+		{name: "ipv6 dummy", addr: "100:0:0:1::1"},
+		{name: "ipv6 documentation two", addr: "3fff::1"},
+		{name: "ipv6 segment routing sid", addr: "5f00::1"},
 		{name: "ipv6 orchid", addr: "2001:10::1"},
 		{name: "ipv4 mapped loopback", addr: "::ffff:127.0.0.1"},
 	}
