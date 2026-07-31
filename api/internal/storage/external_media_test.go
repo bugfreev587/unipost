@@ -95,6 +95,9 @@ func TestExternalMediaReservesPublishingLifecycleBeforeUpload(t *testing.T) {
 	if len(recorder.abandoned) != 0 {
 		t.Fatalf("abandoned reservations = %v, want none", recorder.abandoned)
 	}
+	if len(recorder.activated) != 1 || recorder.activated[0] != "usage_1" {
+		t.Fatalf("activated usages = %v, want usage_1", recorder.activated)
+	}
 }
 
 func TestExternalMediaUploadFailureReleasesPublishingLifecycle(t *testing.T) {
@@ -121,6 +124,66 @@ func TestExternalMediaUploadFailureReleasesPublishingLifecycle(t *testing.T) {
 	}
 	if recorder.abandoned[0] != "usage_failed" {
 		t.Fatalf("abandoned usage = %q, want usage_failed", recorder.abandoned[0])
+	}
+}
+
+func TestExternalMediaUploadCancellationAbandonsWithLiveDetachedContext(t *testing.T) {
+	t.Parallel()
+
+	tempPath := writeVerifiedTemp(t, []byte("verified image bytes"))
+	fetcher := &fakeExternalFetcher{result: &safefetch.Result{
+		Path: tempPath, MediaType: "image/jpeg", SizeBytes: 20, SHA256Hex: strings.Repeat("9", 64),
+	}}
+	recorder := &recordingPublishingObjectLifecycle{usageIDs: []string{"usage_cancelled"}}
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	ctx := WithPublishingObjectLifecycle(requestCtx, PublishingObjectContext{
+		WorkspaceID: "workspace_1",
+		PostID:      "post_1",
+		Lifecycle:   recorder,
+	})
+	uploader := func(context.Context, string, string, string, string) error {
+		cancelRequest()
+		return context.Canceled
+	}
+
+	_, err := stageExternalMedia(ctx, "https://cdn.example/photo.jpg", safefetch.Policy{}, fetcher, uploader, func(key string) string { return key })
+	if !errors.Is(err, ErrExternalMediaUpload) {
+		t.Fatalf("error = %v, want ErrExternalMediaUpload", err)
+	}
+	if len(recorder.abandoned) != 1 || recorder.abandoned[0] != "usage_cancelled" {
+		t.Fatalf("abandoned usages = %v, want usage_cancelled", recorder.abandoned)
+	}
+	if len(recorder.abandonContextErrors) != 1 || recorder.abandonContextErrors[0] != nil {
+		t.Fatalf("abandon context errors = %v, want one live detached context", recorder.abandonContextErrors)
+	}
+}
+
+func TestExternalMediaActivationFailureAbandonsPendingUsage(t *testing.T) {
+	t.Parallel()
+
+	tempPath := writeVerifiedTemp(t, []byte("verified image bytes"))
+	fetcher := &fakeExternalFetcher{result: &safefetch.Result{
+		Path: tempPath, MediaType: "image/jpeg", SizeBytes: 20, SHA256Hex: strings.Repeat("8", 64),
+	}}
+	recorder := &recordingPublishingObjectLifecycle{
+		usageIDs:    []string{"usage_activation_failed"},
+		activateErr: errors.New("database unavailable"),
+	}
+	ctx := WithPublishingObjectLifecycle(context.Background(), PublishingObjectContext{
+		WorkspaceID: "workspace_1",
+		PostID:      "post_1",
+		Lifecycle:   recorder,
+	})
+
+	_, err := stageExternalMedia(ctx, "https://cdn.example/photo.jpg", safefetch.Policy{}, fetcher, (&recordingFileUploader{}).put, func(key string) string { return key })
+	if !errors.Is(err, ErrExternalMediaLifecycle) {
+		t.Fatalf("error = %v, want ErrExternalMediaLifecycle", err)
+	}
+	if len(recorder.activated) != 1 || recorder.activated[0] != "usage_activation_failed" {
+		t.Fatalf("activated usages = %v, want usage_activation_failed", recorder.activated)
+	}
+	if len(recorder.abandoned) != 1 || recorder.abandoned[0] != "usage_activation_failed" {
+		t.Fatalf("abandoned usages = %v, want usage_activation_failed", recorder.abandoned)
 	}
 }
 
@@ -301,11 +364,15 @@ func (u *recordingFileUploader) put(_ context.Context, key, path, contentType, _
 }
 
 type recordingPublishingObjectLifecycle struct {
-	reservations []PublishingObjectReservation
-	usageIDs     []string
-	abandoned    []string
-	reserveErr   error
-	abandonErr   error
+	reservations          []PublishingObjectReservation
+	usageIDs              []string
+	activated             []string
+	abandoned             []string
+	activateContextErrors []error
+	abandonContextErrors  []error
+	reserveErr            error
+	activateErr           error
+	abandonErr            error
 }
 
 func (r *recordingPublishingObjectLifecycle) ReservePublishingObject(_ context.Context, reservation PublishingObjectReservation) (string, error) {
@@ -320,8 +387,15 @@ func (r *recordingPublishingObjectLifecycle) ReservePublishingObject(_ context.C
 	return fmt.Sprintf("usage_%d", index+1), nil
 }
 
-func (r *recordingPublishingObjectLifecycle) AbandonPublishingObject(_ context.Context, usageID string) error {
+func (r *recordingPublishingObjectLifecycle) ActivatePublishingObject(ctx context.Context, usageID string) error {
+	r.activated = append(r.activated, usageID)
+	r.activateContextErrors = append(r.activateContextErrors, ctx.Err())
+	return r.activateErr
+}
+
+func (r *recordingPublishingObjectLifecycle) AbandonPublishingObject(ctx context.Context, usageID string) error {
 	r.abandoned = append(r.abandoned, usageID)
+	r.abandonContextErrors = append(r.abandonContextErrors, ctx.Err())
 	return r.abandonErr
 }
 

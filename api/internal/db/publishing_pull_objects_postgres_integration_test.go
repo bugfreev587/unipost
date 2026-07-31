@@ -132,6 +132,48 @@ func TestPublishingPullObjectClaimCoordinatesWithReservations(t *testing.T) {
 		}
 		assertPublishingPullObjectState(t, pool, "deleting", 0)
 	})
+
+	t.Run("expired pending upload self heals after abandonment write failure", func(t *testing.T) {
+		pool := openPublishingRestrictionIntegrationPool(t)
+		setupPublishingPullObjectConcurrencySchema(t, pool)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		queries := New(pool)
+
+		usageID, err := queries.ReservePublishingPullObjectUsage(ctx, ReservePublishingPullObjectUsageParams{
+			ObjectKey:   publishingPullObjectRaceKey,
+			ContentType: "video/mp4",
+			SizeBytes:   128,
+			WorkspaceID: "workspace-1",
+			PostID:      "post-active",
+		})
+		if err != nil {
+			t.Fatalf("reserve pending upload usage: %v", err)
+		}
+		rows, err := queries.ClaimPublishingPullObjectsDue(ctx, 10)
+		if err != nil {
+			t.Fatalf("claim before pending lease expiry: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("cleanup claimed %d objects before pending lease expiry, want 0", len(rows))
+		}
+
+		if _, err := pool.Exec(ctx, `
+			UPDATE publishing_pull_object_usages
+			SET cleanup_after_at = NOW() - INTERVAL '1 second'
+			WHERE id = $1
+		`, usageID); err != nil {
+			t.Fatalf("advance pending upload lease to expired: %v", err)
+		}
+		rows, err = queries.ClaimPublishingPullObjectsDue(ctx, 10)
+		if err != nil {
+			t.Fatalf("claim after pending lease expiry: %v", err)
+		}
+		if len(rows) != 1 || rows[0].ObjectKey != publishingPullObjectRaceKey {
+			t.Fatalf("claimed rows after pending lease expiry = %+v, want %q", rows, publishingPullObjectRaceKey)
+		}
+		assertPublishingPullObjectState(t, pool, "deleting", 0)
+	})
 }
 
 func setupPublishingPullObjectConcurrencySchema(t *testing.T, pool *pgxpool.Pool) {

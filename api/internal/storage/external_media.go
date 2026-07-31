@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/safefetch"
 )
@@ -26,6 +27,8 @@ type ExternalMediaResult struct {
 
 type verifiedFileUploader func(context.Context, string, string, string, string) error
 type publicURLBuilder func(string) string
+
+const publishingObjectLifecycleWriteTimeout = 5 * time.Second
 
 func (c *Client) StageExternalMedia(ctx context.Context, rawURL string, policy safefetch.Policy) (ExternalMediaResult, error) {
 	if c == nil {
@@ -82,13 +85,25 @@ func stageExternalMedia(
 		return ExternalMediaResult{}, fmt.Errorf("%w: reservation failed", ErrExternalMediaLifecycle)
 	}
 	if err := putFile(ctx, key, fetched.Path, fetched.MediaType, "public, max-age=86400, immutable"); err != nil {
-		if abandonErr := lifecycle.Lifecycle.AbandonPublishingObject(ctx, usageID); abandonErr != nil {
+		if abandonErr := abandonPublishingObjectDetached(ctx, lifecycle.Lifecycle, usageID); abandonErr != nil {
 			return ExternalMediaResult{}, errors.Join(
 				fmt.Errorf("%w: object storage unavailable", ErrExternalMediaUpload),
 				fmt.Errorf("%w: failed upload reservation could not be released", ErrExternalMediaLifecycle),
 			)
 		}
 		return ExternalMediaResult{}, fmt.Errorf("%w: object storage unavailable", ErrExternalMediaUpload)
+	}
+	activateCtx, cancelActivate := detachedPublishingLifecycleContext(ctx)
+	activateErr := lifecycle.Lifecycle.ActivatePublishingObject(activateCtx, usageID)
+	cancelActivate()
+	if activateErr != nil {
+		if abandonErr := abandonPublishingObjectDetached(ctx, lifecycle.Lifecycle, usageID); abandonErr != nil {
+			return ExternalMediaResult{}, errors.Join(
+				fmt.Errorf("%w: uploaded object could not be activated", ErrExternalMediaLifecycle),
+				fmt.Errorf("%w: pending upload reservation could not be released", ErrExternalMediaLifecycle),
+			)
+		}
+		return ExternalMediaResult{}, fmt.Errorf("%w: uploaded object could not be activated", ErrExternalMediaLifecycle)
 	}
 	return ExternalMediaResult{
 		PublicURL: publicURL(key),
@@ -97,6 +112,19 @@ func stageExternalMedia(
 		SizeBytes: fetched.SizeBytes,
 		SHA256Hex: hash,
 	}, nil
+}
+
+func abandonPublishingObjectDetached(ctx context.Context, lifecycle PublishingObjectLifecycle, usageID string) error {
+	abandonCtx, cancel := detachedPublishingLifecycleContext(ctx)
+	defer cancel()
+	return lifecycle.AbandonPublishingObject(abandonCtx, usageID)
+}
+
+func detachedPublishingLifecycleContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), publishingObjectLifecycleWriteTimeout)
 }
 
 func normalizeVerifiedSHA256(raw string) (string, error) {

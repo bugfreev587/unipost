@@ -25,6 +25,24 @@ func (q *Queries) AbandonPublishingPullObjectUsage(ctx context.Context, usageID 
 	return err
 }
 
+const activatePublishingPullObjectUsage = `-- name: ActivatePublishingPullObjectUsage :one
+UPDATE publishing_pull_object_usages
+SET post_status = 'publishing',
+    cleanup_after_at = NULL,
+    retention_reason = 'active_post',
+    updated_at = NOW()
+WHERE id = $1
+  AND post_status = 'upload_pending'
+RETURNING id
+`
+
+func (q *Queries) ActivatePublishingPullObjectUsage(ctx context.Context, usageID string) (string, error) {
+	row := q.db.QueryRow(ctx, activatePublishingPullObjectUsage, usageID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const hardDeletePublishingPullObject = `-- name: HardDeletePublishingPullObject :exec
 DELETE FROM publishing_pull_objects
 WHERE object_key = $1
@@ -168,9 +186,9 @@ SELECT
   reserved_object.object_key,
   $1,
   $2,
-  'publishing',
-  NULL,
-  'active_post'
+  'upload_pending',
+  NOW() + INTERVAL '15 minutes',
+  'upload_pending'
 FROM reserved_object
 RETURNING id
 `

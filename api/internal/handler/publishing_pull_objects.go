@@ -10,6 +10,7 @@ import (
 
 type publishingObjectLifecycleQueries interface {
 	ReservePublishingPullObjectUsage(context.Context, db.ReservePublishingPullObjectUsageParams) (string, error)
+	ActivatePublishingPullObjectUsage(context.Context, string) (string, error)
 	AbandonPublishingPullObjectUsage(context.Context, string) error
 }
 
@@ -28,6 +29,14 @@ func (r publishingObjectLifecycleRecorder) ReservePublishingObject(ctx context.C
 		ContentType: reservation.ContentType,
 		SizeBytes:   reservation.SizeBytes,
 	})
+}
+
+func (r publishingObjectLifecycleRecorder) ActivatePublishingObject(ctx context.Context, usageID string) error {
+	if r.queries == nil {
+		return errors.New("publishing pull object lifecycle database is not configured")
+	}
+	_, err := r.queries.ActivatePublishingPullObjectUsage(ctx, usageID)
+	return err
 }
 
 func (r publishingObjectLifecycleRecorder) AbandonPublishingObject(ctx context.Context, usageID string) error {

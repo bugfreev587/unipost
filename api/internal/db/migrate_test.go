@@ -558,6 +558,7 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 	querySQL := string(queries)
 	for _, want := range []string{
 		"-- name: ReservePublishingPullObjectUsage :one",
+		"-- name: ActivatePublishingPullObjectUsage :one",
 		"-- name: AbandonPublishingPullObjectUsage :exec",
 		"-- name: UpdatePublishingPullObjectUsagesForPost :exec",
 		"-- name: LockPublishingPullObjectCandidates :many",
@@ -573,6 +574,9 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 	queryCompact := strings.Join(strings.Fields(strings.ToLower(querySQL)), " ")
 	for _, want := range []string{
 		"where publishing_pull_objects.cleanup_state = 'active'",
+		"'upload_pending'",
+		"now() + interval '15 minutes'",
+		"retention_reason = 'active_post'",
 		"candidate.cleanup_state in ('active', 'deleting')",
 		"usage.cleanup_after_at is null or usage.cleanup_after_at > now()",
 		"returning id",

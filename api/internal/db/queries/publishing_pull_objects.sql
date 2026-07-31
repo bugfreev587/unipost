@@ -30,10 +30,20 @@ SELECT
   reserved_object.object_key,
   sqlc.arg(workspace_id),
   sqlc.arg(post_id),
-  'publishing',
-  NULL,
-  'active_post'
+  'upload_pending',
+  NOW() + INTERVAL '15 minutes',
+  'upload_pending'
 FROM reserved_object
+RETURNING id;
+
+-- name: ActivatePublishingPullObjectUsage :one
+UPDATE publishing_pull_object_usages
+SET post_status = 'publishing',
+    cleanup_after_at = NULL,
+    retention_reason = 'active_post',
+    updated_at = NOW()
+WHERE id = sqlc.arg(usage_id)
+  AND post_status = 'upload_pending'
 RETURNING id;
 
 -- name: AbandonPublishingPullObjectUsage :exec

@@ -350,7 +350,9 @@ Use a fake `safefetch.Fetcher` and an injected narrow file uploader function. As
 - the object key contains no source hostname, path, or query;
 - identical content resolves to the same content-addressed key;
 - a unique lifecycle usage ID is persisted for every staging attempt before upload and contains no source URL;
+- each new usage starts as `upload_pending` with a 15-minute durable cleanup lease, becomes active only after upload succeeds, and an expired pending lease becomes cleanup-eligible after an abandonment persistence failure;
 - upload failure marks only that attempt's usage immediately eligible for cleanup, preserving concurrent successful usages for the same post/content;
+- activation and abandonment use a five-second bounded context derived through `context.WithoutCancel`, so request cancellation cannot suppress lifecycle persistence;
 - a shared object remains while any post usage is active or inside retention;
 - reservation and cleanup serialize through the same object-row lock, then cleanup rechecks usage eligibility in a later statement inside the same transaction; two-session PostgreSQL tests cover both reservation-wins and cleanup-wins ordering;
 - cleanup claims the object before R2 deletion, releases the claim after R2 failure, and safely retries database-finalization failure;
@@ -381,7 +383,7 @@ type ExternalMediaResult struct {
 func (c *Client) StageExternalMedia(ctx context.Context, rawURL string, policy safefetch.Policy) (ExternalMediaResult, error)
 ```
 
-Attach server-owned workspace/post lifecycle metadata to the dispatch context. Reserve `publishing_pull_objects` plus a unique per-attempt `publishing_pull_object_usages` row atomically before `PutFile`, return its usage ID, and abandon only that ID on upload failure. Terminal post transitions update all usages for the post with `mediaretention.RetentionForPlanStatus`. Reservation and cleanup must contend on the same object row; cleanup first locks candidates, then checks usages in a separate Read Committed statement inside that transaction before marking an object deleting. The existing media cleanup worker deletes only claimed objects whose every usage is past deadline. This remains provider-neutral and introduces no Pinterest-specific retention window.
+Attach server-owned workspace/post lifecycle metadata to the dispatch context. Reserve `publishing_pull_objects` plus a unique per-attempt `publishing_pull_object_usages` row atomically before `PutFile`, return its usage ID, and initialize it as `upload_pending` with a database-clock 15-minute deadline. After `PutFile`, activate only that ID; on failure, abandon only that ID. Both lifecycle writes use independent five-second bounded contexts derived with `context.WithoutCancel`. A failed abandonment write self-heals when the pending deadline expires. Terminal post transitions update all usages for the post with `mediaretention.RetentionForPlanStatus`. Reservation and cleanup must contend on the same object row; cleanup first locks candidates, then checks usages in a separate Read Committed statement inside that transaction before marking an object deleting. The existing media cleanup worker deletes only claimed objects whose every usage is past deadline. This remains provider-neutral and introduces no Pinterest-specific retention window.
 
 `storage.New` initializes a default production fetcher. The method fetches, defers `Result.Close`, derives extension only from detected MIME, calls existing `PutFile`, and returns the existing public URL. It does not call `UploadFromURL`.
 

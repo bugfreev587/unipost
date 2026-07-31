@@ -21,10 +21,12 @@ type PublishingObjectReservation struct {
 
 // PublishingObjectLifecycle is implemented by the publishing database layer.
 // Reserve must be atomic: either both the object and its post usage are
-// recorded, or neither is. Abandon marks a failed upload attempt as immediately
-// eligible for the normal publishing-object cleanup worker.
+// recorded, or neither is. A reservation starts under a durable pending lease;
+// Activate removes that lease after upload, while Abandon makes a failed upload
+// immediately eligible for the normal publishing-object cleanup worker.
 type PublishingObjectLifecycle interface {
 	ReservePublishingObject(context.Context, PublishingObjectReservation) (string, error)
+	ActivatePublishingObject(context.Context, string) error
 	AbandonPublishingObject(context.Context, string) error
 }
 
