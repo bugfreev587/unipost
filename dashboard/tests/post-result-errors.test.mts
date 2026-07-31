@@ -113,3 +113,64 @@ test("describePostResultFailure renders the approved publishing restriction cont
   assert.equal(detail.retryStatusLabel, "Publishing restriction active");
   assert.equal(detail.canRetry, false);
 });
+
+test("describePostResultFailure gives Pinterest board guidance from structured fields only", () => {
+  const detail = describePostResultFailure({
+    status: "failed",
+    platform: "pinterest",
+    error_message: "provider prose that must not control the board guidance",
+    error_code: "target_not_found",
+    failure_stage: "destination_preflight",
+    platform_error_code: "29",
+    is_retriable: false,
+    next_action: "select_valid_target",
+    error_source: "platform",
+    error_temporality: "permanent",
+    provider_error: { provider: "pinterest", http_status: 403, code: "29" },
+  });
+
+  assert.equal(detail.title, "Pinterest board unavailable");
+  assert.equal(detail.message, "The selected Pinterest board is no longer available for this account. Choose another board and publish again.");
+  assert.equal(detail.nextActionLabel, "Select a valid target");
+  assert.equal(detail.canRetry, false);
+  assert.doesNotMatch(detail.message, /provider prose/);
+});
+
+test("describePostResultFailure reserves reconnect guidance for Pinterest token failures", () => {
+  const detail = describePostResultFailure({
+    status: "failed",
+    platform: "pinterest",
+    error_message: "board access denied",
+    error_code: "auth_token_invalid",
+    failure_stage: "destination_preflight",
+    platform_error_code: "2",
+    is_retriable: false,
+    next_action: "reconnect_account",
+    error_source: "platform",
+    error_temporality: "permanent",
+    provider_error: { provider: "pinterest", http_status: 401, code: "2" },
+  });
+
+  assert.equal(detail.title, "Reconnect Pinterest");
+  assert.equal(detail.message, "Pinterest rejected this connection. Reconnect the account, then try again.");
+  assert.equal(detail.actionHref, "/projects/:id/accounts");
+});
+
+test("describePostResultFailure has later-compatible Pinterest media preflight copy", () => {
+  const detail = describePostResultFailure({
+    status: "failed",
+    platform: "pinterest",
+    error_message: "remote host returned an arbitrary response",
+    error_code: "media_error",
+    failure_stage: "media_preflight",
+    platform_error_code: "unsupported_media_type",
+    is_retriable: false,
+    next_action: "fix_media",
+    error_source: "unipost",
+    error_temporality: "permanent",
+  });
+
+  assert.equal(detail.title, "Pinterest media needs changes");
+  assert.equal(detail.message, "Pinterest could not use this media. Replace it with a supported image or video and publish again.");
+  assert.equal(detail.nextActionLabel, "Fix media");
+});

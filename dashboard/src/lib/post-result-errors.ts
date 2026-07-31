@@ -199,6 +199,38 @@ function retryStatusLabel(result: PostResultFailureInput): string | undefined {
   }
 }
 
+function pinterestStructuredCopy(
+  result: PostResultFailureInput,
+): Pick<PostResultFailureDescription, "title" | "message"> | undefined {
+  if (result.platform?.toLowerCase() !== "pinterest") return undefined;
+
+  if (result.error_code === "target_not_found" && result.failure_stage === "destination_preflight") {
+    return {
+      title: "Pinterest board unavailable",
+      message: "The selected Pinterest board is no longer available for this account. Choose another board and publish again.",
+    };
+  }
+  if (result.error_code === "auth_token_invalid" || result.error_code === "account_reconnect_required") {
+    return {
+      title: "Reconnect Pinterest",
+      message: "Pinterest rejected this connection. Reconnect the account, then try again.",
+    };
+  }
+  if (result.error_code === "missing_permission") {
+    return {
+      title: "Update Pinterest permissions",
+      message: "Pinterest denied a required account permission. Reconnect the account and update its permissions.",
+    };
+  }
+  if (result.error_code === "media_error" && result.failure_stage === "media_preflight") {
+    return {
+      title: "Pinterest media needs changes",
+      message: "Pinterest could not use this media. Replace it with a supported image or video and publish again.",
+    };
+  }
+  return undefined;
+}
+
 function structuredMessage(result: PostResultFailureInput): string | undefined {
   if (result.error_code === "plan_platform_publishing_restricted") {
     return result.error_message;
@@ -234,6 +266,17 @@ function structuredMessage(result: PostResultFailureInput): string | undefined {
 export function describePostResultFailure(result: PostResultFailureInput): PostResultFailureDescription {
   if (!result.error_code && !result.next_action && typeof result.is_retriable !== "boolean") {
     return legacyDescription(result);
+  }
+
+  const pinterestCopy = pinterestStructuredCopy(result);
+  if (pinterestCopy) {
+    return {
+      ...pinterestCopy,
+      nextActionLabel: result.next_action ? NEXT_ACTION_LABELS[result.next_action] || result.next_action : undefined,
+      retryStatusLabel: retryStatusLabel(result),
+      actionHref: actionHrefFor(result.next_action),
+      canRetry: result.retry_policy?.manual_retry_allowed ?? result.is_retriable === true,
+    };
   }
 
   const messageParts = [structuredMessage(result) || safeErrorDetail(result.error_message) || "Publish failed."];
