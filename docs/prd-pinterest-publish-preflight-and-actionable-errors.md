@@ -1,12 +1,14 @@
-# PRD — Pinterest Publish Preflight and Actionable Errors
+# PRD — Pinterest Publishing Hardening
 
-**Status:** Review
+**Status:** Approved for implementation
 
 **Owner:** Publishing / API Platform / Dashboard
 
 **Created:** 2026-07-30
 
 **Target:** Pinterest publishing reliability hardening
+
+**Supporting dependency:** Secure Remote Media Fetcher
 
 ---
 
@@ -16,16 +18,23 @@ UniPost currently accepts a syntactically valid Pinterest `board_id` and sends i
 
 When Pinterest rejects one of these resources, UniPost often stores a generic `platform_error` and tells the customer to contact support. The same response contains enough provider evidence to give a specific action, but the current taxonomy does not understand Pinterest's error vocabulary.
 
-This PRD defines a Pinterest-specific reliability layer that:
+The primary product scope of this PRD is Pinterest-specific hardening that:
 
 1. validates the destination board immediately before provider dispatch;
-2. validates and, when necessary, stages remote media on a UniPost-controlled public URL;
-3. converts known Pinterest failures into stable, actionable UniPost errors;
-4. prevents Dashboard users from submitting stale or arbitrary board identifiers;
-5. preserves structured provider evidence for API clients and operators;
-6. keeps permanent resource failures out of the automatic retry queue.
+2. converts known Pinterest failures into stable, actionable UniPost errors;
+3. prevents Dashboard users from submitting stale or arbitrary board identifiers;
+4. preserves structured provider evidence for API clients and operators;
+5. keeps permanent resource failures out of the automatic retry queue;
+6. isolates Pinterest Sandbox and Production destination identities.
 
-This is a Pinterest-specific change. It does not introduce a generalized cross-platform preflight framework.
+The incident also exposed a dead customer-supplied media URL. Safely downloading and staging arbitrary external media is not implemented as Pinterest-specific downloader logic. It is a separate platform dependency, **Secure Remote Media Fetcher**, with its own interface, security review, tests, and acceptance gate. Pinterest is its first consumer.
+
+The two workstreams are related but independently deliverable:
+
+- **Workstream A — Pinterest Publishing Hardening:** errors, board preflight, environment isolation, Dashboard behavior, retries, and Pinterest observability.
+- **Workstream B — Secure Remote Media Fetcher:** safe external URL retrieval and controlled storage integration, followed by Pinterest media-preflight adoption.
+
+Workstream A can ship without Workstream B. Workstream B must not block the Pinterest board/error fixes, and it must not ship without its security gate.
 
 ---
 
@@ -113,20 +122,32 @@ Dashboard board selection improves the common path, but a selected board may be 
 
 ## 4. Goals
 
+### 4.1 Workstream A — Pinterest Publishing Hardening
+
 1. Reject unavailable or unwritable Pinterest boards before `POST /v5/pins`.
-2. Reject invalid remote media before Pinterest attempts to fetch it.
-3. Ensure known Pinterest provider responses produce stable, actionable UniPost error fields.
-4. Preserve correct retry behavior: permanent resource failures must not retry automatically.
-5. Make Dashboard board selection safe and understandable, including the zero-board state.
-6. Make API usage deterministic: list or create a board, submit its returned ID, and receive a specific error if it is no longer valid.
-7. Preserve backward compatibility for existing post request and result shapes.
-8. Add sufficient structured telemetry to distinguish board, media, token, rate-limit, and unexpected provider failures.
+2. Ensure known Pinterest provider responses produce stable, actionable UniPost error fields.
+3. Preserve correct retry behavior: permanent resource failures must not retry automatically.
+4. Make Dashboard board selection safe and understandable, including the zero-board state.
+5. Make API usage deterministic: list or create a board, submit its returned ID, and receive a specific error if it is no longer valid.
+6. Preserve backward compatibility for existing post request and result shapes.
+7. Add sufficient structured telemetry to distinguish board, token, rate-limit, and unexpected provider failures.
+8. Prevent Sandbox board identifiers from being dispatched in Production.
+
+### 4.2 Workstream B — Secure Remote Media Fetcher
+
+1. Provide one backend-owned interface for safely retrieving an arbitrary customer-supplied `http` or `https` media URL.
+2. Reject SSRF, DNS rebinding, redirect, type-confusion, timeout, and oversized-response attacks before storage.
+3. Stage verified bytes on an existing UniPost-controlled public publishing URL.
+4. Integrate Pinterest media preflight with that interface without embedding network-security logic in the Pinterest adapter.
+5. Reject invalid remote media before Pinterest attempts to fetch it.
 
 ---
 
 ## 5. Non-goals
 
 - Do not build a generic preflight framework for every social platform.
+- Do not turn Pinterest board preflight or Pinterest provider-error mapping into a generalized cross-platform framework.
+- Do not put safe-fetch networking policy inside the Pinterest adapter.
 - Do not change Pinterest OAuth scopes or the OAuth authorization flow.
 - Do not require users to reconnect when the current token is valid.
 - Do not add Pinterest board editing, deletion, bulk sync, sections, or board analytics.
@@ -146,7 +167,7 @@ Syntactic validation remains at request admission. Authoritative resource valida
 
 This minimizes the time-of-check/time-of-use window and also protects scheduled posts whose destination changed after creation.
 
-### 6.2 Prefer controlled media delivery
+### 6.2 Prefer controlled media delivery through Workstream B
 
 Pinterest fetches `image_url` and `video_url` from its own network. UniPost should give Pinterest a URL whose availability, type, and lifetime UniPost controls.
 
@@ -166,17 +187,29 @@ A deleted board or dead media URL will not heal through repeated delivery attemp
 
 ## 7. Chosen approach
 
-Use real-time provider preflight plus controlled media staging.
+Deliver two bounded workstreams through explicit interfaces.
 
 Alternatives considered:
 
-1. **Dashboard/cache-only validation:** lower latency and fewer provider calls, but does not protect API posts, scheduled posts, deleted boards, or stale selections.
-2. **Provider-call-only with better error mapping:** smaller implementation, but still spends a Pinterest write request on a known-invalid target and cannot detect dead media deterministically.
-3. **Real-time preflight plus staging:** one additional board read and possible media transfer, but provides the strongest correctness and the clearest failure contract.
+1. **One Pinterest-only implementation:** keeps ownership in one adapter but mixes provider semantics with security-sensitive network fetching and makes the Pinterest fix unnecessarily large.
+2. **One generalized publishing-preflight framework:** maximizes reuse but expands scope across unrelated platforms before a second consumer exists.
+3. **Pinterest hardening plus a narrow safe-fetch dependency:** keeps Pinterest behavior provider-specific while isolating reusable network-security policy behind one backend interface.
 
-Option 3 is selected because publishing correctness is more important than avoiding one bounded read request, and Pinterest's read and write rate-limit categories are separate.
+Option 3 is selected.
 
-The media-staging portion of Option 3 is security-gated. The current generic remote-upload implementation is not safe for arbitrary untrusted URLs: it follows redirects by default, does not reject private or reserved network destinations, does not defend against DNS rebinding, and reads the response without a streaming byte ceiling. It must not be reused for external `media_urls` until the safe-fetch requirements in section 15 pass AppSec review and negative security testing.
+### 7.1 Workstream A ownership
+
+The Pinterest adapter owns Pinterest API calls, board semantics, provider-error normalization, and the decision to proceed to `POST /v5/pins`. Dashboard owns Pinterest board selection and customer guidance. Generic social-post handlers remain platform-agnostic.
+
+### 7.2 Workstream B ownership
+
+The Secure Remote Media Fetcher owns URL parsing, DNS/IP validation, connection policy, redirect handling, bounded streaming, and detected media metadata. Existing storage owns persisted objects and lifecycle cleanup. The Pinterest adapter supplies a URL and consumes either verified staged media or a typed failure; it does not implement those controls itself.
+
+The current generic remote-upload implementation is not safe for arbitrary untrusted URLs: it follows redirects by default, does not reject private or reserved network destinations, does not defend against DNS rebinding, and reads the response without a streaming byte ceiling. It must not be reused for external `media_urls` until Workstream B passes the section 15 security gate.
+
+### 7.3 Delivery independence
+
+Workstream A ships first and retains existing media behavior until Workstream B is accepted. Workstream B then adds deterministic external-media validation and staging for Pinterest. The final PRD outcome requires both workstreams, but failure or delay in Workstream B must not hold back accepted Pinterest error and destination fixes.
 
 ---
 
@@ -188,10 +221,10 @@ request admission
   → enqueue delivery job
   → load account and decrypt/refresh token
   → Pinterest account/token check when required
-  → authoritative board preflight
-  → remote media validation and staging
+  → authoritative Pinterest board preflight            [Workstream A]
+  → remote media validation and staging, when enabled  [Workstream B]
   → POST /v5/pins
-  → normalize provider response
+  → normalize Pinterest provider response              [Workstream A]
   → persist result, failure, retry decision, and telemetry
 ```
 
@@ -271,7 +304,9 @@ No new public request field is required. The server knows the active Pinterest e
 
 ### 8.5 Media validation and staging
 
-Run media work only after board preflight succeeds.
+This section is the Pinterest integration contract for Workstream B. It is not implemented as ad hoc fetching inside Workstream A. Until Workstream B passes its security gate and is integrated, Workstream A retains existing media behavior and does not claim deterministic rejection of dead external URLs.
+
+After Workstream B is enabled for Pinterest, run media work only after board preflight succeeds.
 
 For `media_ids` already backed by UniPost-controlled storage:
 
@@ -396,7 +431,7 @@ The list response remains the authoritative source for selectable board IDs at r
 }
 ```
 
-### 9.5 Failed result example: invalid media
+### 9.5 Failed result example: invalid media (Workstream B)
 
 ```json
 {
@@ -533,14 +568,17 @@ The delivery job may retain its configured maximum attempt count. A permanent pr
 
 ## 13. Observability
 
-Add structured events or fields for:
+Workstream A adds:
 
 - `pinterest_destination_preflight_started`;
 - `pinterest_destination_preflight_succeeded`;
 - `pinterest_destination_preflight_failed`;
-- `pinterest_media_preflight_failed`;
-- `pinterest_media_staged`;
 - `pinterest_create_pin_failed`.
+
+Workstream B adds after Pinterest adoption:
+
+- `pinterest_media_preflight_failed`;
+- `pinterest_media_staged`.
 
 Each event should include safe identifiers and dimensions:
 
@@ -566,15 +604,18 @@ Never log or emit:
 - signed media query parameters;
 - full provider request bodies containing sensitive URLs.
 
-Operational metrics:
+Workstream A operational metrics:
 
 - destination-preflight success and failure counts;
 - failures by Pinterest code and normalized reason;
-- media-source rejection count by status/type;
-- media staging success/failure and duration;
 - create-Pin requests prevented by preflight;
 - Pinterest publish success rate after preflight;
 - count of known Pinterest errors that incorrectly fall back to `contact_support`.
+
+Workstream B operational metrics:
+
+- media-source rejection count by status/type;
+- media staging success/failure and duration.
 
 Reliability metrics must segment `failure_stage=media_preflight` by normalized failure reason. Customer-input rejections such as `customer_media_unreachable` are reported as product-quality/input metrics and excluded from the numerator of UniPost infrastructure reliability SLOs, even though the v1 public contract uses `error_source=unipost` for pre-dispatch enforcement.
 
@@ -595,7 +636,16 @@ Reliability metrics must segment `failure_stage=media_preflight` by normalized f
 
 ---
 
-## 15. Security and abuse controls
+## 15. Supporting platform dependency — Secure Remote Media Fetcher
+
+Workstream B is a bounded platform capability, not a Pinterest feature implementation. Its public backend interface accepts an external media URL plus an explicit byte/type policy and returns either:
+
+- verified, bounded media content and detected metadata suitable for storage; or
+- a typed failure that the calling platform adapter maps into its own product error contract.
+
+The interface must not contain Pinterest board logic, Pinterest error codes, or Pinterest-specific customer copy. Pinterest is the first consumer; adding another consumer requires its own product requirements and adapter mapping rather than expanding this PRD.
+
+### 15.1 Security contract
 
 Remote media staging is a net-new security-sensitive capability. The current generic `UploadFromURL` path is not hardened for arbitrary URLs and must not be used as the implementation baseline without first extracting or replacing it with an approved safe-fetch abstraction.
 
@@ -618,25 +668,25 @@ The safe fetcher must:
 
 AppSec review and negative security tests are a release-blocking gate for arbitrary external URL staging. The feature must not be enabled in Preview, development, or later environments until this gate passes. Board preflight and Pinterest error normalization may ship independently before media staging if their own acceptance gates pass.
 
-Board preflight must use only the connected account's decrypted token inside the trusted backend. Board identifiers are not secrets, but they must not be accepted as proof of ownership.
+### 15.2 Storage and adapter boundary
 
-### 15.1 Rollout and rollback decision
+- The safe fetcher validates and streams bytes; it does not decide object retention or expose a public URL.
+- Existing UniPost storage persists verified bytes and applies the existing publishing-object lifecycle.
+- The Pinterest adapter receives the staged public URL and selects Pinterest's `image_url` or `video_url` media-source shape.
+- Typed fetch failures remain provider-neutral until the Pinterest adapter maps them to `media_error`, `temporary_platform_error`, `fix_media`, or `retry_later`.
+- No caller may bypass the safe fetcher and pass arbitrary external URLs into the existing unhardened `UploadFromURL` path.
+
+### 15.3 Delivery-control decision
 
 This PRD does not add a feature flag or an environment-variable bypass. A fail-open preflight switch would silently restore invalid destination writes, while an unsafe media-staging switch would not substitute for the required security gate. Repository policy also requires an explicit product request before adding a feature flag.
 
-Risk is reduced through ordered, independently reversible delivery:
-
-1. ship structured Pinterest error normalization and correct `403` semantics;
-2. ship bounded board preflight and environment metadata;
-3. ship the safe fetcher and controlled media staging only after AppSec approval.
-
-Each phase must be a focused change that can be reverted and redeployed without disabling the already accepted earlier phases. A feature flag may be reconsidered only through an explicit product decision with a defined owner, production default, and rollback contract.
+Risk is reduced by keeping Workstream A and Workstream B independently reviewable and reversible. A feature flag may be reconsidered only through an explicit product decision with a defined owner, production default, and rollback contract.
 
 ---
 
 ## 16. Testing requirements
 
-### 16.1 Unit tests
+### 16.1 Workstream A — error-normalization unit tests
 
 - numeric board syntax remains accepted locally;
 - non-numeric and missing board IDs remain validation errors;
@@ -649,7 +699,7 @@ Each phase must be a focused change that can be reverted and redeployed without 
 - structured `provider_error` includes provider, status, code, and normalized reason;
 - board resource `403` does not automatically mark an account reconnect-required.
 
-### 16.2 Adapter and handler tests
+### 16.2 Workstream A — Pinterest adapter and handler tests
 
 - valid board preflight proceeds to create Pin;
 - direct board lookup is used before board-list fallback;
@@ -667,7 +717,7 @@ Each phase must be a focused change that can be reverted and redeployed without 
 - legacy scheduled posts without a marker receive live preflight in the active environment;
 - board-list and board-create handlers distinguish token failure from resource-level denial.
 
-### 16.3 Media tests
+### 16.3 Workstream B — safe-fetch and Pinterest media-integration tests
 
 - external image returning `200` and valid bytes is staged and published using the staged URL;
 - source `404` fails before create Pin;
@@ -686,7 +736,7 @@ Each phase must be a focused change that can be reverted and redeployed without 
 - temporary R2 failure is retriable;
 - UniPost-controlled media does not receive unnecessary duplicate staging.
 
-### 16.4 Dashboard regression tests
+### 16.4 Workstream A — Dashboard regression tests
 
 - Pinterest account selection loads boards;
 - zero boards disables submission and exposes Create Board;
@@ -695,10 +745,13 @@ Each phase must be a focused change that can be reverted and redeployed without 
 - changing environment identity clears the prior board;
 - a Sandbox-to-Production environment transition requires board reselection before submission;
 - invalid-board failure renders board-selection guidance;
-- media-preflight failure renders media-replacement guidance;
 - token failure alone renders reconnect guidance.
 
-### 16.5 Deployed acceptance
+### 16.5 Workstream B — Dashboard regression tests
+
+- media-preflight failure renders media-replacement guidance from structured fields.
+
+### 16.6 Workstream A — deployed acceptance
 
 In the isolated PR environment and then the official development environment:
 
@@ -706,56 +759,67 @@ In the isolated PR environment and then the official development environment:
 2. a valid board plus a stable supported image publishes successfully;
 3. a nonexistent numeric board fails before `POST /pins` with `target_not_found`;
 4. a board owned by another account fails with `select_valid_target` and does not mark the connection invalid;
-5. a `404` media URL fails during media preflight with `fix_media`;
-6. no known code `2`, `29`, `40`, or `429` failure returns generic `contact_support`;
-7. permanent failures do not enqueue an automatic retry;
-8. temporary provider and staging failures follow the existing retry policy;
-9. external URL staging remains disabled until AppSec review and the complete negative safe-fetch suite pass on the exact deployed commit;
-10. observability distinguishes customer media input failures from UniPost infrastructure failures and excludes the former from the infrastructure SLO numerator.
+5. no known code `2`, `29`, `40`, or `429` failure returns generic `contact_support`;
+6. permanent destination failures do not enqueue an automatic retry;
+7. temporary Pinterest provider failures follow the existing retry policy;
+8. Workstream A passes deployed acceptance while Workstream B remains unavailable.
+
+### 16.7 Workstream B — security and deployed acceptance
+
+1. AppSec approves the exact safe-fetch implementation and negative-test evidence before external URL staging is enabled;
+2. a valid external image is staged and publishes successfully through Pinterest;
+3. a `404` media URL fails during media preflight with `fix_media`;
+4. permanent media failures do not enqueue an automatic retry;
+5. temporary source and staging failures follow the existing retry policy;
+6. observability distinguishes customer media input failures from UniPost infrastructure failures and excludes the former from the infrastructure SLO numerator.
 
 ---
 
 ## 17. Acceptance criteria
 
-This PRD is complete when all of the following are true:
+### 17.1 Workstream A — Pinterest Publishing Hardening
 
 1. Every Pinterest publish performs authoritative board validation immediately before provider write.
 2. A board that is missing, deleted, cross-account, or cross-environment never reaches `POST /v5/pins` when preflight can identify the condition.
+3. Known Pinterest codes `2`, `29`, `40`, and HTTP `429` produce the documented structured classifications and next actions.
+4. Resource-level `403` responses no longer automatically imply that the Pinterest account must reconnect.
+5. Dashboard users select boards only from live account-scoped results and receive a usable zero-board path.
+6. API users receive `select_valid_target`, `reconnect_account`, or retry guidance as appropriate without parsing provider prose.
+7. Invalid board failures are terminal and do not consume further automatic attempts.
+8. Valid Pinterest image and video publishing behavior remains compatible with the existing request contract.
+9. Board ownership fallback is bounded to 8 pages/2,000 boards, cached by account and environment, and fails temporarily when it cannot prove writability.
+10. Sandbox-to-Production cutover cannot dispatch a scheduled post using a board ID selected in the old environment.
+11. Workstream A is accepted and may ship independently of Workstream B.
+
+### 17.2 Workstream B — Secure Remote Media Fetcher and Pinterest adoption
+
+1. Arbitrary external URL staging cannot ship until the safe fetcher passes AppSec review and negative tests for private networks, IPv6, metadata endpoints, redirects, DNS rebinding, peer pinning, timeouts, and streaming size limits.
+2. The safe fetcher exposes no Pinterest-specific board, provider-code, retry, or customer-copy logic.
 3. Every external Pinterest `media_url` is either validated and staged on a UniPost-controlled publishing URL or rejected before provider write.
-4. Known Pinterest codes `2`, `29`, `40`, and HTTP `429` produce the documented structured classifications and next actions.
-5. Resource-level `403` responses no longer automatically imply that the Pinterest account must reconnect.
-6. Dashboard users select boards only from live account-scoped results and receive a usable zero-board path.
-7. API users receive `select_valid_target`, `fix_media`, `reconnect_account`, or retry guidance as appropriate without parsing provider prose.
-8. Invalid board and invalid media failures are terminal and do not consume further automatic attempts.
-9. Valid Pinterest image and video publishing behavior remains compatible with the existing request contract.
-10. Logs and public responses contain no credentials or unsafe media URLs.
-11. Board ownership fallback is bounded to 8 pages/2,000 boards, cached by account and environment, and fails temporarily when it cannot prove writability.
-12. Sandbox-to-Production cutover cannot dispatch a scheduled post using a board ID selected in the old environment.
-13. Arbitrary external URL staging cannot ship until the safe fetcher passes AppSec review and negative tests for private networks, IPv6, metadata endpoints, redirects, DNS rebinding, peer pinning, timeouts, and streaming size limits.
-14. Customer-supplied dead media retains the v1 `error_source=unipost` contract but is separately attributed in telemetry and reliability metrics.
+4. Invalid media failures are terminal; temporary source or storage failures follow the existing retry policy.
+5. Pinterest API users receive `fix_media` or retry guidance without parsing provider prose.
+6. Customer-supplied dead media retains the v1 `error_source=unipost` contract but is separately attributed in telemetry and reliability metrics.
+7. Logs and public responses contain no credentials or unsafe media URLs.
+
+The full PRD outcome is complete only when both workstreams meet their respective acceptance criteria. Workstream A completion must be reported separately and must not imply that Workstream B is available.
 
 ---
 
 ## 18. Implementation surfaces
 
-The implementation plan is expected to touch these existing areas without requiring a new publishing architecture:
+### 18.1 Workstream A — Pinterest Publishing Hardening
+
+The Pinterest implementation plan is expected to touch these areas without requiring a new publishing architecture:
 
 - `api/internal/platform/pinterest.go`
   - structured provider errors;
   - direct board lookup plus bounded, cached owned-board fallback;
   - environment-aware destination preflight;
-  - integration with approved media staging behavior;
-- a shared backend safe-fetch module, location chosen during implementation design
-  - SSRF, redirect, DNS rebinding, address pinning, timeout, MIME, and streaming-size enforcement;
-  - security tests reusable by any future server-side remote ingestion;
-- `api/internal/storage/r2.go`
-  - must not expose the current unhardened `UploadFromURL` path to arbitrary Pinterest URLs;
-  - may migrate to the safe-fetch abstraction only after its security gate passes;
 - `api/internal/platform/validate.go`
   - retain local syntax and capability validation;
 - `api/internal/handler/social_posts.go`
   - remain platform-agnostic;
-  - persist typed adapter failure stages only if the current error interface cannot carry `destination_preflight` and `media_preflight` cleanly;
+  - persist typed adapter failure stages only if the current error interface cannot carry `destination_preflight` cleanly;
 - `api/internal/handler/pinterest_boards.go`
   - distinguish token, scope, and resource errors;
 - `api/internal/postfailures`
@@ -766,24 +830,39 @@ The implementation plan is expected to touch these existing areas without requir
   - live selection, zero-board state, and board creation flow;
 - Dashboard post-result error presentation;
 - public API documentation and SDK error examples;
-- backend, Dashboard, and deployed regression coverage.
+- Pinterest backend, Dashboard, and deployed regression coverage.
 
 Pinterest-specific preflight belongs in the Pinterest adapter rather than a Pinterest branch in the generic social-post handler. The implementation plan must identify the smallest cohesive diff across these surfaces and must not include unrelated platform refactoring.
 
+### 18.2 Workstream B — Secure Remote Media Fetcher
+
+The platform dependency implementation plan is expected to touch:
+
+- a shared backend safe-fetch module, location chosen during implementation design
+  - one provider-neutral typed interface;
+  - SSRF, redirect, DNS rebinding, address pinning, timeout, MIME, and streaming-size enforcement;
+  - negative security tests reusable by any future server-side remote-ingestion consumer;
+- `api/internal/storage/r2.go`
+  - accept verified bytes/streams from the safe-fetch path;
+  - never expose the current unhardened `UploadFromURL` path to arbitrary customer URLs;
+- `api/internal/platform/pinterest.go`
+  - call the approved safe-fetch/storage interface after destination preflight;
+  - map provider-neutral fetch failures into Pinterest's media failure contract;
+- media observability and deployed Pinterest integration coverage.
+
+Workstream B must remain narrow: it provides safe retrieval and Pinterest adoption, not a new general media-processing service.
+
 ---
 
-## 19. Release requirements
+## 19. Implementation sequence and completion reporting
 
-Follow the normal UniPost task-branch flow:
+Execute the work in this order:
 
-1. implement as ordered, focused changes: error normalization; bounded destination preflight/environment metadata; then safe fetch and media staging;
-2. keep arbitrary external URL staging disabled until AppSec has approved the exact safe-fetch implementation and its negative test evidence;
-3. work only on the conversation-owned `dev-<task-slug>` branch and worktree;
-4. run backend tests for the changed API surface, including the complete board-boundary and safe-fetch security suites for the relevant phase;
-5. run Dashboard build and relevant regression tests for Dashboard changes;
-6. push only the task branch and open a Draft PR to `dev`;
-7. complete Railway PR Environment and Vercel Preview Acceptance on the exact head SHA;
-8. merge to `dev` only after every required check, security gate, and deployed acceptance applicable to that phase passes;
-9. verify the official development environment after merge.
+1. **A1 — Pinterest error normalization:** structured provider errors and correct `403`/reconnect semantics.
+2. **A2 — Pinterest destination hardening:** bounded board preflight, environment metadata, Dashboard behavior, retries, and observability.
+3. **A checkpoint acceptance:** complete local, Preview regression, and browser acceptance for the exact Workstream A checkpoint SHA, and preserve the evidence before adding Workstream B commits. Do not report Workstream A deployed or complete unless it is merged and verified as a separate task.
+4. **B1 — Secure Remote Media Fetcher:** provider-neutral interface, network controls, streaming bounds, storage handoff, negative security tests, and AppSec review.
+5. **B2 — Pinterest media adoption:** call the approved interface, map typed media failures, and add Pinterest integration and deployed acceptance.
+6. **Full acceptance:** report the PRD complete only after both Workstream A and Workstream B pass their gates.
 
-Promotion to staging or production is outside this PRD's implementation task unless explicitly requested as a release.
+For execution as one task, keep A and B in separate focused commit groups on the same conversation-owned branch and Draft PR. The repository's normal task-branch, Preview Acceptance, and development verification rules govern delivery but are not product scope in this PRD. Promotion to staging or production requires a separate explicit release instruction.
