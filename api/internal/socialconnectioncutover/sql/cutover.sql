@@ -90,6 +90,7 @@ WITH source AS (
   SELECT
     sa.id AS account_id,
     sa.profile_id,
+    sa.connection_id,
     p.workspace_id,
     sa.platform,
     sa.connection_type,

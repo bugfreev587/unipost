@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -182,5 +185,111 @@ func TestPhysicalTargetAllowsThreadAndRejectsSibling(t *testing.T) {
 	}
 	if rows, err := finalize.RowsAffected(); err != nil || rows != 1 {
 		t.Fatalf("draining finalization affected (%d, %v), want (1, nil)", rows, err)
+	}
+}
+
+func TestPhysicalTargetSerializesConcurrentSameBindingThreadJobs(t *testing.T) {
+	databaseURL := os.Getenv("X_INBOX_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("X_INBOX_TEST_DATABASE_URL is not configured")
+	}
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.SetMaxOpenConns(32)
+	t.Cleanup(func() { _ = database.Close() })
+
+	ctx := context.Background()
+	requireEmptyPublicSchemaForTest(t, ctx, database)
+	applyMigrationRangeForTest(t, ctx, database, 1, 137)
+	t.Cleanup(func() {
+		if _, err := database.ExecContext(context.Background(), `
+			DROP SCHEMA public CASCADE;
+			CREATE SCHEMA public;
+		`); err != nil {
+			t.Errorf("reset disposable contention database: %v", err)
+		}
+	})
+
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO users (id, email) VALUES ('contention-user', 'contention@example.com');
+		INSERT INTO workspaces (id, user_id, name)
+		VALUES ('contention-workspace', 'contention-user', 'Contention');
+		INSERT INTO profiles (id, workspace_id, name)
+		VALUES ('contention-profile', 'contention-workspace', 'Contention');
+		INSERT INTO social_connections (
+			id, workspace_id, platform, provider_identity, access_token,
+			metadata, scope, status, connection_type
+		) VALUES (
+			'contention-connection', 'contention-workspace', 'twitter', 'contention-provider',
+			'token', '{}'::jsonb, ARRAY[]::text[], 'active', 'byo'
+		);
+		INSERT INTO social_accounts (
+			id, profile_id, platform, access_token, external_account_id,
+			metadata, scope, status, connection_type, connection_id
+		) VALUES (
+			'contention-account', 'contention-profile', 'twitter', 'token', 'contention-provider',
+			'{}'::jsonb, ARRAY[]::text[], 'active', 'byo', 'contention-connection'
+		);
+		INSERT INTO social_posts (id, workspace_id, status, source)
+		VALUES ('contention-post', 'contention-workspace', 'publishing', 'api');
+		INSERT INTO social_post_results (id, post_id, social_account_id, caption, status)
+		SELECT
+			'contention-result-' || ordinal,
+			'contention-post',
+			'contention-account',
+			'thread-' || ordinal,
+			'pending'
+		FROM generate_series(1, 100) AS ordinal;
+	`); err != nil {
+		t.Fatalf("seed contention fixture: %v", err)
+	}
+
+	deadlineCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	startedAt := time.Now()
+	errorsByJob := make(chan error, 100)
+	var workers sync.WaitGroup
+	for ordinal := 1; ordinal <= 100; ordinal++ {
+		ordinal := ordinal
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			_, insertErr := database.ExecContext(deadlineCtx, `
+				INSERT INTO post_delivery_jobs (
+					id, post_id, social_post_result_id, workspace_id, social_account_id,
+					connection_id, binding_version, platform, post_input_index,
+					kind, state, attempts, max_attempts
+				) VALUES (
+					$1, 'contention-post', $2, 'contention-workspace', 'contention-account',
+					'contention-connection', 1, 'twitter', $3,
+					'dispatch', 'pending', 0, 5
+				)
+			`, fmt.Sprintf("contention-job-%d", ordinal), fmt.Sprintf("contention-result-%d", ordinal), ordinal-1)
+			errorsByJob <- insertErr
+		}()
+	}
+	workers.Wait()
+	close(errorsByJob)
+	elapsed := time.Since(startedAt)
+	for insertErr := range errorsByJob {
+		if insertErr != nil {
+			t.Fatalf("concurrent same-binding insert failed after %s: %v", elapsed, insertErr)
+		}
+	}
+
+	var jobCount, targetCount int
+	if err := database.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM post_delivery_jobs WHERE post_id = 'contention-post'),
+			(SELECT COUNT(*) FROM social_post_physical_targets
+			 WHERE post_id = 'contention-post'
+			   AND physical_target_key = 'connection:contention-connection')
+	`).Scan(&jobCount, &targetCount); err != nil {
+		t.Fatal(err)
+	}
+	if jobCount != 100 || targetCount != 1 {
+		t.Fatalf("contention result after %s = %d jobs, %d targets; want 100 jobs, 1 target", elapsed, jobCount, targetCount)
 	}
 }
