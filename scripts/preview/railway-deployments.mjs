@@ -104,7 +104,10 @@ export function selectRailwayEnvironment(deployments, expectedSHA) {
 }
 
 export function selectRailwayPreviewService(environment) {
-  if (!environment || !/^unipost-pr-\d+$/.test(environment.name ?? "")) {
+  if (
+    !environment
+    || !/^(?:unipost-pr-\d+|pr-[a-f0-9]{6}-\d+)$/.test(environment.name ?? "")
+  ) {
     throw new PreviewTerminalError("Railway environment is not an ephemeral UniPost PR environment");
   }
 
