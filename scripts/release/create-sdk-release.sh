@@ -38,6 +38,8 @@ allowed_release_paths() {
 package.json
 package-lock.json
 src/http.ts
+tests/release-workflows.test.ts
+tests/users.test.ts
 dist/
 EOF
       ;;
@@ -48,11 +50,13 @@ README.md
 unipost/__init__.py
 unipost/http.py
 unipost/async_client.py
+tests/test_release.py
 EOF
       ;;
     sdk-go)
       cat <<'EOF'
 unipost/client.go
+unipost/release_test.go
 README.md
 EOF
       ;;
@@ -63,6 +67,7 @@ README.md
 pom.xml
 src/main/java/dev/unipost/UniPost.java
 src/main/java/dev/unipost/ApiHttpClient.java
+src/test/java/dev/unipost/InboxTest.java
 EOF
       ;;
   esac
@@ -248,17 +253,17 @@ for repo in "${REPOS[@]}"; do
   dir="${SDKS_ROOT}/${repo}"
   case "$repo" in
     sdk-js)
-      git -C "$dir" add package.json package-lock.json src/http.ts
+      git -C "$dir" add package.json package-lock.json src/http.ts tests/release-workflows.test.ts tests/users.test.ts
       git -C "$dir" add -f dist/
       ;;
     sdk-python)
-      git -C "$dir" add pyproject.toml README.md unipost/__init__.py unipost/http.py unipost/async_client.py
+      git -C "$dir" add pyproject.toml README.md unipost/__init__.py unipost/http.py unipost/async_client.py tests/test_release.py
       ;;
     sdk-go)
-      git -C "$dir" add unipost/client.go README.md
+      git -C "$dir" add unipost/client.go unipost/release_test.go README.md
       ;;
     sdk-java)
-      git -C "$dir" add build.gradle.kts README.md pom.xml src/main/java/dev/unipost/UniPost.java src/main/java/dev/unipost/ApiHttpClient.java
+      git -C "$dir" add build.gradle.kts README.md pom.xml src/main/java/dev/unipost/UniPost.java src/main/java/dev/unipost/ApiHttpClient.java src/test/java/dev/unipost/InboxTest.java
       ;;
   esac
   if [[ -z "$(git -C "$dir" diff --cached --name-only)" ]]; then

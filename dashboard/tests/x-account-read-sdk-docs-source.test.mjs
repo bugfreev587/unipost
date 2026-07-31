@@ -84,8 +84,9 @@ test("source validation can pin every SDK PR head and fail closed on missing X f
 });
 
 test("release safety requires the new SDK symbols and documents the 0.7.0 gates", async () => {
-  const [release, coverage, guide] = await Promise.all([
+  const [release, bump, coverage, guide] = await Promise.all([
     source("scripts/release/create-sdk-release.sh"),
+    source("scripts/release/bump-sdk-version.sh"),
     source("docs/sdk-api-coverage-matrix.md"),
     source("docs/sdk-release.md"),
   ]);
@@ -118,6 +119,25 @@ test("release safety requires the new SDK symbols and documents the 0.7.0 gates"
   assert.match(guide, /TEST_X_ACCOUNT_ID/);
   assert.match(guide, /TEST_EXTERNAL_USER_ID/);
   assert.match(guide, /github\.com\/unipost-dev\/sdk-go/);
+
+  for (const versionContractPath of [
+    "tests/release-workflows.test.ts",
+    "tests/users.test.ts",
+    "tests/test_release.py",
+    "unipost/release_test.go",
+    "src/test/java/dev/unipost/InboxTest.java",
+  ]) {
+    assert.match(
+      bump,
+      new RegExp(versionContractPath.replace(/[./]/g, "\\$&")),
+      `version bump must update ${versionContractPath}`,
+    );
+    assert.match(
+      release,
+      new RegExp(versionContractPath.replace(/[./]/g, "\\$&")),
+      `release commit must include ${versionContractPath}`,
+    );
+  }
 });
 
 test("X Credits reference shows complete 0.7.0 SDK envelopes for allowance and events", async () => {
