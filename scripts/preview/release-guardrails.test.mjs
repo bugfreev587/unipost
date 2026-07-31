@@ -14,12 +14,12 @@ const postgresTestsByPackage = {
     "TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup",
     "TestMigrationGatePostgresDisposablePreviewWithExistingTableStillRequiresBackup",
     "TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup",
-    "TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues138",
+    "TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues139",
     "TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged",
     "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
     "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
     "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
-    "TestRequireCurrentSchemaRejects124AndAccepts138",
+    "TestRequireCurrentSchemaRejects124AndAccepts139",
     "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
     "TestMigration133UpgradeAndGuardedDown",
     "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
@@ -63,6 +63,7 @@ const postgresTestsByPackage = {
     "TestCancelDeliveryJobTerminalResultAndPostCommitRetention",
     "TestRestrictedFinalizationPublishesParentTerminalEventExactlyOnce",
     "TestScheduledQuotaSnapshotPostgresCountsOnlyAdmissionAllowedTargets",
+    "TestXReadExposureRecoveryPurposeAndConcurrentSettlementPostgres",
     "TestClaimScheduledPostDoesNotDoubleCountOwnQuotaReservation",
     "TestUpdateScheduledPostEnforcesFreeQuotaDeltaAtomically",
     "TestConcurrentFreeScheduledCreatesSerializeQuotaAdmission",
@@ -337,8 +338,8 @@ test("publishing restriction CI guard rejects semantic workflow mutations", asyn
       "test_selector='(?:",
     ),
     "stale schema selector": (source) => source.replaceAll(
+      "TestRequireCurrentSchemaRejects124AndAccepts139",
       "TestRequireCurrentSchemaRejects124AndAccepts138",
-      "TestRequireCurrentSchemaRejects124AndAccepts137",
     ),
     "missing request events database URL": (source) => source.replace(
       "      REQUEST_EVENTS_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable\n",
@@ -503,7 +504,16 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   const previewTest = await read("dashboard/tests/regression/preview-environment.spec.ts");
   assert.doesNotMatch(previewTest, /shareableURL/);
   assert.match(previewTest, /x-vercel-protection-bypass/);
-  assert.match(previewTest, /x-vercel-set-bypass-cookie/);
+  assert.doesNotMatch(
+    previewTest,
+    /x-vercel-set-bypass-cookie/,
+    "Preview API requests must not start Vercel's same-path bypass-cookie redirect handshake",
+  );
+  assert.match(
+    previewTest,
+    /establishPreviewBypassCookie/,
+    "browser navigation must establish the bypass cookie with the redirect-safe shared helper",
+  );
   assert.match(
     previewTest,
     /VERCEL_AUTOMATION_BYPASS_SECRET\?\.trim\(\)/,

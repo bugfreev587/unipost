@@ -17,12 +17,14 @@ The Admin UI uses these semantics:
 
 The frontend may hide customer UI using `GET /v1/me/features` or `GET /v1/public/features`, but sensitive behavior must remain backend-enforced.
 
+The X Profile and authored-post history OpenAPI routes are not feature-gated. They use `x_credits_billing_v1` only for customer accounting: when enabled on a UniPost-managed X account, the backend preauthorizes the full estimate and denies insufficient balances before calling X; when disabled, the same request runs with zero customer charge. Workspace-owned X app connections always bypass UniPost Credits with `bypass_reason=customer_x_app`.
+
 ## Registered flags
 
 | Key | Owner area | Default | OFF behavior | Rollback action | Third-party dependency |
 |---|---|---:|---|---|---|
 | `x_dms_v1` | X Inbox | OFF | Regular workspaces cannot list, sync, or send `x_dm`; DM-only missing scopes do not require reconnect. X comments and publishing remain available. | Turn OFF in Admin; the backend stops DM access and removes any stale DM delivery intent. | X OAuth 2.0 supports direct DM reads/writes, but private Activity subscription creation is not production-ready. |
-| `x_credits_billing_v1` | Billing | OFF | Managed X calls do not count against or block on the customer monthly X Credits balance. The independent 20 X publishes/account/day limit and internal inbound cost-safety cap remain active. | Turn OFF in Admin; customer monthly accounting and UI stop immediately while safety accounting continues. | X pay-per-use pricing and UniPost cost reconciliation. |
+| `x_credits_billing_v1` | Billing | OFF | Managed X calls, including connected-account Profile and authored-post history reads, continue to execute but do not count against or block on the customer monthly X Credits balance. Credits receipts record `accounting_enabled=false` with `bypass_reason=feature_disabled`. The allowance snapshot and event-ledger endpoints remain unavailable to regular workspaces. The independent 20 X publishes/account/day limit and internal inbound cost-safety cap remain active. | Turn OFF in Admin; customer monthly accounting, preauthorization denials, allowance/event APIs, and UI stop immediately while safety accounting continues. | X pay-per-use pricing and UniPost cost reconciliation. |
 | `observability_reads_v2` | API / Admin Observability | OFF and activation-locked. | Logs and API Metrics use their compatible legacy read projections. Admin Errors remains on its contained metadata-list/bounded-detail path. Canonical and legacy writers remain active and are never gated by this flag. | It cannot be enabled while locked. After a future SDK-compatible release, turn OFF on the Admin feature-flags page: HTTP reads return to legacy on their next request, and every open or new Logs WebSocket uses the legacy projection within 1.5 seconds without reconnecting. | None. |
 
 ## Reconnect behavior

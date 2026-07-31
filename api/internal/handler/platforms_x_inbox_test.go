@@ -200,9 +200,13 @@ func invokeXAccountCapabilitiesWithFlags(
 }
 
 type xCapabilityTestDB struct {
-	planID  string
-	appMode string
-	scopes  []string
+	planID           string
+	appMode          string
+	scopes           []string
+	externalUser     string
+	refreshToken     string
+	allowedWorkspace string
+	lastQueryArgs    []any
 }
 
 func (f *xCapabilityTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -213,10 +217,14 @@ func (f *xCapabilityTestDB) Query(context.Context, string, ...interface{}) (pgx.
 	return nil, pgx.ErrNoRows
 }
 
-func (f *xCapabilityTestDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+func (f *xCapabilityTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
 	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
-		return xCapabilityAccountRow{scopes: f.scopes, appMode: f.appMode}
+		f.lastQueryArgs = append([]any(nil), args...)
+		if f.allowedWorkspace != "" && (len(args) < 2 || args[1] != f.allowedWorkspace) {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		return xCapabilityAccountRow{scopes: f.scopes, appMode: f.appMode, externalUser: f.externalUser, refreshToken: f.refreshToken}
 	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		return scanRow{values: []any{
@@ -239,17 +247,19 @@ func (f *xCapabilityTestDB) QueryRow(_ context.Context, query string, _ ...inter
 }
 
 type xCapabilityAccountRow struct {
-	scopes  []string
-	appMode string
+	scopes       []string
+	appMode      string
+	externalUser string
+	refreshToken string
 }
 
 func (r xCapabilityAccountRow) Scan(dest ...any) error {
 	values := []any{
-		"sa_1", "pr_1", "twitter", "encrypted-access", pgtype.Text{},
+		"sa_1", "pr_1", "twitter", "encrypted-access", pgtype.Text{String: r.refreshToken, Valid: r.refreshToken != ""},
 		pgtype.Timestamptz{}, "x-user-1", pgtype.Text{String: "UniPost", Valid: true},
 		pgtype.Text{}, pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		pgtype.Timestamptz{}, []byte(`{}`), r.scopes, "active", "byo",
-		pgtype.Text{}, pgtype.Text{}, pgtype.Text{}, pgtype.Timestamptz{},
+		pgtype.Text{}, pgtype.Text{String: r.externalUser, Valid: r.externalUser != ""}, pgtype.Text{}, pgtype.Timestamptz{},
 	}
 	values = append(values,
 		pgtype.Text{String: r.appMode, Valid: r.appMode != ""},
@@ -258,4 +268,66 @@ func (r xCapabilityAccountRow) Scan(dest ...any) error {
 		"active",
 	)
 	return scanRow{values: values}.Scan(dest...)
+}
+
+func TestXAccountReadCapabilitiesUseCreditsFlagAndManagedUserSelector(t *testing.T) {
+	store := &xCapabilityTestDB{
+		planID: "basic", appMode: "unipost_managed_app",
+		scopes:       []string{"tweet.read", "users.read", "offline.access"},
+		externalUser: "managed_1", refreshToken: "encrypted-refresh",
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/accounts/sa_1/capabilities?external_user_id=managed_1", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "sa_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	NewPlatformHandler(db.New(store)).SetFeatureFlags(platformFeatureFlags(false)).GetAccountCapabilities(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data struct {
+			SchemaVersion string `json:"schema_version"`
+			Reads         struct {
+				Profile struct {
+					Authorized bool `json:"authorized"`
+					Credits    struct {
+						AccountingEnabled bool   `json:"accounting_enabled"`
+						BypassReason      string `json:"bypass_reason"`
+						Catalog           int64  `json:"catalog_credits_per_resource"`
+						Effective         int64  `json:"effective_credits_per_resource"`
+					} `json:"credits"`
+				} `json:"profile_read"`
+				Posts struct {
+					Min int `json:"min_page_size"`
+					Max int `json:"max_page_size"`
+				} `json:"own_post_history_read"`
+			} `json:"x_account_reads"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.SchemaVersion != "1.8" || !body.Data.Reads.Profile.Authorized ||
+		body.Data.Reads.Profile.Credits.AccountingEnabled ||
+		body.Data.Reads.Profile.Credits.BypassReason != "feature_disabled" ||
+		body.Data.Reads.Profile.Credits.Catalog != 10 || body.Data.Reads.Profile.Credits.Effective != 0 ||
+		body.Data.Reads.Posts.Min != 5 || body.Data.Reads.Posts.Max != 100 {
+		t.Fatalf("data=%+v", body.Data)
+	}
+}
+
+func TestXAccountReadCapabilitiesRejectMismatchedManagedUser(t *testing.T) {
+	store := &xCapabilityTestDB{planID: "basic", appMode: "unipost_managed_app", externalUser: "managed_1"}
+	req := httptest.NewRequest(http.MethodGet, "/v1/accounts/sa_1/capabilities?external_user_id=managed_2", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "sa_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	NewPlatformHandler(db.New(store)).SetFeatureFlags(platformFeatureFlags(false)).GetAccountCapabilities(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "ACCOUNT_ACCESS_DENIED") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
 }

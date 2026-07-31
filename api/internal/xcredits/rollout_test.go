@@ -131,3 +131,25 @@ func TestRolloutExposureOffReservesOnlySafetyCapacity(t *testing.T) {
 		t.Fatalf("request=%+v, want internal inbound limit", store.last)
 	}
 }
+
+func TestRolloutAccountReadOffPersistsZeroCustomerAccountingWithoutInboxCap(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	store := &rolloutExposureStore{fakeStore: newFakeStore("basic", now, now.AddDate(0, 1, 0))}
+	service := NewRolloutService(NewService(store), rolloutEvaluator(false))
+
+	reservation, err := service.ReserveExposure(context.Background(), ExposureReservationRequest{
+		WorkspaceID: "ws_1", SocialAccountID: "sa_1", ExternalUserID: "managed_1",
+		AppMode: "unipost_managed_app", OperationKey: "user.read",
+		Purpose: ExposurePurposeAccountProfile, IdempotencyKey: "hashed-key",
+		RequestedResources: 1, MinimumResources: 1, UnitsPerResource: 10, Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.last.AccountingEnabled || store.last.InboundDailyLimit != 0 {
+		t.Fatalf("request=%+v, want zero customer accounting and no Inbox cap", store.last)
+	}
+	if reservation.ID == "" {
+		t.Fatal("bypassed account read must persist an exposure")
+	}
+}

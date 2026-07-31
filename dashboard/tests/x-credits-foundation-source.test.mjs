@@ -25,7 +25,7 @@ test("pricing explains included X Credits with the generated catalog", async () 
   assert.match(pricing, /Inbox not included/);
   assert.match(pricing, /phased X Inbox support/);
   assert.match(pricing, /pr-xcredits-cards/);
-  assert.doesNotMatch(pricing, /X_CREDIT_PLANS\.filter/);
+  assert.match(pricing, /X_CREDIT_PLANS\.filter\(\(plan\) => isPlanVisibleToNewUsers\(plan\.id\)\)/);
 
   for (const expected of [
     /"id": "basic"[\s\S]*"normal_posts": 266[\s\S]*"url_posts": 20[\s\S]*"comment_interactions": 200[\s\S]*"dm_interactions": 160/,
@@ -82,6 +82,10 @@ test("X Credits reference and guide link to each other and all discovery surface
 
   assert.match(reference, /\/docs\/guides\/x\/credits/);
   assert.match(reference, /\/docs\/pricing/);
+  assert.match(reference, /\/v1\/billing\/x-credits\/events/);
+  assert.match(reference, /monthly_finalized/);
+  assert.match(reference, /monthly_pending/);
+  assert.match(reference, /monthly_effective/);
   assert.match(guide, /\/docs\/api\/x-credits/);
   assert.match(guide, /\/docs\/api\/posts\/create/);
   assert.match(guide, /\/docs\/api\/posts\/validate/);

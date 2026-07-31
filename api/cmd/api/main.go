@@ -61,6 +61,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/trials"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
+	"github.com/xiaoboyu/unipost-api/internal/xaccountreads"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
@@ -762,6 +763,48 @@ func main() {
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker).
 		SetXTokenRefresher(xTokenRefresher).
 		SetConnectionStore(socialConnectionStore)
+	xAccountReadStore := xaccountreads.NewPostgresStore(pool)
+	xAccountReadCursorKey := strings.TrimSpace(os.Getenv("X_ACCOUNT_READ_CURSOR_KEY"))
+	if xAccountReadCursorKey == "" {
+		xAccountReadCursorKey = encryptionKey
+	}
+	if len(xAccountReadCursorKey) < 16 {
+		slog.Error("X_ACCOUNT_READ_CURSOR_KEY must contain at least 16 bytes")
+		os.Exit(1)
+	}
+	var xAccountReadPreviousCursorKeys [][]byte
+	for _, raw := range strings.Split(os.Getenv("X_ACCOUNT_READ_CURSOR_PREVIOUS_KEYS"), ",") {
+		key := strings.TrimSpace(raw)
+		if key == "" {
+			continue
+		}
+		if len(key) < 16 {
+			slog.Error("X_ACCOUNT_READ_CURSOR_PREVIOUS_KEYS contains a key shorter than 16 bytes")
+			os.Exit(1)
+		}
+		xAccountReadPreviousCursorKeys = append(xAccountReadPreviousCursorKeys, []byte(key))
+	}
+	xAccountReadService, err := xaccountreads.NewServiceWithSecrets(
+		xAccountReadStore,
+		xCreditsService,
+		platform.NewTwitterAdapter(),
+		encryptor,
+		[]byte(encryptionKey),
+		[]byte(xAccountReadCursorKey),
+		xAccountReadPreviousCursorKeys...,
+	)
+	if err != nil {
+		slog.Error("failed to initialize X account-read cursor codec", "error", err)
+		os.Exit(1)
+	}
+	xAccountReadsHandler := handler.NewXAccountReadsHandler(
+		queries, encryptor, xAccountReadService, xTokenRefresher,
+	)
+	xAccountReadService.SetTokenResolver(xAccountReadsHandler)
+	if processMode == processModeAPI {
+		xAccountReadRecoveryWorker := worker.NewXAccountReadRecoveryWorker(xAccountReadService)
+		go xAccountReadRecoveryWorker.Start(workerCtx)
+	}
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).
 		SetIntegrationLogger(integrationLogger).
 		SetConnectionStore(socialConnectionStore)
@@ -1166,6 +1209,8 @@ func main() {
 		r.Delete("/v1/accounts/{id}", socialAccountHandler.Disconnect)
 		r.Post("/v1/accounts/{id}/dismiss", socialAccountHandler.Dismiss)
 		r.Get("/v1/accounts/{id}/capabilities", platformHandler.GetAccountCapabilities)
+		r.Get("/v1/accounts/{id}/profile", xAccountReadsHandler.Profile)
+		r.Get("/v1/accounts/{id}/posts", xAccountReadsHandler.Posts)
 		r.Get("/v1/accounts/{id}/health", socialAccountHandler.AccountHealth)
 		r.Get("/v1/accounts/{id}/metrics", socialAccountHandler.AccountMetrics)
 		r.Get("/v1/accounts/{id}/instagram/profile", socialAccountHandler.InstagramProfile)
@@ -1317,6 +1362,7 @@ func main() {
 		r.Get("/v1/billing", billingHandler.GetBilling)
 		r.Get("/v1/billing/trials", billingHandler.ListTrialHistory)
 		r.Get("/v1/billing/x-credits", billingHandler.GetXCredits)
+		r.Get("/v1/billing/x-credits/events", billingHandler.ListXCreditsEvents)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/billing/x-credits/inbound-cap", billingHandler.UpdateXInboundCap)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/checkout", billingHandler.CreateCheckout)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/plan-change-session", billingHandler.CreatePlanChangeSession)

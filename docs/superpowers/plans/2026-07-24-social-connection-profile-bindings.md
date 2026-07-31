@@ -24,7 +24,7 @@ The four accepted implementation notes are fixed as follows:
 ### Task 1: Add the compatible connection schema and classified backfill
 
 **Files:**
-- Create: `api/internal/db/migrations/135_social_connections_and_profile_bindings.sql`
+- Create: `api/internal/db/migrations/136_social_connections_and_profile_bindings.sql`
 - Create: `api/internal/db/social_connections_migration_contract_test.go`
 - Modify: `api/internal/db/x_inbox_migration_fixture_test.go`
 
@@ -34,7 +34,7 @@ Create tests that load migration 121 and assert these exact contracts:
 
 ```go
 func TestSocialConnectionsMigrationContract(t *testing.T) {
-	body, err := os.ReadFile("migrations/135_social_connections_and_profile_bindings.sql")
+	body, err := os.ReadFile("migrations/136_social_connections_and_profile_bindings.sql")
 	if err != nil { t.Fatal(err) }
 	sql := compactSocialConnectionSQL(string(body))
 
@@ -56,7 +56,7 @@ func TestSocialConnectionsMigrationContract(t *testing.T) {
 }
 
 func TestSocialConnectionsMigrationNeverMergesManagedOwners(t *testing.T) {
-	body, _ := os.ReadFile("migrations/135_social_connections_and_profile_bindings.sql")
+	body, _ := os.ReadFile("migrations/136_social_connections_and_profile_bindings.sql")
 	sql := compactSocialConnectionSQL(string(body))
 	if !strings.Contains(sql, "count(distinct external_user_id) filter") {
 		t.Fatal("backfill must classify cross-managed-owner groups")
@@ -461,7 +461,7 @@ Commit: `feat(api): reject duplicate physical publish targets`
 ### Task 7: Serialize and verify delivery by physical connection
 
 **Files:**
-- Create: `api/internal/db/migrations/136_delivery_job_connection_snapshot.sql`
+- Create: `api/internal/db/migrations/137_delivery_job_connection_snapshot.sql`
 - Modify: `api/internal/db/queries/post_delivery_jobs.sql`
 - Modify generated: `api/internal/db/post_delivery_jobs.sql.go`
 - Modify generated: `api/internal/db/models.go`

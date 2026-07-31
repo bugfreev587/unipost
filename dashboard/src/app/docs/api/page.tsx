@@ -39,6 +39,8 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
       { label: "OAuth connect", method: "POST", path: "/v1/oauth/connect", href: "/docs/api/accounts/oauth-connect", description: "Start an OAuth flow from API clients." },
       { label: "Disconnect account", method: "DELETE", path: "/v1/accounts/{id}", href: "/docs/api/accounts/disconnect", description: "Disconnect a physical account and all Profile bindings." },
       { label: "Account capabilities", method: "GET", path: "/v1/accounts/{id}/capabilities", href: "/docs/api/accounts/capabilities", description: "Inspect publish and media support." },
+      { label: "X account profile", method: "GET", path: "/v1/accounts/{id}/profile", href: "/docs/api/accounts/profile", description: "Read the live profile for a connected X account." },
+      { label: "X authored posts", method: "GET", path: "/v1/accounts/{id}/posts", href: "/docs/api/accounts/posts", description: "Read a cursor-paginated page of posts authored by a connected X account." },
       { label: "Account health", method: "GET", path: "/v1/accounts/{id}/health", href: "/docs/api/accounts/health", description: "Read connection health and reconnect state." },
       { label: "Account metrics", method: "GET", path: "/v1/accounts/{id}/metrics", href: "/docs/api/accounts/metrics", description: "Read platform account metrics." },
       { label: "TikTok creator info", method: "GET", path: "/v1/accounts/{id}/tiktok/creator-info", href: "/docs/api/accounts/tiktok-creator-info", description: "Fetch TikTok publishing limits." },
@@ -99,6 +101,7 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
     description: "Inspect plan billing state and the bounded managed-X allowance used by publishing and phased Inbox operations.",
     endpoints: [
       { label: "X Credits allowance", method: "GET", path: "/v1/billing/x-credits", href: "/docs/api/x-credits", description: "Read included, used, and remaining managed-X capacity plus reset and inbound limits." },
+      { label: "X Credits events", method: "GET", path: "/v1/billing/x-credits/events", href: "/docs/api/x-credits", description: "Reconcile reservations, charges, releases, and bypassed operations without customer content." },
     ],
   },
   {

@@ -30,6 +30,13 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "x_inbox.delivery_status", type: "string", description: "pending, active, paused_cap, paused_allowance, paused_plan, or error." },
   { name: "x_inbox.app_mode", type: "string", description: "unipost_managed_app, workspace_x_app, or legacy_unknown." },
   { name: "x_inbox.missing_app_credentials", type: "string[]", description: "For workspace_x_app, any missing client_id, client_secret, app_bearer_token, or consumer_secret." },
+  { name: "x_account_reads.profile_read", type: "object", description: "Live X profile-read support, authorization, reconnect state, and Credits policy." },
+  { name: "x_account_reads.own_post_history_read", type: "object", description: "Authored-post history support, authorization, page-size range, and Credits policy." },
+  { name: "x_account_reads.*.supported", type: "boolean", description: "Whether UniPost implements this account read." },
+  { name: "x_account_reads.*.authorized", type: "boolean", description: "Whether the connected account currently has active tokens, app identity, and required scopes." },
+  { name: "x_account_reads.*.reconnect_required", type: "boolean", description: "Whether X OAuth must be repeated before this read can run." },
+  { name: "x_account_reads.*.credits.accounting_enabled", type: "boolean", description: "True only for a UniPost-managed X account while x_credits_billing_v1 is enabled." },
+  { name: "x_account_reads.*.credits.bypass_reason", type: "string", description: "feature_disabled while the existing billing flag is off, or customer_x_app for workspace-owned X credentials." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
@@ -108,7 +115,7 @@ const RESPONSE_SNIPPETS = [
     label: "200",
     code: `{
   "data": {
-    "schema_version": "1.7",
+    "schema_version": "1.8",
     "account_id": "sa_x_123",
     "platform": "twitter",
     "capability": {
@@ -135,6 +142,34 @@ const RESPONSE_SNIPPETS = [
       "delivery_status": "pending",
       "app_mode": "unipost_managed_app",
       "missing_app_credentials": []
+    },
+    "x_account_reads": {
+      "profile_read": {
+        "supported": true,
+        "authorized": true,
+        "reconnect_required": false,
+        "credits": {
+          "accounting_enabled": true,
+          "billing_mode": "unipost_managed_app",
+          "operation": "user.read",
+          "catalog_credits_per_resource": 10,
+          "effective_credits_per_resource": 10
+        }
+      },
+      "own_post_history_read": {
+        "supported": true,
+        "authorized": true,
+        "reconnect_required": false,
+        "min_page_size": 5,
+        "max_page_size": 100,
+        "credits": {
+          "accounting_enabled": true,
+          "billing_mode": "unipost_managed_app",
+          "operation": "post.read",
+          "catalog_credits_per_resource": 5,
+          "effective_credits_per_resource": 5
+        }
+      }
     }
   }
 }`,
@@ -168,7 +203,7 @@ export default function AccountCapabilitiesPage() {
           label: "200",
           code: `{
   "data": {
-    "schema_version": "1.7",
+    "schema_version": "1.8",
     "account_id": "sa_x_123",
     "platform": "twitter",
     "x_inbox": {
@@ -177,6 +212,36 @@ export default function AccountCapabilitiesPage() {
       "delivery_status": "active",
       "app_mode": "unipost_managed_app",
       "missing_app_credentials": []
+    },
+    "x_account_reads": {
+      "profile_read": {
+        "supported": true,
+        "authorized": true,
+        "reconnect_required": false,
+        "credits": {
+          "accounting_enabled": false,
+          "billing_mode": "unipost_managed_app",
+          "bypass_reason": "feature_disabled",
+          "operation": "user.read",
+          "catalog_credits_per_resource": 10,
+          "effective_credits_per_resource": 0
+        }
+      },
+      "own_post_history_read": {
+        "supported": true,
+        "authorized": true,
+        "reconnect_required": false,
+        "min_page_size": 5,
+        "max_page_size": 100,
+        "credits": {
+          "accounting_enabled": false,
+          "billing_mode": "unipost_managed_app",
+          "bypass_reason": "feature_disabled",
+          "operation": "post.read",
+          "catalog_credits_per_resource": 5,
+          "effective_credits_per_resource": 0
+        }
+      }
     }
   }
 }`,
@@ -193,7 +258,7 @@ export default function AccountCapabilitiesPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Get account capabilities"
-      description="Returns the publishing capability map for the platform behind one connected account. Use it to drive client-side validation or UI affordances before you call create post."
+      description="Returns publishing capabilities plus X account-read authorization and Credits policy. The existing x_credits_billing_v1 flag changes accounting_enabled and bypass_reason; it does not hide the Profile or Posts APIs. Workspace-owned X apps report customer_x_app and bypass UniPost Credits."
       method="GET"
       path="/v1/accounts/:account_id/capabilities"
       requestSections={[

@@ -47,7 +47,7 @@ package platform
 // in theory but mp4/mov are the only formats Meta and our docs both
 // recommend; avi was leftover from an earlier draft and never tested
 // end-to-end. Behavior tightening, not a schema change.
-const CapabilitiesSchemaVersion = "1.7"
+const CapabilitiesSchemaVersion = "1.8"
 
 // Capability is the full set of post-creation rules for one platform.
 // Clients hit GET /v1/platforms/capabilities to fetch the whole map.
