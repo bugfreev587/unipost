@@ -174,7 +174,9 @@ Alternatives considered:
 2. **Provider-call-only with better error mapping:** smaller implementation, but still spends a Pinterest write request on a known-invalid target and cannot detect dead media deterministically.
 3. **Real-time preflight plus staging:** one additional board read and possible media transfer, but provides the strongest correctness and the clearest failure contract.
 
-Option 3 is selected because publishing correctness is more important than avoiding one read request, and Pinterest's read and write rate-limit categories are separate.
+Option 3 is selected because publishing correctness is more important than avoiding one bounded read request, and Pinterest's read and write rate-limit categories are separate.
+
+The media-staging portion of Option 3 is security-gated. The current generic remote-upload implementation is not safe for arbitrary untrusted URLs: it follows redirects by default, does not reject private or reserved network destinations, does not defend against DNS rebinding, and reads the response without a streaming byte ceiling. It must not be reused for external `media_urls` until the safe-fetch requirements in section 15 pass AppSec review and negative security testing.
 
 ---
 
@@ -215,16 +217,29 @@ Before board preflight, use the same token refresh path used by publishing.
 
 ### 8.3 Board preflight
 
-Immediately before media staging, fetch the selected board using the active access token.
+Immediately before media staging, fetch the selected board using the active access token. Direct `GET /v5/boards/{board_id}` is the primary path; a board-list lookup is a bounded fallback, not the default request.
 
 The preflight must prove:
 
 1. the board exists in the active Pinterest environment;
 2. the board is visible to the operation user represented by the token;
-3. Pinterest reports enough ownership/access information to permit creation, or the board is present in the operation user's authoritative board list;
+3. Pinterest reports a documented ownership or writability signal that proves Pin creation is allowed, or the board is present in the operation user's authoritative owned-board list;
 4. the selected board ID exactly matches the submitted ID.
 
-If direct board lookup does not provide sufficient ownership fields, the adapter may compare the submitted ID against the complete paginated result of `GET /v5/boards`. The implementation must not treat numeric shape alone as proof of ownership.
+Visibility alone is not proof of writability. If direct board lookup succeeds but its response is ambiguous about ownership or write access, the adapter must compare the submitted ID against a cached, bounded traversal of the operation user's owned-board collection from `GET /v5/boards`. The implementation must not treat numeric shape, a successful direct read, or visibility of a shared board as proof of write access.
+
+The owned-board fallback must obey all of the following limits:
+
+- cache by social account ID and Pinterest environment;
+- use a short TTL of 60 seconds;
+- invalidate on board creation, account reconnect, account disconnect, or Pinterest environment change;
+- request the maximum supported page size, currently `250`;
+- stop after 8 pages or 2,000 distinct boards, whichever comes first;
+- stop immediately when the submitted board is found;
+- detect repeated bookmarks and duplicate-page loops;
+- if ownership remains ambiguous or the cap is reached before the collection is exhausted, fail with `temporary_platform_error` and `retry_later` rather than silently accepting or permanently rejecting the board.
+
+The 8-page/2,000-board ceiling is an explicit UniPost worker safety bound, not an assumption that provider pagination is finite. If legitimate supported accounts require a higher ceiling, the product limit, latency budget, implementation, and tests must be revised together before raising it.
 
 Board preflight outcomes:
 
@@ -236,19 +251,23 @@ Board preflight outcomes:
 | Token `401`, code `2` | `auth_token_invalid` | `2` | `reconnect_account` | No |
 | Pinterest `429` | `rate_limit` | provider code if present | `wait_and_retry` | Yes |
 | Pinterest timeout or 5xx during preflight | `temporary_platform_error` | provider code if present | `retry_later` | Yes |
+| Ownership is ambiguous or board-list traversal exceeds its safety cap | `temporary_platform_error` | provider code if present | `retry_later` | Yes |
 
 An invalid-board preflight must not call `POST /v5/pins`.
 
 ### 8.4 Environment isolation
 
-Board responses already expose `sandbox_mode`. This environment identity must remain attached to the board-selection state in Dashboard.
+Board responses already expose `sandbox_mode`. This environment identity must remain attached to the board-selection state in Dashboard and to the internal post metadata used by scheduled delivery.
 
 - Production publishing accepts only boards fetched or created through the Production Pinterest base URL.
 - Sandbox publishing accepts only boards fetched or created through the Sandbox base URL.
 - Dashboard clears the selected board when account or environment identity changes.
 - The worker remains authoritative and rejects cross-environment IDs even when a client bypasses Dashboard.
+- At request creation, the server stores an internal `pinterest_environment` marker with the selected destination. This is internal metadata, not a new public request field.
+- Before a runtime changes from Pinterest Sandbox to Production, operators must audit queued and scheduled Pinterest posts carrying the Sandbox marker. Those posts must be held and surfaced for board reselection or rejected with `select_valid_target`; board IDs must never be translated across environments.
+- Legacy queued rows without an environment marker receive live board preflight in the active environment and are never assumed to match it.
 
-No new public request field is required. The server knows the active Pinterest environment from runtime configuration.
+No new public request field is required. The server knows the active Pinterest environment from runtime configuration and records that identity when accepting the post.
 
 ### 8.5 Media validation and staging
 
@@ -260,10 +279,12 @@ For `media_ids` already backed by UniPost-controlled storage:
 - enforce Pinterest media type and size limits;
 - do not create a duplicate staged object unless the existing URL is unsuitable for provider fetch.
 
-For external `media_urls`:
+For external `media_urls`, use a new hardened safe-fetch path. The current `UploadFromURL` behavior is not approved for arbitrary untrusted URLs and must not be extended for this flow until section 15's security gate passes.
 
-1. fetch through the existing server-side media ingestion controls;
-2. reject redirects to private, loopback, link-local, or otherwise prohibited network destinations;
+After the security gate passes:
+
+1. parse and fetch through the approved server-side safe-fetch abstraction;
+2. reject initial or redirected private, loopback, link-local, metadata-service, or otherwise prohibited network destinations;
 3. require a successful media response rather than relying on `HEAD` alone;
 4. verify the detected bytes and MIME type agree with a supported Pinterest image or video type;
 5. enforce maximum download size and existing Pinterest media limits;
@@ -389,6 +410,8 @@ The list response remains the authoritative source for selectable board IDs at r
   "error_temporality": "permanent"
 }
 ```
+
+For this v1 contract, `error_source=unipost` means UniPost detected and rejected the request before Pinterest dispatch; it does not assign fault or blame to UniPost. The existing enum reserves customer-originated attribution for a future contract change, so this Pinterest-specific PRD does not introduce `customer_request`. Internal events must additionally record `failure_reason=customer_media_unreachable` (or the corresponding normalized media reason) so product analytics and reliability reporting can distinguish customer input from UniPost infrastructure failures.
 
 Existing clients that ignore the newer structured fields continue to receive the established result object and HTTP behavior.
 
@@ -530,6 +553,7 @@ Each event should include safe identifiers and dimensions:
 - HTTP status;
 - Pinterest error code;
 - normalized reason;
+- normalized failure reason, including `customer_media_unreachable` for a dead customer-supplied URL;
 - failure stage;
 - retriable decision;
 - duration.
@@ -552,33 +576,61 @@ Operational metrics:
 - Pinterest publish success rate after preflight;
 - count of known Pinterest errors that incorrectly fall back to `contact_support`.
 
+Reliability metrics must segment `failure_stage=media_preflight` by normalized failure reason. Customer-input rejections such as `customer_media_unreachable` are reported as product-quality/input metrics and excluded from the numerator of UniPost infrastructure reliability SLOs, even though the v1 public contract uses `error_source=unipost` for pre-dispatch enforcement.
+
 ---
 
 ## 14. Backward compatibility and migration
 
 - No database migration is required solely for the public result shape because the existing failure model already stores error source, temporality, provider error, stage, provider code, retryability, and next action.
+- The implementation must first prove that the existing post/platform metadata persists `pinterest_environment` through scheduling. If it does not, a narrowly scoped internal schema migration is required; silently deriving the creation environment at dispatch is not acceptable.
 - Existing rows are not rewritten in bulk.
 - Legacy Pinterest failure strings may be re-derived through the compatibility classifier when read through internal tools.
 - Existing post requests remain valid.
 - Existing board-list and board-create endpoints remain unchanged.
 - Existing clients that only understand `platform_error` continue to receive a terminal failed result, but new failures use the more specific stable classification.
 - Scheduled Pinterest posts already waiting in the queue receive the new worker preflight when their delivery begins.
+- New posts record the internal Pinterest environment marker without changing the public request schema.
+- Legacy scheduled rows without the marker are handled by live preflight; they are not backfilled with an assumed environment.
 
 ---
 
 ## 15. Security and abuse controls
 
-Remote media staging must use the existing hardened server-side fetch path or add equivalent protections before launch:
+Remote media staging is a net-new security-sensitive capability. The current generic `UploadFromURL` path is not hardened for arbitrary URLs and must not be used as the implementation baseline without first extracting or replacing it with an approved safe-fetch abstraction.
 
-- deny private and local network destinations;
-- validate redirects at every hop;
-- enforce connection, response, and total-operation timeouts;
-- enforce download-size limits while streaming;
-- detect media type from bytes rather than trusting only the header or extension;
-- avoid returning fetched response bodies in public errors;
+The safe fetcher must:
+
+- accept only `http` and `https`, reject URL userinfo, and reject malformed or non-web schemes;
+- reject loopback, private, link-local, multicast, unspecified, reserved, and other non-public IPv4 and IPv6 destinations;
+- explicitly block common cloud metadata addresses and hostnames;
+- resolve the hostname before connection and reject the request if any returned A or AAAA record is prohibited;
+- connect through a custom dial path that pins a validated public IP and verifies the actual peer, while preserving TLS certificate and hostname verification for the original host, rather than resolving the hostname again through the default transport;
+- disable automatic redirect following and manually validate every `Location` hop;
+- re-resolve and reapply the full hostname/IP policy on every redirect, including cross-host redirects;
+- reject redirects to non-HTTP schemes, HTTPS-to-HTTP downgrades, redirect loops, and more than 5 hops;
+- prevent DNS rebinding between validation and connection and between redirect hops;
+- enforce connection, response-header, idle-read, and total-operation timeouts;
+- stream the response through a hard byte ceiling and terminate immediately when the configured maximum is exceeded; unbounded `io.ReadAll` is prohibited;
+- detect media type from a bounded byte sample and verify it against allowed Pinterest types rather than trusting the response header, extension, or query string;
+- redact query strings, credentials, response bodies, and unsafe redirect targets from public errors and routine logs;
 - clean staged objects through the existing lifecycle policy.
 
+AppSec review and negative security tests are a release-blocking gate for arbitrary external URL staging. The feature must not be enabled in Preview, development, or later environments until this gate passes. Board preflight and Pinterest error normalization may ship independently before media staging if their own acceptance gates pass.
+
 Board preflight must use only the connected account's decrypted token inside the trusted backend. Board identifiers are not secrets, but they must not be accepted as proof of ownership.
+
+### 15.1 Rollout and rollback decision
+
+This PRD does not add a feature flag or an environment-variable bypass. A fail-open preflight switch would silently restore invalid destination writes, while an unsafe media-staging switch would not substitute for the required security gate. Repository policy also requires an explicit product request before adding a feature flag.
+
+Risk is reduced through ordered, independently reversible delivery:
+
+1. ship structured Pinterest error normalization and correct `403` semantics;
+2. ship bounded board preflight and environment metadata;
+3. ship the safe fetcher and controlled media staging only after AppSec approval.
+
+Each phase must be a focused change that can be reverted and redeployed without disabling the already accepted earlier phases. A feature flag may be reconsidered only through an explicit product decision with a defined owner, production default, and rollback contract.
 
 ---
 
@@ -600,11 +652,19 @@ Board preflight must use only the connected account's decrypted token inside the
 ### 16.2 Adapter and handler tests
 
 - valid board preflight proceeds to create Pin;
+- direct board lookup is used before board-list fallback;
+- a visible board with no documented ownership/writability proof does not proceed on visibility alone;
 - board `404/code 40` prevents create Pin;
 - board `403/code 29` with otherwise valid token prevents create Pin without marking reconnect;
 - account `401/code 2` prevents create Pin and marks reconnect-required according to existing account policy;
 - paginated board-list fallback finds the submitted board;
+- board-list fallback uses the account-and-environment cache and invalidates it on board creation, reconnect, disconnect, and environment change;
+- repeated bookmarks, duplicate pages, more than 8 pages, or more than 2,000 boards stop traversal safely;
+- a traversal cap or unresolved ownership produces a retriable temporary failure, not a permanent false negative;
 - Sandbox and Production environment identity remains distinct;
+- new posts retain their Pinterest environment marker through scheduling and dispatch;
+- a Sandbox-marked post is held or rejected after a Production cutover and never reuses or translates the board ID;
+- legacy scheduled posts without a marker receive live preflight in the active environment;
 - board-list and board-create handlers distinguish token failure from resource-level denial.
 
 ### 16.3 Media tests
@@ -612,9 +672,16 @@ Board preflight must use only the connected account's decrypted token inside the
 - external image returning `200` and valid bytes is staged and published using the staged URL;
 - source `404` fails before create Pin;
 - redirect to a private address is rejected;
+- direct IPv4 and IPv6 loopback, private, link-local, multicast, unspecified, reserved, and metadata-service targets are rejected;
+- hostnames with mixed public and prohibited A/AAAA answers are rejected;
+- DNS rebinding between validation and connection cannot change the dialed destination;
+- the connected peer must match a validated pinned address;
+- every redirect hop repeats DNS and IP validation, including a public URL redirecting to a prohibited destination;
+- redirect loops, more than 5 redirects, URL userinfo, non-HTTP schemes, HTTPS-to-HTTP downgrades, and scheme-changing redirects to non-web protocols are rejected;
 - content-type/byte mismatch is rejected;
 - unsupported media type is rejected;
 - oversized media stops streaming at the configured limit;
+- the oversize path terminates without buffering the complete response;
 - temporary source 5xx/timeout is retriable;
 - temporary R2 failure is retriable;
 - UniPost-controlled media does not receive unnecessary duplicate staging.
@@ -626,6 +693,7 @@ Board preflight must use only the connected account's decrypted token inside the
 - creating a board refreshes and selects it;
 - switching accounts clears the prior board;
 - changing environment identity clears the prior board;
+- a Sandbox-to-Production environment transition requires board reselection before submission;
 - invalid-board failure renders board-selection guidance;
 - media-preflight failure renders media-replacement guidance;
 - token failure alone renders reconnect guidance.
@@ -641,7 +709,9 @@ In the isolated PR environment and then the official development environment:
 5. a `404` media URL fails during media preflight with `fix_media`;
 6. no known code `2`, `29`, `40`, or `429` failure returns generic `contact_support`;
 7. permanent failures do not enqueue an automatic retry;
-8. temporary provider and staging failures follow the existing retry policy.
+8. temporary provider and staging failures follow the existing retry policy;
+9. external URL staging remains disabled until AppSec review and the complete negative safe-fetch suite pass on the exact deployed commit;
+10. observability distinguishes customer media input failures from UniPost infrastructure failures and excludes the former from the infrastructure SLO numerator.
 
 ---
 
@@ -659,6 +729,10 @@ This PRD is complete when all of the following are true:
 8. Invalid board and invalid media failures are terminal and do not consume further automatic attempts.
 9. Valid Pinterest image and video publishing behavior remains compatible with the existing request contract.
 10. Logs and public responses contain no credentials or unsafe media URLs.
+11. Board ownership fallback is bounded to 8 pages/2,000 boards, cached by account and environment, and fails temporarily when it cannot prove writability.
+12. Sandbox-to-Production cutover cannot dispatch a scheduled post using a board ID selected in the old environment.
+13. Arbitrary external URL staging cannot ship until the safe fetcher passes AppSec review and negative tests for private networks, IPv6, metadata endpoints, redirects, DNS rebinding, peer pinning, timeouts, and streaming size limits.
+14. Customer-supplied dead media retains the v1 `error_source=unipost` contract but is separately attributed in telemetry and reliability metrics.
 
 ---
 
@@ -668,8 +742,15 @@ The implementation plan is expected to touch these existing areas without requir
 
 - `api/internal/platform/pinterest.go`
   - structured provider errors;
-  - board lookup/preflight;
-  - media staging behavior;
+  - direct board lookup plus bounded, cached owned-board fallback;
+  - environment-aware destination preflight;
+  - integration with approved media staging behavior;
+- a shared backend safe-fetch module, location chosen during implementation design
+  - SSRF, redirect, DNS rebinding, address pinning, timeout, MIME, and streaming-size enforcement;
+  - security tests reusable by any future server-side remote ingestion;
+- `api/internal/storage/r2.go`
+  - must not expose the current unhardened `UploadFromURL` path to arbitrary Pinterest URLs;
+  - may migrate to the safe-fetch abstraction only after its security gate passes;
 - `api/internal/platform/validate.go`
   - retain local syntax and capability validation;
 - `api/internal/handler/social_posts.go`
@@ -679,6 +760,8 @@ The implementation plan is expected to touch these existing areas without requir
   - distinguish token, scope, and resource errors;
 - `api/internal/postfailures`
   - Pinterest provider extraction and stable mapping;
+- post/platform internal metadata persistence
+  - record Pinterest environment at request creation and retain it through scheduled dispatch;
 - `dashboard/src/components/posts/create-post/platform-fields/pinterest-fields.tsx`
   - live selection, zero-board state, and board creation flow;
 - Dashboard post-result error presentation;
@@ -693,12 +776,14 @@ Pinterest-specific preflight belongs in the Pinterest adapter rather than a Pint
 
 Follow the normal UniPost task-branch flow:
 
-1. implement on the conversation-owned `dev-<task-slug>` branch and worktree;
-2. run backend tests for the changed API surface;
-3. run Dashboard build and relevant regression tests for Dashboard changes;
-4. push only the task branch and open a Draft PR to `dev`;
-5. complete Railway PR Environment and Vercel Preview Acceptance on the exact head SHA;
-6. merge to `dev` only after every required check and deployed acceptance passes;
-7. verify the official development environment after merge.
+1. implement as ordered, focused changes: error normalization; bounded destination preflight/environment metadata; then safe fetch and media staging;
+2. keep arbitrary external URL staging disabled until AppSec has approved the exact safe-fetch implementation and its negative test evidence;
+3. work only on the conversation-owned `dev-<task-slug>` branch and worktree;
+4. run backend tests for the changed API surface, including the complete board-boundary and safe-fetch security suites for the relevant phase;
+5. run Dashboard build and relevant regression tests for Dashboard changes;
+6. push only the task branch and open a Draft PR to `dev`;
+7. complete Railway PR Environment and Vercel Preview Acceptance on the exact head SHA;
+8. merge to `dev` only after every required check, security gate, and deployed acceptance applicable to that phase passes;
+9. verify the official development environment after merge.
 
 Promotion to staging or production is outside this PRD's implementation task unless explicitly requested as a release.
