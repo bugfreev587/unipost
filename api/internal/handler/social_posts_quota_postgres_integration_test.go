@@ -2014,6 +2014,51 @@ func setupScheduledQuotaSnapshotIntegrationSchema(t *testing.T, pool *pgxpool.Po
 			connection_id TEXT,
 			binding_version BIGINT
 		);
+		CREATE TABLE social_post_physical_targets (
+			post_id TEXT NOT NULL,
+			physical_target_key TEXT NOT NULL,
+			connection_id TEXT,
+			selected_social_account_id TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			conflict_details JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (post_id, physical_target_key)
+		);
+		CREATE FUNCTION reserve_social_post_physical_targets(
+			requested_post_id TEXT,
+			requested_account_ids TEXT[],
+			requested_connection_ids TEXT[]
+		) RETURNS VOID LANGUAGE plpgsql AS $$
+		DECLARE requested RECORD;
+		DECLARE reserved social_post_physical_targets%ROWTYPE;
+		BEGIN
+			IF CARDINALITY(requested_account_ids) <> CARDINALITY(requested_connection_ids) THEN
+				RAISE EXCEPTION 'physical target account and connection arrays must align' USING ERRCODE = '2202E';
+			END IF;
+			FOR requested IN
+				SELECT DISTINCT input.account_id,
+					NULLIF(input.connection_id, '') AS connection_id,
+					CASE WHEN NULLIF(input.connection_id, '') IS NULL
+						THEN 'legacy-account:' || input.account_id
+						ELSE 'connection:' || NULLIF(input.connection_id, '') END AS target_key
+				FROM UNNEST(requested_account_ids, requested_connection_ids) AS input(account_id, connection_id)
+				ORDER BY target_key, account_id
+			LOOP
+				INSERT INTO social_post_physical_targets (
+					post_id, physical_target_key, connection_id, selected_social_account_id
+				) VALUES (
+					requested_post_id, requested.target_key, requested.connection_id, requested.account_id
+				) ON CONFLICT (post_id, physical_target_key) DO NOTHING;
+				SELECT * INTO STRICT reserved FROM social_post_physical_targets
+				WHERE post_id = requested_post_id AND physical_target_key = requested.target_key
+				FOR UPDATE;
+				IF reserved.status <> 'active' OR reserved.selected_social_account_id <> requested.account_id THEN
+					RAISE EXCEPTION 'post physical target already selected through another binding'
+						USING ERRCODE = '23514', CONSTRAINT = 'social_post_physical_target_binding_check';
+				END IF;
+			END LOOP;
+		END $$;
 		CREATE TABLE post_failures (
 			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
 			post_id TEXT NOT NULL,
