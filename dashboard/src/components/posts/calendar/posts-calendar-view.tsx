@@ -182,6 +182,7 @@ export function PostsCalendarView() {
   const [timedOverflowTarget, setTimedOverflowTarget] = useState<TimedOverflowTarget | null>(null);
   const [editingPostTarget, setEditingPostTarget] = useState<SelectedPostTarget | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [createActionReady, setCreateActionReady] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -197,6 +198,10 @@ export function PostsCalendarView() {
 
   const calendarMode = useMemo(() => parseCalendarViewMode(searchParams.get("view")), [searchParams]);
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time", []);
+
+  useEffect(() => {
+    setCreateActionReady(true);
+  }, []);
 
   const clearCalendarSnap = useCallback(() => {
     if (wheelSnapTimerRef.current) {
@@ -1094,7 +1099,12 @@ export function PostsCalendarView() {
               List View
             </Link>
 
-            <button type="button" className="posts-calendar-create" onClick={() => setDrawerOpen(true)}>
+            <button
+              type="button"
+              className="posts-calendar-create"
+              disabled={!createActionReady}
+              onClick={() => setDrawerOpen(true)}
+            >
               <Plus size={16} />
               Create +
             </button>

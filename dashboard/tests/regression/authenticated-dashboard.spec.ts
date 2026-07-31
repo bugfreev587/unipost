@@ -472,7 +472,9 @@ async function expectPinterestPublishingGuards(page: Page, profileID: string) {
   });
 
   await expectDashboardRoute(page, `/projects/${profileID}/posts`);
-  await page.getByRole("button", { name: "Create +" }).click();
+  const createPostButton = page.getByRole("button", { name: "Create +" });
+  await expect(createPostButton).toBeEnabled();
+  await createPostButton.click();
   await expect(page.getByRole("heading", { name: "Create post" })).toBeVisible();
   await page.getByRole("button", { name: "Select Pinterest account Pinterest Primary" }).click();
   await expect.poll(() => boardReads["pinterest-audit-primary"] || 0).toBeGreaterThan(0);
