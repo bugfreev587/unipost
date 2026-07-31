@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-31
 
-**Status:** Approved for implementation planning
+**Status:** Revised after external review; pending final user approval
 
 ## 1. Summary
 
@@ -36,7 +36,7 @@ The X Credits billing rollout remains controlled by the existing `x_credits_bill
 - Automatically aggregating multiple X pages into one unbounded SDK request.
 - Building a background synchronization framework, scheduler, database schema, or webhook feed for account history.
 - Redesigning existing SDK resource organization or converting all dynamic SDK responses to strongly typed models.
-- Changing existing SDK runtime requirements, dependencies, timeout defaults, retry defaults, authentication behavior, or error normalization.
+- Changing existing SDK runtime requirements, dependencies, timeout defaults, retry defaults, authentication behavior, or error classification. The release does add read-only access to server error metadata that the current SDKs discard.
 
 ## 4. Compatibility Contract
 
@@ -48,7 +48,8 @@ The release must satisfy these constraints:
 - No existing method gains a new required parameter.
 - No existing method changes its return type or unwrapping behavior.
 - No SDK constructor gains a new required argument.
-- Default authentication, timeout, retry, redirect, and error behavior remains unchanged.
+- Default authentication, timeout, retry, redirect, and error classification remains unchanged.
+- Existing error classes, constructors, status values, and code-selection rules remain compatible. Additive error surfaces expose read-only `details`, `is_retriable`, and server `Retry-After` metadata so new account-read recovery flows are usable without parsing raw bodies; Go uses a wrapper for new operations instead of expanding its existing public `APIError` struct.
 - New profile, post-history, and Credits types use new names rather than changing unrelated existing types.
 - Existing `capabilities` return types remain unchanged:
   - JavaScript: `Record<string, unknown>`
@@ -86,7 +87,7 @@ The profile method accepts:
 - required `external_user_id` managed-user selector;
 - required `idempotency_key`, serialized as the `Idempotency-Key` header.
 
-The SDK validates only clearly local requirements such as a missing idempotency key. Workspace ownership, platform, managed-user scope, account authorization, Credits admission, and provider behavior remain server-authoritative.
+The SDK validates nonblank `account_id`, `external_user_id`, and `idempotency_key` values before sending the new request. Workspace ownership, platform, managed-user scope, account authorization, Credits admission, and provider behavior remain server-authoritative.
 
 ### 5.3 Post-history request
 
@@ -102,6 +103,8 @@ The post-history method accepts:
 - optional `exclude_reposts`;
 - optional `exclude_replies_to_others`.
 
+The SDK validates the documented `limit` range and rejects a locally supplied `end_time` that is not after `start_time`. The server repeats those checks. `start_time` is inclusive and `end_time` is exclusive under the upstream X timeline contract; UniPost passes both values to `GET /2/users/{id}/tweets` without changing their boundary semantics.
+
 The SDK sends one bounded API request per method call. It does not automatically traverse `next_cursor`, reduce `limit`, or generate replacement idempotency keys.
 
 ### 5.4 Idempotency behavior
@@ -110,7 +113,7 @@ The SDK exposes the required idempotency key as an explicit named option. The ca
 
 - Retry the exact same logical profile or page request with the same key.
 - Use a new key for a different account, selector, filter set, time range, limit, or continuation page.
-- When the API supplies `error.details.retry_cursor`, retry with that cursor and the same key after the server-provided delay.
+- When the API supplies `error.details.retry_cursor`, retry with that cursor and the same key after the delay in the HTTP `Retry-After` header.
 
 SDKs must not silently generate a key because doing so would prevent a process restart from safely replaying the same logical operation.
 
@@ -138,7 +141,9 @@ The post-history response exposes:
 - `meta.replayed` when present;
 - `request_id`.
 
-Credits metadata includes the operation ID, settlement status, `accounting_enabled`, billing mode, operation, estimated amount, reserved amount, charged amount, released amount, and catalog version. Fields that the API may omit are optional in SDK types.
+Credits metadata includes the operation ID, settlement status, `accounting_enabled`, billing mode, `bypass_reason`, operation, estimated amount, reserved amount, charged amount, released amount, and catalog version. Fields that the API may omit are optional in SDK types. `bypass_reason` distinguishes at least `feature_disabled` from `customer_x_app` when customer accounting is bypassed.
+
+The server omits `meta.replayed` when it is false. SDK response types therefore make it optional and define absence as `false`.
 
 ### 5.6 Language-specific typing
 
@@ -146,6 +151,20 @@ Credits metadata includes the operation ID, settlement status, `accounting_enabl
 - Python adds dataclasses or the repository's established typed response representation for the same concepts and implements both sync and async paths.
 - Go adds new request, data, metadata, and envelope structs in the Accounts surface. Existing structs remain unchanged.
 - Java follows the current SDK architecture: request options are represented by explicit parameter objects or maps consistent with existing resources, and responses remain `JsonNode`/`Page`-compatible unless the repository already has an established typed model for the same shape. The implementation must not introduce an isolated object-mapping framework solely for this feature.
+
+All new public model names use the `XAccount` prefix so they cannot collide with the existing workspace `Profile` types. Representative names are `XAccountProfileParams`, `XAccountProfile`, `XAccountProfileResponse`, `XAccountPostsParams`, `XAccountPost`, `XAccountPostsMeta`, and `XAccountPostsResponse`, translated only for each language's normal casing conventions.
+
+### 5.7 Additive error metadata
+
+Account-read recovery depends on structured fields that the server already returns but the current SDKs do not consistently expose. Version `0.7.0` adds optional read-only metadata to each language's error surface without changing existing constructors or code classification:
+
+- raw structured `details` for `retry_cursor`, `retry_cursor_expires_at`, `estimated_credits`, `available_credits`, and `max_affordable_limit`;
+- `is_retriable` from the response body;
+- `retry_after` in seconds, sourced from the HTTP `Retry-After` header and available for retriable `409` and `429` responses.
+
+JavaScript and Python add optional properties to their existing base error classes. Go does not add fields to the existing public `APIError`, because doing so would break applications that construct it with an unkeyed literal. New account-read methods instead return an `XAccountReadError` wrapper containing structured details and header-derived retry metadata while implementing `Unwrap() error` to expose the existing `*APIError` to `errors.As`; existing endpoint errors remain unchanged. Java preserves its current constructor and adds an overload plus read-only accessors; `getResponseBody()` remains available.
+
+HTTP layers pass response headers into error parsing. Existing automatic `429` retries retain their current retry count and cap behavior, while the terminal error reports the actual sanitized server delay rather than a body default. The SDK does not automatically retry the `READ_IN_PROGRESS` or `READ_SETTLEMENT_PENDING` `409` states; callers inspect `is_retriable` and `retry_after` and replay with the same idempotency key.
 
 ## 6. X Credits SDK Surface
 
@@ -158,7 +177,7 @@ The `0.7.0` release will also expose the two already-public Credits inspection e
 
 These methods are additive and grouped under a billing/X Credits resource that follows each SDK's existing resource conventions. They do not evaluate Feature Flags locally.
 
-When `x_credits_billing_v1` is disabled, the server remains authoritative and returns `FEATURE_NOT_AVAILABLE` for Credits inspection. The SDK preserves that stable API error code through its existing error mechanism. The account profile and post-history methods remain usable and return `meta.credits.accounting_enabled=false` for bypassed customer accounting.
+When `x_credits_billing_v1` is disabled, the server remains authoritative and returns HTTP `403 FEATURE_NOT_AVAILABLE` for Credits inspection. The SDK preserves that stable API error code through its existing error mechanism. The account profile and post-history methods remain usable and return `meta.credits.accounting_enabled=false` plus the applicable `bypass_reason` for bypassed customer accounting.
 
 ## 7. Feature Flag and Documentation Behavior
 
@@ -182,6 +201,13 @@ The existing `x_credits_billing_v1` flag controls customer X Credits accounting 
 
 When the flag is disabled, the new guide shows a short neutral note that customer Credits accounting is not enabled and directs readers to inspect `meta.credits.accounting_enabled`. It must not show balance-management steps, quota calculations, or a link to a hidden Credits page.
 
+The implementation reuses the existing documentation controls rather than introducing a second flag system:
+
+- `getPublicDocsFeatureFlags` for server-rendered conditional sections;
+- `usePublicDocsFeatureFlags` for client-rendered API Reference sections;
+- `DOCS_PATH_FEATURES` for whole Credits-only pages;
+- `required_feature: "x_credits_billing_v1"` for Credits-only AI search chunks inside an otherwise public guide.
+
 The SDK never connects to Unleash. The UniPost backend remains the authority for all sensitive and billable decisions.
 
 ## 8. API Reference Completion
@@ -190,7 +216,7 @@ The affected API Reference pages will be completed as follows:
 
 ### 8.1 Account capabilities
 
-Document the additive `x_account_reads` namespace and its profile-read, post-history-read, pagination, filter, idempotency, and accounting attributes. Preserve the existing endpoint and SDK method behavior.
+The `x_account_reads` namespace, authorization state, page-size range, accounting state, and `bypass_reason` are already published. This project only corrects any discovered inaccuracies and updates the existing four-language capability examples to show how an application checks the new reads before calling them. It does not rewrite the shipped capability reference.
 
 ### 8.2 X account profile
 
@@ -229,18 +255,18 @@ Create `/docs/guides/x/profile-and-post-history` with the title **Read X profile
 
 The page is task-oriented and contains:
 
-1. Prerequisites: API key, connected X account, owning `external_user_id`, and capability check.
+1. Prerequisites: API key, an active connected X account explicitly bound to an owning `external_user_id`, and a capability check. A workspace-owned account without a Managed User binding is not accessible through these endpoints.
 2. Reading the current profile with an explicit idempotency key.
 3. Reading the first authored-post page with a bounded limit.
 4. Persisting and following `next_cursor` before `cursor_expires_at`.
 5. Generating a new idempotency key for each new page while reusing the key for exact retries.
 6. Filtering reposts and replies to others while retaining self-replies used in threads.
 7. Deduplicating stored posts by `external_post_id`.
-8. Handling provider rate limits, retriable failures, `retry_cursor`, and cursor expiry.
+8. Handling `INVALID_CURSOR`, provider rate limits, `READ_IN_PROGRESS`, `READ_SETTLEMENT_PENDING`, `retry_cursor`, and cursor expiry.
 9. Conditional Credits admission and insufficient-balance handling when the Feature Flag is enabled.
 10. Complete JavaScript, Python, Go, Java, and cURL examples.
 
-The guide links to the profile, post-history, capabilities, errors, authentication, and conditionally available Credits references. It is added to the X Guides navigation, X platform guide, API Reference related-guide cards, guide index, and docs AI search index.
+The guide links to the profile, post-history, capabilities, errors, authentication, `/docs/guides/x/reconnect-permissions`, and conditionally available Credits references. It explains that profile reads require `users.read`, post-history reads require `users.read` and `tweet.read`, and both require `offline.access` plus a valid persisted X app identity. It is added to the X Guides navigation, X platform guide, API Reference related-guide cards, guide index, and docs AI search index.
 
 The page follows the existing DocsPage guide layout and design system. It does not introduce a new page shell or visual system.
 
@@ -252,14 +278,24 @@ Documentation changes remain on the conversation-owned task branch, are pushed t
 
 ### 10.2 SDK repositories
 
-Each SDK repository uses a dedicated task branch for this feature. Changes are reviewed and validated through that repository's CI before merging to its default branch. Release tags are created only from the validated merge commit:
+The live repository state was rechecked on 2026-07-31:
+
+- `sdk-js` main and latest tag are `0.6.2` / `v0.6.2`.
+- `sdk-python`, `sdk-go`, and `sdk-java` main and latest tags are `0.6.0` / `v0.6.0`.
+- The historical JavaScript managed-user branch is behind main and its pull request is already merged. Although that branch history temporarily prepared `0.7.0`, no `v0.7.0` tag or npm `0.7.0` artifact exists.
+- npm, PyPI, the Go module proxy, and Maven Central expose no `0.7.0` artifact, so the version is available for this coordinated release.
+- `github.com/unipost-dev/sdk-go` exists, resolves publicly, and already publishes `v0.6.0`; the unresolved-Go note in `docs/sdk-release.md` is stale and will be corrected in this project.
+
+Each SDK repository uses a dedicated task branch for the feature implementation. Changes are reviewed and validated through that repository's CI before merging to its default branch. After all four feature merges, the existing `scripts/release/create-sdk-release.sh 0.7.0 --push` workflow performs the lockstep version bump, source-validation hard gate, release commits, tags, and pushes. It runs against clean, conversation-owned SDK clones supplied through `UNIPOST_DEV_ROOT`, not shared SDK checkouts from another task.
+
+Release tags are created only after the feature merge commits and source-validation gates are present on each default branch:
 
 - JavaScript: `v0.7.0`, published as `@unipost/sdk@0.7.0`.
 - Python: `v0.7.0`, published as `unipost==0.7.0`.
 - Go: `v0.7.0`, published from `github.com/unipost-dev/sdk-go`.
 - Java: `v0.7.0`, published as the repository's existing Maven artifact.
 
-The JavaScript built `dist` output is regenerated and included according to its existing release policy. No tag is moved or reused. A failed publication is repaired with a new commit and, when the registry forbids replacement, a new version rather than overwriting an existing artifact.
+The JavaScript built `dist` output is regenerated and included according to its existing release policy. `docs/sdk-release.md` is updated to describe the live repositories and the `UNIPOST_DEV_ROOT` isolation requirement. No tag is moved or reused. A failed publication is repaired with a new commit and, when the registry forbids replacement, a new version rather than overwriting an existing artifact.
 
 ## 11. Testing and Acceptance
 
@@ -273,7 +309,8 @@ Each SDK must test:
 - complete response-envelope parsing;
 - Credits metadata parsing for enabled and bypassed accounting;
 - pagination metadata and opaque cursor preservation;
-- stable API error propagation, including `FEATURE_NOT_AVAILABLE`, `INSUFFICIENT_X_CREDITS`, idempotency conflict, retry information, and provider errors;
+- stable API error propagation for `IDEMPOTENCY_CONFLICT`, `READ_IN_PROGRESS`, `READ_SETTLEMENT_PENDING`, `INSUFFICIENT_X_CREDITS`, `RATE_LIMITED`, `ACCOUNT_REAUTHORIZATION_REQUIRED`, `X_UPSTREAM_ERROR`, `INVALID_CURSOR`, `IDEMPOTENCY_KEY_REQUIRED`, `WRONG_PLATFORM`, `ACCOUNT_ACCESS_DENIED`, and HTTP `403 FEATURE_NOT_AVAILABLE`;
+- structured parsing of `details`, `is_retriable`, and header-derived `retry_after`, including terminal errors after the existing automatic `429` retry loop;
 - compatibility of representative pre-`0.7.0` calls;
 - package version and User-Agent alignment.
 
