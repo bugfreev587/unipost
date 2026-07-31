@@ -442,6 +442,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
     2,
     "the PR 270 hardening branch must be accepted for both preview and cleanup",
   );
+  assert.equal(
+    [...workflow.matchAll(/github\.event\.pull_request\.head\.ref == 'codex\/social-account-profile-bindings'/g)].length,
+    2,
+    "the social account profile bindings branch must be accepted for both preview and cleanup",
+  );
   assert.match(workflow, /vercel@50\.26\.1/);
   assert.match(workflow, /--prebuilt[\s\S]*--archive=tgz/);
   assert.match(

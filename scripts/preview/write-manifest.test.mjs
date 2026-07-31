@@ -51,6 +51,18 @@ test("creates a non-secret manifest for the PR 270 hardening branch", () => {
   });
 });
 
+test("creates a non-secret manifest for the social account profile bindings branch", () => {
+  assert.deepEqual(createPreviewManifest({
+    sha: "e".repeat(40),
+    branch: "codex/social-account-profile-bindings",
+    apiURL: "https://api-pr-299.up.railway.app",
+  }), {
+    sha: "e".repeat(40),
+    branch: "codex/social-account-profile-bindings",
+    apiURL: "https://api-pr-299.up.railway.app",
+  });
+});
+
 test("rejects persistent API targets", () => {
   for (const apiURL of [
     "https://api.unipost.dev",

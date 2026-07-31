@@ -29,7 +29,8 @@ jobs:
     if: >-
       github.event.action != 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      (startsWith(github.event.pull_request.head.ref, 'dev-') ||
+      (github.event.pull_request.head.ref == 'codex/social-account-profile-bindings' ||
+      startsWith(github.event.pull_request.head.ref, 'dev-') ||
       startsWith(github.event.pull_request.head.ref, 'hotfix-') ||
       startsWith(github.event.pull_request.head.ref, 'codex/staging-') ||
       startsWith(github.event.pull_request.head.ref, 'codex/pr270-'))
@@ -267,7 +268,8 @@ jobs:
     if: >-
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      (startsWith(github.event.pull_request.head.ref, 'dev-') ||
+      (github.event.pull_request.head.ref == 'codex/social-account-profile-bindings' ||
+      startsWith(github.event.pull_request.head.ref, 'dev-') ||
       startsWith(github.event.pull_request.head.ref, 'hotfix-') ||
       startsWith(github.event.pull_request.head.ref, 'codex/staging-') ||
       startsWith(github.event.pull_request.head.ref, 'codex/pr270-'))
