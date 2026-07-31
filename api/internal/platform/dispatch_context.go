@@ -20,6 +20,9 @@ type DispatchEvent struct {
 	FailureStage     string
 	Retriable        bool
 	Duration         time.Duration
+	MediaType        string
+	MediaSizeBytes   int64
+	CustomerInput    bool
 }
 
 type DispatchEventRecorder struct {

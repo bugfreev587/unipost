@@ -28,7 +28,7 @@ func pinterestTestPost(adapter *PinterestAdapter, accountID, token string) error
 		pinterestTestDispatchContext(accountID),
 		token,
 		"caption",
-		[]MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage}},
+		[]MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage, Origin: MediaOriginManaged}},
 		map[string]any{"board_id": pinterestTestBoardID},
 	)
 	return err
@@ -566,7 +566,7 @@ func TestPinterestDispatchEventsRecordPreflightAndCreateFailure(t *testing.T) {
 		Events:          recorder,
 	})
 
-	_, err := (&PinterestAdapter{client: srv.Client()}).Post(ctx, "token_1", "caption", []MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage}}, map[string]any{"board_id": pinterestTestBoardID})
+	_, err := (&PinterestAdapter{client: srv.Client()}).Post(ctx, "token_1", "caption", []MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage, Origin: MediaOriginManaged}}, map[string]any{"board_id": pinterestTestBoardID})
 	if err == nil {
 		t.Fatal("expected create Pin failure")
 	}
@@ -614,7 +614,7 @@ func TestPinterestDispatchEventsRecordPreflightFailureWithoutCreatePin(t *testin
 		SocialAccountID: "sa_1", Environment: "production", Events: recorder,
 	})
 
-	_, err := (&PinterestAdapter{client: srv.Client()}).Post(ctx, "token_1", "caption", []MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage}}, map[string]any{"board_id": pinterestTestBoardID})
+	_, err := (&PinterestAdapter{client: srv.Client()}).Post(ctx, "token_1", "caption", []MediaItem{{URL: "https://cdn.example.com/image.jpg", Kind: MediaKindImage, Origin: MediaOriginManaged}}, map[string]any{"board_id": pinterestTestBoardID})
 	if err == nil {
 		t.Fatal("expected preflight failure")
 	}

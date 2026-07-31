@@ -283,6 +283,7 @@ func pinterestRecordDispatchFailure(ctx context.Context, name, boardID string, d
 		event.HTTPStatus = pinterestIntField(fields["http_status"])
 		event.ProviderCode = pinterestStringField(fields["code"])
 		event.Reason = pinterestStringField(fields["reason"])
+		event.CustomerInput, _ = fields["customer_input"].(bool)
 	}
 	if carrier, ok := err.(interface{ FailureContractFields() map[string]any }); ok {
 		fields := carrier.FailureContractFields()

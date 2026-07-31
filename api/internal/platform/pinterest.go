@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
+	"github.com/xiaoboyu/unipost-api/internal/safefetch"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -34,12 +35,15 @@ var pinterestScopes = []string{
 	"user_accounts:read",
 }
 
+type PinterestMediaStager interface {
+	StageExternalMedia(context.Context, string, safefetch.Policy) (storage.ExternalMediaResult, error)
+}
+
 type PinterestAdapter struct {
-	client       *http.Client
-	mediaProxy   *storage.Client
-	stageFromURL func(context.Context, string) (string, error)
-	boardCache   pinterestBoardCache
-	now          func() time.Time
+	client      *http.Client
+	mediaStager PinterestMediaStager
+	boardCache  pinterestBoardCache
+	now         func() time.Time
 }
 
 type PinterestBoard struct {
@@ -56,18 +60,11 @@ func NewPinterestAdapter() *PinterestAdapter {
 	return &PinterestAdapter{client: debugrt.NewClient(60 * time.Second)}
 }
 
-// SetMediaProxy attaches an R2-backed media proxy. Pinterest's create-pin
-// endpoint fetches `image_url`/`video_url` server-side, and presigned source
-// URLs are brittle there: they may be validated or fetched from a different
-// network path than our immediate dispatch call. Staging ephemeral URLs onto
-// our public R2 domain gives Pinterest a stable fetch target.
+// SetMediaProxy attaches the verified external-media staging boundary.
+// Request-supplied URLs must pass the provider-neutral safe fetcher before
+// Pinterest receives a UniPost-controlled public URL.
 func (a *PinterestAdapter) SetMediaProxy(c *storage.Client) {
-	a.mediaProxy = c
-	if c == nil {
-		a.stageFromURL = nil
-		return
-	}
-	a.stageFromURL = c.UploadFromURL
+	a.mediaStager = c
 }
 
 func (a *PinterestAdapter) Platform() string { return "pinterest" }
@@ -240,13 +237,41 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 		kind = SniffMediaKind(item.URL)
 	}
 	sourceURL := item.URL
-	if a.stageFromURL != nil && looksEphemeralFetchURL(sourceURL) {
-		stagedURL, err := a.stageFromURL(ctx, sourceURL)
-		if err != nil {
-			return nil, fmt.Errorf("pinterest media stage: %w", err)
+	if item.Origin != MediaOriginManaged {
+		mediaStartedAt := a.pinterestNow()
+		var staged storage.ExternalMediaResult
+		var err error
+		if a.mediaStager == nil {
+			err = storage.ErrNotConfigured
+		} else {
+			staged, err = a.mediaStager.StageExternalMedia(ctx, sourceURL, pinterestExternalMediaPolicy(kind))
 		}
-		slog.Info("pinterest media: staged ephemeral source URL", "source_url", sourceURL, "staged_url", stagedURL)
-		sourceURL = stagedURL
+		if err != nil {
+			failure := pinterestMediaFailure(err)
+			pinterestRecordDispatchFailure(ctx, "pinterest_media_preflight_failed", boardID, a.pinterestNow().Sub(mediaStartedAt), failure)
+			return nil, failure
+		}
+		if strings.TrimSpace(staged.PublicURL) == "" {
+			failure := pinterestMediaFailure(storage.ErrExternalMediaUpload)
+			pinterestRecordDispatchFailure(ctx, "pinterest_media_preflight_failed", boardID, a.pinterestNow().Sub(mediaStartedAt), failure)
+			return nil, failure
+		}
+		sourceURL = staged.PublicURL
+		if strings.HasPrefix(strings.ToLower(staged.MediaType), "video/") {
+			kind = MediaKindVideo
+		} else {
+			kind = MediaKindImage
+		}
+		pinterestRecordDispatchEvent(ctx, DispatchEvent{
+			Name:             "pinterest_media_staged",
+			Status:           "succeeded",
+			Environment:      PinterestEnvironment(),
+			BoardFingerprint: pinterestBoardFingerprint(boardID),
+			FailureStage:     "media_preflight",
+			Duration:         a.pinterestNow().Sub(mediaStartedAt),
+			MediaType:        staged.MediaType,
+			MediaSizeBytes:   staged.SizeBytes,
+		})
 	}
 
 	reqBody := map[string]any{
@@ -395,6 +420,91 @@ func pinterestTransportFailure(_ string, _ error, stage string) error {
 	)
 }
 
+func pinterestExternalMediaPolicy(kind MediaKind) safefetch.Policy {
+	capability := Capabilities["pinterest"].Media
+	policy := safefetch.Policy{MaxRedirects: 5}
+	formats := capability.Images.AllowedFormats
+	policy.MaxBytes = capability.Images.MaxFileSizeBytes
+	if kind == MediaKindVideo {
+		formats = capability.Videos.AllowedFormats
+		policy.MaxBytes = capability.Videos.MaxFileSizeBytes
+	}
+	policy.AllowedMediaTypes = pinterestMediaTypesForFormats(formats)
+	return policy
+}
+
+func pinterestMediaTypesForFormats(formats []string) []string {
+	result := make([]string, 0, len(formats))
+	seen := make(map[string]struct{}, len(formats))
+	for _, format := range formats {
+		var mediaType string
+		switch strings.ToLower(strings.TrimSpace(format)) {
+		case "jpg", "jpeg":
+			mediaType = "image/jpeg"
+		case "png":
+			mediaType = "image/png"
+		case "webp":
+			mediaType = "image/webp"
+		case "mp4":
+			mediaType = "video/mp4"
+		case "mov":
+			mediaType = "video/quicktime"
+		}
+		if mediaType == "" {
+			continue
+		}
+		if _, ok := seen[mediaType]; ok {
+			continue
+		}
+		seen[mediaType] = struct{}{}
+		result = append(result, mediaType)
+	}
+	return result
+}
+
+func pinterestMediaFailure(stageErr error) error {
+	errorCode := "temporary_platform_error"
+	reason := "media_stage_temporary"
+	message := "UniPost could not prepare this Pinterest media. Try again later."
+	retriable := true
+	customerInput := false
+
+	var fetchErr *safefetch.FetchError
+	if errors.As(stageErr, &fetchErr) {
+		switch fetchErr.Kind {
+		case safefetch.ErrorTooLarge:
+			errorCode = "media_error"
+			reason = "media_too_large"
+			retriable = false
+			customerInput = true
+		case safefetch.ErrorUnsupportedMedia:
+			errorCode = "media_error"
+			reason = "unsupported_media"
+			retriable = false
+			customerInput = true
+		case safefetch.ErrorSourceTemporary, safefetch.ErrorTimeout:
+		default:
+			errorCode = "media_error"
+			reason = "customer_media_unreachable"
+			retriable = false
+			customerInput = true
+		}
+	}
+	if !retriable {
+		message = "Pinterest could not use this media. Replace it with a publicly available supported image or video."
+	}
+	fields := map[string]any{
+		"provider":       "pinterest",
+		"reason":         reason,
+		"is_transient":   retriable,
+		"customer_input": customerInput,
+	}
+	if fetchErr != nil && fetchErr.HTTPStatus > 0 {
+		fields["http_status"] = fetchErr.HTTPStatus
+	}
+	return newProviderFailure(message, fields, FailureContract{ErrorCode: errorCode, Stage: "media_preflight", IsRetriable: retriable})
+}
+
 func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
 	req, err := http.NewRequestWithContext(ctx, "DELETE", pinterestAPIBaseURL()+"/pins/"+url.PathEscape(externalID), nil)
 	if err != nil {
@@ -413,25 +523,6 @@ func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, e
 		return fmt.Errorf("pinterest delete pin (%d): %s", resp.StatusCode, string(body))
 	}
 	return nil
-}
-
-func looksEphemeralFetchURL(rawURL string) bool {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	switch strings.ToLower(u.Hostname()) {
-	case "tmpfiles.org":
-		return true
-	}
-	q := u.Query()
-	if q.Get("X-Amz-Algorithm") != "" || q.Get("X-Amz-Signature") != "" || q.Get("X-Amz-Credential") != "" {
-		return true
-	}
-	if q.Get("AWSAccessKeyId") != "" || q.Get("Signature") != "" || q.Get("Expires") != "" {
-		return true
-	}
-	return false
 }
 
 func (a *PinterestAdapter) CreateBoard(ctx context.Context, accessToken string, name string) (*PinterestBoard, error) {

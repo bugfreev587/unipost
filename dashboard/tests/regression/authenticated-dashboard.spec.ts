@@ -219,6 +219,20 @@ function youtubePostFixture(profileID: string) {
         error_temporality: "permanent",
         provider_error: { provider: "pinterest", http_status: 401, code: "2" },
       },
+      {
+        id: "pinterest-media-failure-result",
+        social_account_id: "pinterest-audit-primary",
+        platform: "pinterest",
+        account_name: "Pinterest Media Failure",
+        status: "failed",
+        error_message: "raw fetch response must not choose the customer guidance",
+        error_code: "media_error",
+        failure_stage: "media_preflight",
+        is_retriable: false,
+        next_action: "fix_media",
+        error_source: "unipost",
+        error_temporality: "permanent",
+      },
     ],
   };
 }
@@ -347,6 +361,7 @@ async function expectYouTubeResultLinkValidation(page: Page, profileID: string) 
   const invalidResult = resultNamed("Invalid YouTube result");
   const pinterestBoardFailure = resultNamed("Pinterest Board Failure");
   const pinterestTokenFailure = resultNamed("Pinterest Token Failure");
+  const pinterestMediaFailure = resultNamed("Pinterest Media Failure");
   const validSourceLink = validResult.locator("[data-youtube-source-link]");
 
   await expect(validResult.locator("[data-youtube-destination-icon]")).toBeVisible();
@@ -362,6 +377,9 @@ async function expectYouTubeResultLinkValidation(page: Page, profileID: string) 
   await expect(pinterestBoardFailure).not.toContainText("provider prose must not choose");
   await expect(pinterestTokenFailure).toContainText("Reconnect Pinterest");
   await expect(pinterestTokenFailure).toContainText("Pinterest rejected this connection. Reconnect the account, then try again.");
+  await expect(pinterestMediaFailure).toContainText("Pinterest media needs changes");
+  await expect(pinterestMediaFailure).toContainText("Pinterest could not use this media. Replace it with a publicly available supported image or video.");
+  await expect(pinterestMediaFailure).not.toContainText("raw fetch response must not choose");
   await expect(page.locator("[data-youtube-official-mark]")).toHaveCount(0);
 }
 

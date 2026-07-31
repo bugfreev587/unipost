@@ -59,6 +59,8 @@ const (
 	ActionPinterestDestinationPreflightSucceeded = "pinterest_destination_preflight_succeeded"
 	ActionPinterestDestinationPreflightFailed    = "pinterest_destination_preflight_failed"
 	ActionPinterestCreatePinFailed               = "pinterest_create_pin_failed"
+	ActionPinterestMediaPreflightFailed          = "pinterest_media_preflight_failed"
+	ActionPinterestMediaStaged                   = "pinterest_media_staged"
 
 	ActionAPIRequestSucceeded        = "api.request.succeeded"
 	ActionAPIRequestFailed           = "api.request.failed"

@@ -1443,12 +1443,33 @@ func TestPinterestDispatchObservabilityUsesAllowlistedSafeFields(t *testing.T) {
 			Retriable:        false,
 			Duration:         42 * time.Millisecond,
 		},
+		{
+			Name:             integrationlogs.ActionPinterestMediaPreflightFailed,
+			Status:           "failed",
+			Environment:      "production",
+			BoardFingerprint: "b4f9206f2d2c145a",
+			ErrorCode:        "media_error",
+			Reason:           "customer_media_unreachable",
+			FailureStage:     "media_preflight",
+			CustomerInput:    true,
+			Duration:         17 * time.Millisecond,
+		},
+		{
+			Name:             integrationlogs.ActionPinterestMediaStaged,
+			Status:           "succeeded",
+			Environment:      "production",
+			BoardFingerprint: "b4f9206f2d2c145a",
+			FailureStage:     "media_preflight",
+			MediaType:        "image/jpeg",
+			MediaSizeBytes:   4096,
+			Duration:         23 * time.Millisecond,
+		},
 		{Name: "not_allowlisted", Status: "failed", Reason: "access_token=secret https://api.pinterest.com/v5/boards/123"},
 	})
 	stopLogger()
 
-	if len(logStore.params) != 1 {
-		t.Fatalf("integration log count = %d, want 1 allowlisted event", len(logStore.params))
+	if len(logStore.params) != 3 {
+		t.Fatalf("integration log count = %d, want 3 allowlisted events", len(logStore.params))
 	}
 	got := logStore.params[0]
 	if got.Action != integrationlogs.ActionPinterestDestinationPreflightFailed || got.Message != integrationlogs.ActionPinterestDestinationPreflightFailed {
@@ -1480,6 +1501,30 @@ func TestPinterestDispatchObservabilityUsesAllowlistedSafeFields(t *testing.T) {
 		if strings.Contains(encoded, forbidden) {
 			t.Fatalf("safe event metadata contains %q: %s", forbidden, encoded)
 		}
+	}
+
+	mediaFailure := logStore.params[1]
+	if mediaFailure.Action != integrationlogs.ActionPinterestMediaPreflightFailed || mediaFailure.ErrorCode.String != "media_error" {
+		t.Fatalf("media failure action/error = %q/%#v", mediaFailure.Action, mediaFailure.ErrorCode)
+	}
+	var mediaFailureMetadata map[string]any
+	if err := json.Unmarshal(mediaFailure.Metadata, &mediaFailureMetadata); err != nil {
+		t.Fatalf("decode media failure metadata: %v", err)
+	}
+	if mediaFailureMetadata["normalized_reason"] != "customer_media_unreachable" || mediaFailureMetadata["customer_input"] != true {
+		t.Fatalf("media failure metadata = %#v", mediaFailureMetadata)
+	}
+
+	mediaStaged := logStore.params[2]
+	var mediaStagedMetadata map[string]any
+	if err := json.Unmarshal(mediaStaged.Metadata, &mediaStagedMetadata); err != nil {
+		t.Fatalf("decode media staged metadata: %v", err)
+	}
+	if mediaStagedMetadata["media_type"] != "image/jpeg" || mediaStagedMetadata["media_size_bytes"] != float64(4096) {
+		t.Fatalf("media staged metadata = %#v", mediaStagedMetadata)
+	}
+	if mediaStaged.WorkspaceID != "ws_pin" || mediaStaged.PostID.String != "post_pin" || mediaStaged.SocialAccountID.String != "account_pin" {
+		t.Fatalf("media staged identifiers = workspace:%q post:%#v account:%#v", mediaStaged.WorkspaceID, mediaStaged.PostID, mediaStaged.SocialAccountID)
 	}
 }
 

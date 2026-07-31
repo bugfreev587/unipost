@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
 func TestPinterestEndpointsDefaultToProduction(t *testing.T) {
@@ -267,12 +269,9 @@ func TestPinterestPostStagesEphemeralImageURL(t *testing.T) {
 	staged := "https://public.example/media/staged.jpg"
 	adapter := &PinterestAdapter{
 		client: srv.Client(),
-		stageFromURL: func(_ context.Context, sourceURL string) (string, error) {
-			if !looksEphemeralFetchURL(sourceURL) {
-				t.Fatalf("expected ephemeral source URL, got %q", sourceURL)
-			}
-			return staged, nil
-		},
+		mediaStager: &fakePinterestMediaStager{result: storage.ExternalMediaResult{
+			PublicURL: staged, MediaType: "image/jpeg", SizeBytes: 10,
+		}},
 	}
 
 	_, err := adapter.Post(context.Background(), "token-123", "caption", []MediaItem{{
@@ -326,12 +325,9 @@ func TestPinterestPostStagesKnownTemporaryFileHosts(t *testing.T) {
 	staged := "https://public.example/media/staged.jpg"
 	adapter := &PinterestAdapter{
 		client: srv.Client(),
-		stageFromURL: func(_ context.Context, sourceURL string) (string, error) {
-			if !looksEphemeralFetchURL(sourceURL) {
-				t.Fatalf("expected temporary file host URL to be staged, got %q", sourceURL)
-			}
-			return staged, nil
-		},
+		mediaStager: &fakePinterestMediaStager{result: storage.ExternalMediaResult{
+			PublicURL: staged, MediaType: "image/jpeg", SizeBytes: 10,
+		}},
 	}
 
 	_, err := adapter.Post(context.Background(), "token-123", "caption", []MediaItem{{
@@ -346,15 +342,6 @@ func TestPinterestPostStagesKnownTemporaryFileHosts(t *testing.T) {
 	}
 	if gotMediaURL != staged {
 		t.Fatalf("media_source.url = %q, want %q", gotMediaURL, staged)
-	}
-}
-
-func TestLooksEphemeralFetchURL(t *testing.T) {
-	if !looksEphemeralFetchURL("https://example.com/a.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc") {
-		t.Fatal("expected aws-signed URL to be detected as ephemeral")
-	}
-	if looksEphemeralFetchURL("https://cdn.example.com/a.jpg") {
-		t.Fatal("expected plain public URL to not be treated as ephemeral")
 	}
 }
 

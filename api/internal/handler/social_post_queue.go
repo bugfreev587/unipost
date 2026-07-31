@@ -1199,7 +1199,9 @@ func (h *SocialPostHandler) logPlatformDispatchEvents(ctx context.Context, post 
 		case integrationlogs.ActionPinterestDestinationPreflightStarted,
 			integrationlogs.ActionPinterestDestinationPreflightSucceeded,
 			integrationlogs.ActionPinterestDestinationPreflightFailed,
-			integrationlogs.ActionPinterestCreatePinFailed:
+			integrationlogs.ActionPinterestCreatePinFailed,
+			integrationlogs.ActionPinterestMediaPreflightFailed,
+			integrationlogs.ActionPinterestMediaStaged:
 		default:
 			continue
 		}
@@ -1236,6 +1238,9 @@ func (h *SocialPostHandler) logPlatformDispatchEvents(ctx context.Context, post 
 				"normalized_reason":     event.Reason,
 				"failure_stage":         event.FailureStage,
 				"retriable":             event.Retriable,
+				"media_type":            event.MediaType,
+				"media_size_bytes":      event.MediaSizeBytes,
+				"customer_input":        event.CustomerInput,
 			},
 		}))
 	}

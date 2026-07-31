@@ -47,12 +47,16 @@ func TestPinterestPublishingActionNamesAreStable(t *testing.T) {
 		"preflight_succeeded": "pinterest_destination_preflight_succeeded",
 		"preflight_failed":    "pinterest_destination_preflight_failed",
 		"create_pin_failed":   "pinterest_create_pin_failed",
+		"media_failed":        "pinterest_media_preflight_failed",
+		"media_staged":        "pinterest_media_staged",
 	}
 	got := map[string]string{
 		"preflight_started":   ActionPinterestDestinationPreflightStarted,
 		"preflight_succeeded": ActionPinterestDestinationPreflightSucceeded,
 		"preflight_failed":    ActionPinterestDestinationPreflightFailed,
 		"create_pin_failed":   ActionPinterestCreatePinFailed,
+		"media_failed":        ActionPinterestMediaPreflightFailed,
+		"media_staged":        ActionPinterestMediaStaged,
 	}
 	for key, value := range want {
 		if got[key] != value {

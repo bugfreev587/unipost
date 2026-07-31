@@ -225,7 +225,7 @@ function pinterestStructuredCopy(
   if (result.error_code === "media_error" && result.failure_stage === "media_preflight") {
     return {
       title: "Pinterest media needs changes",
-      message: "Pinterest could not use this media. Replace it with a supported image or video and publish again.",
+      message: "Pinterest could not use this media. Replace it with a publicly available supported image or video.",
     };
   }
   return undefined;

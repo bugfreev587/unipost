@@ -156,7 +156,7 @@ test("describePostResultFailure reserves reconnect guidance for Pinterest token 
   assert.equal(detail.actionHref, "/projects/:id/accounts");
 });
 
-test("describePostResultFailure has later-compatible Pinterest media preflight copy", () => {
+test("describePostResultFailure gives Pinterest media guidance from structured fields only", () => {
   const detail = describePostResultFailure({
     status: "failed",
     platform: "pinterest",
@@ -171,6 +171,6 @@ test("describePostResultFailure has later-compatible Pinterest media preflight c
   });
 
   assert.equal(detail.title, "Pinterest media needs changes");
-  assert.equal(detail.message, "Pinterest could not use this media. Replace it with a supported image or video and publish again.");
+  assert.equal(detail.message, "Pinterest could not use this media. Replace it with a publicly available supported image or video.");
   assert.equal(detail.nextActionLabel, "Fix media");
 });
