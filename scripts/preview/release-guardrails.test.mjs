@@ -503,7 +503,16 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   const previewTest = await read("dashboard/tests/regression/preview-environment.spec.ts");
   assert.doesNotMatch(previewTest, /shareableURL/);
   assert.match(previewTest, /x-vercel-protection-bypass/);
-  assert.match(previewTest, /x-vercel-set-bypass-cookie/);
+  assert.doesNotMatch(
+    previewTest,
+    /x-vercel-set-bypass-cookie/,
+    "Preview API requests must not start Vercel's same-path bypass-cookie redirect handshake",
+  );
+  assert.match(
+    previewTest,
+    /establishPreviewBypassCookie/,
+    "browser navigation must establish the bypass cookie with the redirect-safe shared helper",
+  );
   assert.match(
     previewTest,
     /VERCEL_AUTOMATION_BYPASS_SECRET\?\.trim\(\)/,
