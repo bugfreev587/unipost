@@ -37,16 +37,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/xiaoboyu/unipost-api/internal/safefetch"
 )
 
 // Client uploads source URLs to R2 and returns publicly reachable URLs that
 // PULL_FROM_URL endpoints can fetch. A nil *Client is a valid value: every
 // method on it returns ErrNotConfigured so callers can fall back gracefully.
 type Client struct {
-	s3         *s3.Client
-	bucket     string
-	publicBase string
-	httpClient *http.Client
+	s3              *s3.Client
+	bucket          string
+	publicBase      string
+	httpClient      *http.Client
+	externalFetcher safefetch.Fetcher
 }
 
 // Config holds the R2 settings read from environment variables. See
@@ -86,10 +88,11 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	})
 
 	return &Client{
-		s3:         s3Client,
-		bucket:     cfg.Bucket,
-		publicBase: strings.TrimRight(cfg.PublicDomain, "/"),
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		s3:              s3Client,
+		bucket:          cfg.Bucket,
+		publicBase:      strings.TrimRight(cfg.PublicDomain, "/"),
+		httpClient:      &http.Client{Timeout: 60 * time.Second},
+		externalFetcher: safefetch.New(safefetch.DefaultConfig()),
 	}, nil
 }
 
