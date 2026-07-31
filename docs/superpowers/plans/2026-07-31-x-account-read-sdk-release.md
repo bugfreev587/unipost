@@ -256,7 +256,6 @@ events = client.billing.list_x_credit_events(
 ```bash
 .venv/bin/pytest tests/
 .venv/bin/mypy unipost/ --ignore-missing-imports
-.venv/bin/ruff check unipost tests
 .venv/bin/python -m build
 ```
 
