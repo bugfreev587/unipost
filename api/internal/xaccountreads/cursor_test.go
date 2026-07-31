@@ -1,6 +1,7 @@
 package xaccountreads
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,12 @@ func TestCursorRejectsTamperingExpiryAndScopeMismatch(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	scope := CursorScope{WorkspaceID: "ws_1", AccountID: "sa_1", ExternalUserID: "managed_1"}
 	encoded, _, _ := codec.Encode(scope, "page-2", now)
+	tamperedBytes, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tamperedBytes[len(tamperedBytes)-1] ^= 0x01
+	tampered := base64.RawURLEncoding.EncodeToString(tamperedBytes)
 
 	cases := []struct {
 		name   string
@@ -42,7 +49,7 @@ func TestCursorRejectsTamperingExpiryAndScopeMismatch(t *testing.T) {
 		scope  CursorScope
 		now    time.Time
 	}{
-		{name: "tampered", cursor: encoded[:len(encoded)-1] + "A", scope: scope, now: now},
+		{name: "tampered", cursor: tampered, scope: scope, now: now},
 		{name: "expired", cursor: encoded, scope: scope, now: now.Add(7*24*time.Hour + time.Second)},
 		{name: "workspace", cursor: encoded, scope: CursorScope{WorkspaceID: "ws_2", AccountID: "sa_1", ExternalUserID: "managed_1"}, now: now},
 		{name: "account", cursor: encoded, scope: CursorScope{WorkspaceID: "ws_1", AccountID: "sa_2", ExternalUserID: "managed_1"}, now: now},
