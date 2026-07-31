@@ -83,21 +83,44 @@ Workspace identity cannot be changed incompatibly.
 
 ### 3.2 Explicit cutover phase
 
-After the new version is healthy and old API and worker pods have drained, an
-operator runs:
+After the new version is healthy, an operator runs:
 
 ```text
 api social-connections-preflight --mode=cutover
-api social-connections-cutover --confirm-old-pods-drained
+api social-connections-cutover
 ```
 
 Cutover is not part of `preDeployCommand`. It uses the existing Railway backup
 gate, records the application SHA and Railway environment identifiers, acquires
-a global PostgreSQL advisory lock, and performs reconciliation transactionally.
+a global PostgreSQL advisory lock, drains delivery, verifies the deployed
+runtime inventory, and performs reconciliation transactionally. It does not
+trust a human-only "old pods drained" assertion.
+
+The cutover command scripts the operational sequence:
+
+1. change rollout state from `expand` to `draining`;
+2. let the database claim guard refuse every new delivery-job lease, including
+   claims issued by old workers that do not know about rollout state;
+3. wait for existing running/retrying jobs and provider-I/O leases to reach zero;
+4. query Railway with the environment-scoped migration token and verify that
+   every active API and delivery-worker deployment uses the requested commit
+   SHA and that no older deployment remains active;
+5. inspect database application sessions and reject unrecognized or older
+   UniPost runtime sessions;
+6. rerun cutover preflight and create the exact-environment backup; and
+7. execute reconciliation. On a pre-reconciliation failure, restore phase
+   `expand` so claims resume safely.
+
+New runtimes set a versioned PostgreSQL `application_name` containing process
+kind, service ID, deployment ID, and commit SHA. Railway deployment inventory
+is authoritative for pod version; database sessions and a quiet legacy-write
+window are defense-in-depth. If deployment verification is unavailable,
+cutover fails closed. A fresh disposable PR environment may use its existing
+fresh-environment proof because it has no preceding deployment or data.
 
 The cutover transaction:
 
-1. changes rollout state from `expand` to `cutting_over`;
+1. changes rollout state from `draining` to `cutting_over`;
 2. locks the affected account, job, Inbox, result, and daily-ledger write
    surfaces;
 3. reruns the same classifier used by preflight;
@@ -121,7 +144,7 @@ run instead of repeating data mutations.
 
 ```text
 id                         = 'global'
-phase                      = 'expand' | 'cutting_over' | 'cutover'
+phase                      = 'expand' | 'draining' | 'cutting_over' | 'cutover'
 cutover_application_sha    nullable text
 cutover_environment_id     nullable text
 cutover_completed_at       nullable timestamptz
@@ -194,9 +217,14 @@ terminal delivery jobs, so a later retry or forgotten enqueue path cannot
 select a sibling after the first job finishes.
 
 The application-level `DUPLICATE_SOCIAL_CONNECTION` validation remains for a
-clear HTTP 422 response. The database trigger is the fail-closed final
-backstop. A database rejection is translated to the same normalized error and
-the logical Post receives no partial dispatch.
+clear HTTP 422 response before any result or delivery mutation; this admission
+layer provides the normal no-side-effect guarantee. The database trigger is a
+per-insert fail-closed backstop: it prevents a second sibling job and therefore
+prevents duplicate provider I/O, but it cannot roll back a first job that an
+internal caller already committed in a separate transaction. All first-party
+batch enqueue paths must reserve their full physical-target set in one
+transaction before inserting jobs, or roll the batch back on a database
+rejection, and translate that rejection to the same normalized error.
 
 ### 5.3 Cutover of legacy Post targets
 
@@ -232,14 +260,22 @@ The report contains:
 - pending jobs that need snapshot reconciliation;
 - Post targets that would collapse sibling bindings;
 - Inbox rows that require connection-level supersession;
-- current-day quota rows and operations that require consolidation; and
+- current-day quota rows and operations that require consolidation;
 - relevant table row counts and relation sizes for the maintenance-window
-  decision.
+  decision; and
+- heuristic alias warnings when two candidate connections in one
+  Workspace/platform have different canonical identities but overlap on a
+  non-secret stable secondary identifier. For Instagram this includes
+  cross-row overlap between the application-scoped `external_account_id` and
+  stored professional/webhook identifiers.
 
 The report proves consistency only for stored canonical identities. It cannot
 prove that two different provider identifiers are aliases. Production cutover
-requires separate provider-specific investigation if operational evidence
-suggests canonical identity corruption.
+requires separate provider-specific investigation when heuristic evidence
+suggests canonical identity corruption. Heuristic matches are warnings and
+never authorize an automatic merge. Cutover does not call provider APIs: doing
+so would add credential, permission, rate-limit, and network availability to
+the maintenance-window authority decision.
 
 ## 7. Conflict recovery and stable public IDs
 
@@ -325,11 +361,16 @@ manifest must agree in tests.
 2. Run local CI and Preview Acceptance on the exact PR head SHA.
 3. After eventual merge authorization, deploy Expand to the target environment.
 4. Wait for the new API and worker version to become healthy.
-5. Drain old API and delivery-worker pods and pause delivery claims.
-6. Run cutover preflight and retain its JSON artifact.
-7. Confirm a Railway backup for the exact environment and SHA.
-8. Run explicit cutover.
-9. Restart/resume only the new runtime.
+5. Run the cutover command; it atomically enters drain mode and database guards
+   stop new claims from old and new workers.
+6. Let the command verify zero active provider-I/O leases, the Railway
+   deployment inventory, versioned database sessions, and the legacy-write
+   quiet window.
+7. Let the command rerun preflight, retain its JSON report, and confirm a
+   Railway backup for the exact environment and SHA.
+8. Let the command execute cutover and restore delivery claims only after
+   reconciliation succeeds.
+9. Verify only the new runtime is serving after cutover.
 10. Verify account listing, targeted reconnect, sibling binding, thread
     publishing, duplicate sibling rejection, Inbox visibility, quota, and
     delivery behavior.
@@ -347,13 +388,20 @@ capability, not authorization to update `dev`.
 - retry after a terminal job is allowed only for the same binding;
 - a sibling retry after terminal completion is rejected;
 - concurrent sibling inserts produce exactly one selected binding;
-- a migration-conflict target permits no job.
+- a migration-conflict target permits no job;
+- a large same-binding thread creates one target row without rejecting jobs;
+- target-trigger latency and lock wait remain within the delivery enqueue
+  performance budget under concurrent thread insertion.
 
 ### 11.2 Rolling deployment
 
 - Expand permits an old-style null-connection insert;
 - Expand mirrors an old-style token refresh for an already classified binding;
 - Expand mirrors an old-style physical disconnect but not a Profile unbind;
+- drain mode prevents old and new workers from acquiring a new delivery lease;
+- cutover rejects an active Railway deployment on an older SHA;
+- cutover rejects an unrecognized or older UniPost database session;
+- cutover restores Expand and resumes claims when drain verification fails;
 - Cutover rejects new null-connection inserts;
 - Cutover allows only constructively valid quarantined-row recovery.
 
@@ -361,6 +409,8 @@ capability, not authorization to update `dev`.
 
 - every classifier reason is reported deterministically;
 - IG missing webhook identity is counted and quarantined;
+- overlapping secondary provider identifiers produce warnings without merging
+  connections;
 - cutover refuses running/retrying delivery work;
 - pending snapshots reconcile without changing the selected public binding;
 - Inbox duplicates retain supersession evidence;
