@@ -169,6 +169,44 @@ func (h *SocialPostHandler) syncPostMediaRetentionAtMode(
 			"post_status", postStatus)
 		return nil
 	}
+
+	planID := "free"
+	if h.quota != nil {
+		planID = h.quota.PlanIDFor(ctx, post.WorkspaceID)
+	}
+
+	var cleanupAfter pgtype.Timestamptz
+	if !cleanupOverride.IsZero() {
+		cleanupAfter = pgtype.Timestamptz{Time: cleanupOverride.UTC(), Valid: true}
+	} else if retention, ok := mediaretention.RetentionForPlanStatus(planID, postStatus); ok {
+		cleanupAfter = pgtype.Timestamptz{Time: time.Now().Add(retention), Valid: true}
+	}
+	if retentionReason == "" {
+		retentionReason = "plan_status"
+		if !cleanupAfter.Valid {
+			retentionReason = "active_post"
+		}
+	}
+
+	// External pull objects can only be staged when object storage is
+	// configured, so storage-less processes do not need this lifecycle update.
+	if h.storage != nil {
+		if err := h.queries.UpdatePublishingPullObjectUsagesForPost(ctx, db.UpdatePublishingPullObjectUsagesForPostParams{
+			PostStatus:      postStatus,
+			CleanupAfterAt:  cleanupAfter,
+			RetentionReason: retentionReason,
+			PostID:          post.ID,
+		}); err != nil {
+			if strict {
+				return fmt.Errorf("publishing pull object retention: update usages for post %s: %w", post.ID, err)
+			}
+			slog.Warn("publishing pull object retention: usage update failed",
+				"post_id", post.ID,
+				"post_status", postStatus,
+				"error", err)
+		}
+	}
+
 	if len(ids) == 0 {
 		if err := h.queries.DeleteMediaPostUsagesForPost(ctx, post.ID); err != nil {
 			if strict {
@@ -192,24 +230,6 @@ func (h *SocialPostHandler) syncPostMediaRetentionAtMode(
 			"post_id", post.ID,
 			"post_status", postStatus,
 			"error", err)
-	}
-
-	planID := "free"
-	if h.quota != nil {
-		planID = h.quota.PlanIDFor(ctx, post.WorkspaceID)
-	}
-
-	var cleanupAfter pgtype.Timestamptz
-	if !cleanupOverride.IsZero() {
-		cleanupAfter = pgtype.Timestamptz{Time: cleanupOverride.UTC(), Valid: true}
-	} else if retention, ok := mediaretention.RetentionForPlanStatus(planID, postStatus); ok {
-		cleanupAfter = pgtype.Timestamptz{Time: time.Now().Add(retention), Valid: true}
-	}
-	if retentionReason == "" {
-		retentionReason = "plan_status"
-		if !cleanupAfter.Valid {
-			retentionReason = "active_post"
-		}
 	}
 
 	for _, mediaID := range ids {

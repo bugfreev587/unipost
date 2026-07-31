@@ -2,6 +2,23 @@ name: SDK Source Validation
 
 on:
   workflow_dispatch:
+    inputs:
+      sdk_js_ref:
+        description: Exact sdk-js branch, tag, or SHA
+        required: true
+        default: main
+      sdk_python_ref:
+        description: Exact sdk-python branch, tag, or SHA
+        required: true
+        default: main
+      sdk_go_ref:
+        description: Exact sdk-go branch, tag, or SHA
+        required: true
+        default: main
+      sdk_java_ref:
+        description: Exact sdk-java branch, tag, or SHA
+        required: true
+        default: main
 
 jobs:
   validate:
@@ -15,24 +32,35 @@ jobs:
         with:
           repository: unipost-dev/sdk-js
           path: .sdk-sources/sdk-js
+          ref: ${{ inputs.sdk_js_ref }}
 
       - name: Checkout sdk-python
         uses: actions/checkout@v4
         with:
           repository: unipost-dev/sdk-python
           path: .sdk-sources/sdk-python
+          ref: ${{ inputs.sdk_python_ref }}
 
       - name: Checkout sdk-go
         uses: actions/checkout@v4
         with:
           repository: unipost-dev/sdk-go
           path: .sdk-sources/sdk-go
+          ref: ${{ inputs.sdk_go_ref }}
 
       - name: Checkout sdk-java
         uses: actions/checkout@v4
         with:
           repository: unipost-dev/sdk-java
           path: .sdk-sources/sdk-java
+          ref: ${{ inputs.sdk_java_ref }}
+
+      - name: Record exact SDK source SHAs
+        run: |
+          mkdir -p artifacts/sdk-source-validation
+          for repo in sdk-js sdk-python sdk-go sdk-java; do
+            printf '%s %s\n' "$repo" "$(git -C ".sdk-sources/$repo" rev-parse HEAD)"
+          done | tee artifacts/sdk-source-validation/source-shas.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -59,36 +87,48 @@ jobs:
       - name: Validate JavaScript SDK source
         env:
           UNIPOST_DEV_ROOT: ${{ github.workspace }}/.sdk-sources
-          UNIPOST_API_KEY: ${{ secrets.UNIPOST_REGRESSION_API_KEY }}
-          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
-          BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
+          UNIPOST_API_KEY: ${{ secrets.UNIPOST_DEV_REGRESSION_API_KEY }}
+          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_X_ACCOUNT_ID }}
+          TEST_X_ACCOUNT_ID: ${{ secrets.REGRESSION_X_ACCOUNT_ID }}
+          TEST_EXTERNAL_USER_ID: ${{ secrets.REGRESSION_X_EXTERNAL_USER_ID }}
+          REQUIRE_X_ACCOUNT_READ_ACCEPTANCE: "true"
+          BASE_URL: https://dev-api.unipost.dev
           LOG_DIR: ${{ github.workspace }}/artifacts/sdk-source-validation
         run: scripts/sdk-source-validation/run-suite.sh sdk-js
 
       - name: Validate Python SDK source
         env:
           UNIPOST_DEV_ROOT: ${{ github.workspace }}/.sdk-sources
-          UNIPOST_API_KEY: ${{ secrets.UNIPOST_REGRESSION_API_KEY }}
-          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
-          BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
+          UNIPOST_API_KEY: ${{ secrets.UNIPOST_DEV_REGRESSION_API_KEY }}
+          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_X_ACCOUNT_ID }}
+          TEST_X_ACCOUNT_ID: ${{ secrets.REGRESSION_X_ACCOUNT_ID }}
+          TEST_EXTERNAL_USER_ID: ${{ secrets.REGRESSION_X_EXTERNAL_USER_ID }}
+          REQUIRE_X_ACCOUNT_READ_ACCEPTANCE: "true"
+          BASE_URL: https://dev-api.unipost.dev
           LOG_DIR: ${{ github.workspace }}/artifacts/sdk-source-validation
         run: scripts/sdk-source-validation/run-suite.sh sdk-python
 
       - name: Validate Go SDK source
         env:
           UNIPOST_DEV_ROOT: ${{ github.workspace }}/.sdk-sources
-          UNIPOST_API_KEY: ${{ secrets.UNIPOST_REGRESSION_API_KEY }}
-          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
-          BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
+          UNIPOST_API_KEY: ${{ secrets.UNIPOST_DEV_REGRESSION_API_KEY }}
+          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_X_ACCOUNT_ID }}
+          TEST_X_ACCOUNT_ID: ${{ secrets.REGRESSION_X_ACCOUNT_ID }}
+          TEST_EXTERNAL_USER_ID: ${{ secrets.REGRESSION_X_EXTERNAL_USER_ID }}
+          REQUIRE_X_ACCOUNT_READ_ACCEPTANCE: "true"
+          BASE_URL: https://dev-api.unipost.dev
           LOG_DIR: ${{ github.workspace }}/artifacts/sdk-source-validation
         run: scripts/sdk-source-validation/run-suite.sh sdk-go
 
       - name: Validate Java SDK source
         env:
           UNIPOST_DEV_ROOT: ${{ github.workspace }}/.sdk-sources
-          UNIPOST_API_KEY: ${{ secrets.UNIPOST_REGRESSION_API_KEY }}
-          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
-          BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
+          UNIPOST_API_KEY: ${{ secrets.UNIPOST_DEV_REGRESSION_API_KEY }}
+          TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_X_ACCOUNT_ID }}
+          TEST_X_ACCOUNT_ID: ${{ secrets.REGRESSION_X_ACCOUNT_ID }}
+          TEST_EXTERNAL_USER_ID: ${{ secrets.REGRESSION_X_EXTERNAL_USER_ID }}
+          REQUIRE_X_ACCOUNT_READ_ACCEPTANCE: "true"
+          BASE_URL: https://dev-api.unipost.dev
           LOG_DIR: ${{ github.workspace }}/artifacts/sdk-source-validation
         run: scripts/sdk-source-validation/run-suite.sh sdk-java
 

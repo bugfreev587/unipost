@@ -337,6 +337,46 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     content: "When the X DM rollout is enabled, accounts missing dm.read or dm.write reconnect once. Accounts that already granted both DM scopes do not reconnect again.",
   }),
   chunk({
+    id: "guide-x-profile-post-history",
+    title: "Read an X profile and authored post history",
+    path: "/docs/guides/x/profile-and-post-history",
+    section_id: "prerequisites",
+    primary_nav: "Guides",
+    section_title: "Integrate connected X account reads",
+    product_area: "accounts",
+    tags: ["x profile", "twitter profile", "authored posts", "post history", "cursor", "idempotency", "external user id"],
+    intent_tags: ["reference", "auth"],
+    endpoint_aliases: [
+      "GET /v1/accounts/{id}/profile",
+      "GET /v1/accounts/:id/profile",
+      "GET /v1/accounts/{id}/posts",
+      "GET /v1/accounts/:id/posts",
+    ],
+    platforms: ["twitter"],
+    content:
+      "To read a connected X profile and authored post history, keep the API key server-side, bind the account to the authenticated external_user_id, preserve the connection's X app identity, and require users.read plus offline.access; post history also needs tweet.read. Every read needs a caller-owned Idempotency-Key. Retry an uncertain identical request with the same key. Each new cursor or filter set is a new logical page and gets a new key. start_time is inclusive, end_time is exclusive, limit is 5 to 100, and cursors are opaque and expiring. Inspect request_id, error.code, is_retriable, Retry-After, and retry_cursor.",
+  }),
+  chunk({
+    id: "guide-x-profile-post-history-credits",
+    title: "Account-read X Credits behavior",
+    path: "/docs/guides/x/profile-and-post-history",
+    section_id: "credits",
+    primary_nav: "Guides",
+    section_title: "Estimate and settle X account-read Credits",
+    product_area: "billing",
+    tags: ["x credits", "profile read credits", "post read credits", "insufficient x credits", "managed x"],
+    intent_tags: ["reference"],
+    endpoint_aliases: [
+      "GET /v1/accounts/{id}/profile",
+      "GET /v1/accounts/{id}/posts",
+      "GET /v1/billing/x-credits",
+    ],
+    platforms: ["twitter"],
+    required_feature: "x_credits_billing_v1",
+    content:
+      "When x_credits_billing_v1 is enabled, UniPost-managed X profile and authored-post reads reserve estimated Credits before calling X and settle the receipt afterward. Profile reads use user.read; post pages estimate from limit and settle from scanned_count. INSUFFICIENT_X_CREDITS is denied before the provider call. A workspace-owned X app reports customer_x_app and bypasses customer Credits. Inspect meta.credits and request_id.",
+  }),
+  chunk({
     id: "guide-x-credits",
     title: "Plan and monitor X Credits",
     path: "/docs/guides/x/credits",
@@ -1067,7 +1107,10 @@ function detectIntent(query: string): DocsAiIntent {
     /\bbearer\b/,
     /\btoken\b/,
   ]);
-  const postingIntent = hasAny(normalizedQuery, [
+  const isXAccountReadIntent = /\b(?:x|twitter)\b/.test(normalizedQuery)
+    && /\b(?:read|profile|history|timeline)\b/.test(normalizedQuery)
+    && /\bposts?\b/.test(normalizedQuery);
+  const postingIntent = !isXAccountReadIntent && hasAny(normalizedQuery, [
     /\bpublish\b/,
     /\bposting\b/,
     /\bposts?\b/,
@@ -1251,6 +1294,24 @@ function hitById(search: DocsAiSearchResult, id: string) {
 }
 
 function orderedHitsForAnswer(query: string, search: DocsAiSearchResult) {
+  const normalizedQuery = normalize(query);
+  const isXAccountReadWorkflow = /\b(?:x|twitter)\b/.test(normalizedQuery)
+    && /\bprofile\b/.test(normalizedQuery)
+    && /\b(?:post|posts|history|timeline)\b/.test(normalizedQuery);
+
+  if (isXAccountReadWorkflow) {
+    const creditsHit = /\bcredits?\b/.test(normalizedQuery)
+      ? search.hits.find((hit) => hit.chunk.id === "guide-x-profile-post-history-credits")
+      : undefined;
+    return uniqueHitsByPath([
+      creditsHit,
+      hitById(search, "guide-x-profile-post-history"),
+      hitById(search, "api-x-account-profile"),
+      hitById(search, "api-x-account-posts"),
+      ...search.hits,
+    ].filter((hit): hit is DocsAiSearchHit => Boolean(hit)));
+  }
+
   if (search.intent === "connect") {
     const isExactCreateSession = normalizeEndpoint(query).includes("post /v1/connect/sessions");
     const mentionsTikTok = normalize(query).includes("tiktok");

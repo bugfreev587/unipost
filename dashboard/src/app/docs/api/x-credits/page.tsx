@@ -74,6 +74,111 @@ const EVENT_RESPONSE_FIELDS: ParamRow[] = [
   { name: "meta.next_cursor", type: "string", required: false, description: "Next-page cursor when more events exist." },
 ];
 
+const ALLOWANCE_SNIPPETS = [
+  {
+    lang: "curl",
+    label: "cURL",
+    code: `curl "https://api.unipost.dev/v1/billing/x-credits" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+  },
+  {
+    lang: "javascript",
+    label: "JavaScript",
+    code: `const allowance = await client.billing.getXCredits();
+
+console.log(allowance.request_id);
+console.log(allowance.data.monthly_remaining);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `allowance = client.billing.get_x_credits()
+
+print(allowance.request_id)
+print(allowance.data.monthly_remaining)`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `allowance, err := client.Billing.GetXCredits(ctx)
+if err != nil {
+  log.Fatal(err)
+}
+
+fmt.Println(allowance.RequestID)
+fmt.Println(allowance.Data.MonthlyRemaining)`,
+  },
+  {
+    lang: "java",
+    label: "Java",
+    code: `var allowance = client.billing().getXCredits();
+
+System.out.println(allowance.path("request_id").asText());
+System.out.println(allowance.path("data").path("monthly_remaining"));`,
+  },
+];
+
+const EVENT_SNIPPETS = [
+  {
+    lang: "curl",
+    label: "cURL",
+    code: `curl "https://api.unipost.dev/v1/billing/x-credits/events?account_id=sa_x_123&operation=post.read&limit=50" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+  },
+  {
+    lang: "javascript",
+    label: "JavaScript",
+    code: `const events = await client.billing.listXCreditEvents({
+  accountId: "sa_x_123",
+  operation: "post.read",
+  limit: 50,
+});
+
+console.log(events.request_id);
+console.log(events.data, events.meta.next_cursor);`,
+  },
+  {
+    lang: "python",
+    label: "Python",
+    code: `events = client.billing.list_x_credit_events(
+    account_id="sa_x_123",
+    operation="post.read",
+    limit=50,
+)
+
+print(events.request_id)
+print(events.data, events.meta.next_cursor)`,
+  },
+  {
+    lang: "go",
+    label: "Go",
+    code: `events, err := client.Billing.ListXCreditEvents(ctx, &unipost.ListXCreditEventsParams{
+  AccountID: "sa_x_123",
+  Operation: "post.read",
+  Limit: 50,
+})
+if err != nil {
+  log.Fatal(err)
+}
+
+fmt.Println(events.RequestID)
+fmt.Println(events.Data, events.Meta.NextCursor)`,
+  },
+  {
+    lang: "java",
+    label: "Java",
+    code: `var events = client.billing().listXCreditEvents(Map.of(
+    "account_id", "sa_x_123",
+    "operation", "post.read",
+    "limit", 50
+));
+
+System.out.println(events.path("request_id").asText());
+System.out.println(events.path("data"));
+System.out.println(events.path("meta").path("next_cursor"));`,
+  },
+];
+
 export default async function XCreditsReferencePage() {
   const publicFeatureFlags = await requirePublicDocsFeature("x_credits_billing_v1");
 
@@ -99,16 +204,7 @@ export default async function XCreditsReferencePage() {
             <code> FEATURE_NOT_AVAILABLE</code>. The 20 X publishes/account/day limit and internal inbound safety cap
             remain active.
           </p>
-          <CodeTabs
-            snippets={[
-              {
-                lang: "curl",
-                label: "cURL",
-                code: `curl "https://api.unipost.dev/v1/billing/x-credits" \\
-  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
-              },
-            ]}
-          />
+          <CodeTabs snippets={ALLOWANCE_SNIPPETS} />
         </DocSection>
 
         <DocSection id="response" title="Response">
@@ -131,12 +227,7 @@ export default async function XCreditsReferencePage() {
           </p>
           <ParamTable params={EVENT_QUERY_FIELDS} />
           <div style={{ marginTop: 18 }}>
-            <CodeTabs snippets={[{
-              lang: "curl",
-              label: "cURL",
-              code: `curl "https://api.unipost.dev/v1/billing/x-credits/events?account_id=sa_x_123&operation=post.read&limit=50" \\
-  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
-            }]} />
+            <CodeTabs snippets={EVENT_SNIPPETS} />
           </div>
           <div style={{ marginTop: 18 }}>
             <ParamTable params={EVENT_RESPONSE_FIELDS} />

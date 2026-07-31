@@ -43,6 +43,7 @@ import {
   getPublishingRestrictions,
   getMe,
   getMedia,
+  listPinterestBoards,
   listProfiles,
   listSocialAccounts,
   type PlatformCapabilitiesEnvelope,
@@ -63,6 +64,11 @@ import {
   isPlanPlatformPublishingRestrictedError,
   isPlatformRestricted,
 } from "@/lib/publishing-restrictions";
+import {
+  isPinterestBoardSnapshotFresh,
+  pinterestBoardEnvironment,
+  type PinterestBoardSnapshot,
+} from "@/lib/pinterest-boards";
 
 const MIN_DRAWER_WIDTH = 880;
 const MAX_DRAWER_WIDTH = 1680;
@@ -1766,7 +1772,10 @@ export function CreatePostDrawer({
   // Per-account creator video-length cap reported by each TikTokFields
   // panel once creator_info resolves. Missing entry = cap unknown.
   const [tiktokMaxByAccount, setTiktokMaxByAccount] = useState<Record<string, number>>({});
+  const [pinterestBoardSnapshots, setPinterestBoardSnapshots] = useState<Record<string, PinterestBoardSnapshot>>({});
+  const pinterestBoardSnapshotsRef = useRef<Record<string, PinterestBoardSnapshot>>({});
   const pendingCloseRef = useRef(false);
+  const preservePinterestSubmitErrorRef = useRef(false);
   const mainContentRef = useRef<HTMLTextAreaElement | null>(null);
   const mediaSectionRef = useRef<HTMLDivElement | null>(null);
   const publishPanelRef = useRef<HTMLDivElement | null>(null);
@@ -1778,6 +1787,17 @@ export function CreatePostDrawer({
   const [rightPaneWidth, setRightPaneWidth] = useState(COMPOSE_DEFAULT_RIGHT_PANE_WIDTH);
   const [aiPaneWidth, setAIPaneWidth] = useState(COMPOSE_DEFAULT_AI_PANE_WIDTH);
   const isDraggingWidthRef = useRef(false);
+
+  const updatePinterestBoardSnapshot = useCallback((accountId: string, snapshot: PinterestBoardSnapshot | null) => {
+    const next = { ...pinterestBoardSnapshotsRef.current };
+    if (snapshot) {
+      next[accountId] = snapshot;
+    } else {
+      delete next[accountId];
+    }
+    pinterestBoardSnapshotsRef.current = next;
+    setPinterestBoardSnapshots(next);
+  }, []);
 
   const getComposeBodyWidth = useCallback(() => {
     return bodyLayoutRef.current?.getBoundingClientRect().width ?? 0;
@@ -2007,10 +2027,12 @@ export function CreatePostDrawer({
 
   useEffect(() => {
     if (!open) return;
+    const preservePinterestError = preservePinterestSubmitErrorRef.current;
+    preservePinterestSubmitErrorRef.current = false;
     setValidationResult(null);
     setValidationChecked(false);
     setWarningsAcknowledged(false);
-    setSubmitError(null);
+    if (!preservePinterestError) setSubmitError(null);
   }, [
     open,
     form.mainContent,
@@ -2348,8 +2370,75 @@ export function CreatePostDrawer({
     mainContentRef.current?.focus();
   }
 
+  function showPinterestBoardSubmissionError(accountId: string, message: string) {
+    form.expandBlock(accountId);
+    window.requestAnimationFrame(() => {
+      platformBlockRefs.current[accountId]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    setSubmitError({
+      title: "Pinterest board unavailable",
+      message,
+      mailto: buildSupportMailto({
+        subject: "Pinterest board selection failed in dashboard",
+        intro: "The dashboard could not confirm the selected Pinterest board before publishing.",
+        details: [
+          `Workspace ID: ${workspaceId}`,
+          profileName ? `Profile: ${profileName}` : undefined,
+          `Account ID: ${accountId}`,
+          `Error: ${message}`,
+        ],
+      }),
+      contactHref: buildContactPageHref({
+        topic: "pinterest-board-selection",
+        source: "create-post-drawer",
+        workspace: workspaceId,
+        profile: profileName,
+        error: message,
+      }),
+    });
+  }
+
+  async function ensurePinterestBoardSelectionsFresh(token: string): Promise<boolean> {
+    const pinterestAccounts = form.uniqueSelectedAccounts.filter((account) => account.platform === "pinterest");
+    for (const account of pinterestAccounts) {
+      const previous = pinterestBoardSnapshotsRef.current[account.id];
+      let current = previous;
+      if (!current || !isPinterestBoardSnapshotFresh(current, Date.now())) {
+        try {
+          const response = await listPinterestBoards(token, account.profile_id || selectedProfileId, account.id);
+          current = {
+            accountId: account.id,
+            environment: pinterestBoardEnvironment(!!response.data.sandbox_mode),
+            fetchedAt: Date.now(),
+            boardIds: (response.data.boards || []).map((board) => board.id),
+          };
+          updatePinterestBoardSnapshot(account.id, current);
+        } catch (err) {
+          const message = err instanceof Error
+            ? err.message
+            : "Pinterest boards could not be refreshed before publishing. Try again.";
+          showPinterestBoardSubmissionError(account.id, message);
+          return false;
+        }
+      }
+
+      const selectedBoardId = form.overrides[account.id]?.pinterest?.boardId?.trim() || "";
+      const environmentChanged = !!previous && previous.environment !== current.environment;
+      if (environmentChanged || !selectedBoardId || !current.boardIds.includes(selectedBoardId)) {
+        preservePinterestSubmitErrorRef.current = true;
+        form.updateOverridePlatformField(account.id, "pinterest", { boardId: "" });
+        showPinterestBoardSubmissionError(
+          account.id,
+          "The selected Pinterest board is no longer available for this account. Choose another board and publish again.",
+        );
+        return false;
+      }
+    }
+    return true;
+  }
+
   async function handleSubmit() {
-    if (!form.canSubmit) return;
+    if (!form.canSubmit || pinterestBoardBlocker) return;
     try {
       setSubmitError(null);
       const payload = form.buildPayload();
@@ -2367,6 +2456,10 @@ export function CreatePostDrawer({
       ) {
         setWarningsAcknowledged(true);
         focusIssue(validation.result.warnings[0]);
+        return;
+      }
+
+      if (!(await ensurePinterestBoardSelectionsFresh(validation.token))) {
         return;
       }
 
@@ -2610,6 +2703,22 @@ export function CreatePostDrawer({
     [form.selectedAccounts]
   );
 
+  const pinterestBoardBlocker = useMemo(() => {
+    for (const account of form.uniqueSelectedAccounts) {
+      if (account.platform !== "pinterest") continue;
+      const snapshot = pinterestBoardSnapshots[account.id];
+      if (!snapshot) return "Load Pinterest boards before publishing a Pin.";
+      if (snapshot.boardIds.length === 0) {
+        return "This Pinterest account has no available boards. Create a board before publishing a Pin.";
+      }
+      const selectedBoardId = form.overrides[account.id]?.pinterest?.boardId?.trim();
+      if (!selectedBoardId || !snapshot.boardIds.includes(selectedBoardId)) {
+        return "Choose an available Pinterest board before publishing a Pin.";
+      }
+    }
+    return null;
+  }, [form.overrides, form.uniqueSelectedAccounts, pinterestBoardSnapshots]);
+
   // Why is the primary button disabled? Surface the first blocking reason
   // as a tooltip + inline hint — otherwise the grayed-out button looks
   // like a bug (especially when uploads are silently in flight).
@@ -2654,6 +2763,7 @@ export function CreatePostDrawer({
     // error from creator_info, uploaded video too long, etc.).
     const runtimeBlocker = Object.values(tiktokBlockers).find((v) => v);
     if (runtimeBlocker) return runtimeBlocker;
+    if (pinterestBoardBlocker) return pinterestBoardBlocker;
     return null;
   }, [
     form.submitting,
@@ -2670,6 +2780,7 @@ export function CreatePostDrawer({
     tiktokBlockers,
     oversizeVideos.length,
     hasRestrictedSelection,
+    pinterestBoardBlocker,
   ]);
 
   const handleGenerateAISuggestion = useCallback(async () => {
@@ -2934,6 +3045,7 @@ export function CreatePostDrawer({
                           profileId={account.profile_id || selectedProfileId}
                           onTiktokBlockerChange={(reason) => setTiktokBlocker(account.id, reason)}
                           onTiktokMaxDurationChange={(sec) => setTiktokMaxDuration(account.id, sec)}
+                          onPinterestBoardSnapshotChange={(snapshot) => updatePinterestBoardSnapshot(account.id, snapshot)}
                           onCaptionChange={(caption) =>
                             form.updateOverrideCaption(account.id, caption)
                           }
@@ -3263,7 +3375,7 @@ export function CreatePostDrawer({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={!form.canSubmit || isValidating || hasRestrictedSelection || Object.keys(tiktokBlockers).length > 0 || oversizeVideos.length > 0}
+              disabled={!form.canSubmit || isValidating || hasRestrictedSelection || !!pinterestBoardBlocker || Object.keys(tiktokBlockers).length > 0 || oversizeVideos.length > 0}
               title={disabledReason ?? undefined}
               className={cn(
                 "px-5 py-2 text-sm font-medium rounded-lg transition-colors",

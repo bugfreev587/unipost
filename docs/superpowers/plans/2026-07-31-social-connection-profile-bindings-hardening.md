@@ -4,7 +4,7 @@
 
 **Goal:** Make PR #299 rolling-deploy safe and database fail-closed while preserving same-binding threads, Workspace isolation, and recoverable public account IDs.
 
-**Architecture:** Goose migrations 136–139 become Expand-only and install a durable rollout state machine. A persistent Post physical-target reservation enforces one selected public binding per `(post, physical connection)` while allowing multiple jobs for that binding. A backup-gated CLI orchestrates database-level delivery drain, Railway deployment verification, preflight, and forward-only cutover reconciliation; verified reconnect can recover quarantined rows in place.
+**Architecture:** Goose migrations 137–140 become Expand-only and install a durable rollout state machine. A persistent Post physical-target reservation enforces one selected public binding per `(post, physical connection)` while allowing multiple jobs for that binding. A backup-gated CLI orchestrates database-level delivery drain, Railway deployment verification, preflight, and forward-only cutover reconciliation; verified reconnect can recover quarantined rows in place.
 
 **Tech Stack:** Go 1.24, PostgreSQL 16, Goose, sqlc, pgx v5, Railway GraphQL API, Next.js 16, TypeScript, Playwright.
 
@@ -12,10 +12,10 @@
 
 ## File structure
 
-- `api/internal/db/migrations/136_social_connections_and_profile_bindings.sql`: Expand schema, rollout state, compatibility/strict authority trigger, no historical classification.
-- `api/internal/db/migrations/137_delivery_job_connection_snapshot.sql`: delivery snapshots, physical-target table/trigger, and cross-version database drain guard.
-- `api/internal/db/migrations/138_inbox_connection_deduplication.sql`: connection-aware Inbox schema without historical cutover backfill.
-- `api/internal/db/migrations/139_physical_daily_publish_reservations.sql`: legacy-compatible daily ledger schema and compatibility capture only.
+- `api/internal/db/migrations/137_social_connections_and_profile_bindings.sql`: Expand schema, rollout state, compatibility/strict authority trigger, no historical classification.
+- `api/internal/db/migrations/138_delivery_job_connection_snapshot.sql`: delivery snapshots, physical-target table/trigger, and cross-version database drain guard.
+- `api/internal/db/migrations/139_inbox_connection_deduplication.sql`: connection-aware Inbox schema without historical cutover backfill.
+- `api/internal/db/migrations/140_physical_daily_publish_reservations.sql`: legacy-compatible daily ledger schema and compatibility capture only.
 - `api/internal/db/queries/social_connection_rollout.sql`: rollout state, preflight read queries, target reservation, and recovery queries.
 - `api/internal/db/queries/post_delivery_jobs.sql`: claim gates and snapshot/target checks.
 - `api/internal/db/queries/social_accounts.sql`: fail-closed Workspace resolution and quarantined binding recovery.
@@ -32,31 +32,31 @@
 - `dashboard/src/lib/api.ts`, `dashboard/src/app/(dashboard)/projects/[id]/accounts/page.tsx`: targeted reconnect request and CTA.
 - Contract/unit/PostgreSQL integration tests live next to each modified package.
 
-## Task 1: Convert migrations 136–139 to Expand-only
+## Task 1: Convert migrations 137–140 to Expand-only
 
 **Files:**
-- Modify: `api/internal/db/migrations/136_social_connections_and_profile_bindings.sql`
-- Modify: `api/internal/db/migrations/137_delivery_job_connection_snapshot.sql`
-- Modify: `api/internal/db/migrations/138_inbox_connection_deduplication.sql`
-- Modify: `api/internal/db/migrations/139_physical_daily_publish_reservations.sql`
+- Modify: `api/internal/db/migrations/137_social_connections_and_profile_bindings.sql`
+- Modify: `api/internal/db/migrations/138_delivery_job_connection_snapshot.sql`
+- Modify: `api/internal/db/migrations/139_inbox_connection_deduplication.sql`
+- Modify: `api/internal/db/migrations/140_physical_daily_publish_reservations.sql`
 - Modify: `api/internal/db/social_connections_migration_contract_test.go`
 - Modify: `api/internal/db/migrate_test.go`
 - Test: `api/internal/db/social_connections_expand_postgres_integration_test.go`
 
 - [ ] **Step 1: Write failing migration contract tests**
 
-Add assertions that migration 136 creates rollout state in `expand`, permits a null-connection insert, does not contain the historical `UPDATE social_accounts ... reconnect_required`, and does not populate audit/conflict rows. Assert 137–139 contain schema and compatibility triggers but no historical connection-aware backfill.
+Add assertions that migration 137 creates rollout state in `expand`, permits a null-connection insert, does not contain the historical `UPDATE social_accounts ... reconnect_required`, and does not populate audit/conflict rows. Assert 138–140 contain schema and compatibility triggers but no historical connection-aware backfill.
 
 ```go
 func TestSocialConnectionMigrationsAreExpandOnly(t *testing.T) {
-    migration136 := readMigration(t, "136_social_connections_and_profile_bindings.sql")
+    migration137 := readMigration(t, "137_social_connections_and_profile_bindings.sql")
     for _, forbidden := range []string{
         "SET status = 'reconnect_required'",
         "INSERT INTO social_connection_migration_audit",
         "SET connection_id = sc.id",
     } {
-        if strings.Contains(migration136, forbidden) {
-            t.Fatalf("migration 136 contains cutover mutation %q", forbidden)
+        if strings.Contains(migration137, forbidden) {
+            t.Fatalf("migration 137 contains cutover mutation %q", forbidden)
         }
     }
     for _, required := range []string{
@@ -64,8 +64,8 @@ func TestSocialConnectionMigrationsAreExpandOnly(t *testing.T) {
         "'global', 'expand'",
         "enforce_social_connection_authority_write_gate",
     } {
-        if !strings.Contains(migration136, required) {
-            t.Fatalf("migration 136 missing %q", required)
+        if !strings.Contains(migration137, required) {
+            t.Fatalf("migration 137 missing %q", required)
         }
     }
 }
@@ -75,9 +75,9 @@ func TestSocialConnectionMigrationsAreExpandOnly(t *testing.T) {
 
 Run: `cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/db -run TestSocialConnectionMigrationsAreExpandOnly -count=1`
 
-Expected: FAIL because migration 136 still performs classification/backfill and installs an immediately strict write gate.
+Expected: FAIL because migration 137 still performs classification/backfill and installs an immediately strict write gate.
 
-- [ ] **Step 3: Rewrite migration 136 as additive Expand schema**
+- [ ] **Step 3: Rewrite migration 137 as additive Expand schema**
 
 Keep the table/column definitions and add the rollout row:
 
@@ -124,9 +124,9 @@ END IF;
 
 For an Expand update with an unchanged non-null `connection_id` and active binding, update the matching connection from changed legacy fields. When `binding_status` changes to `unbound`, do not mirror binding-local status/disconnected fields as a physical disconnect.
 
-- [ ] **Step 5: Remove automatic backfills from migrations 137–139**
+- [ ] **Step 5: Remove automatic backfills from migrations 138–140**
 
-Migration 137 adds nullable snapshots and indexes only. Migration 138 creates Inbox columns, supersession table, indexes, and delete rehome trigger but does not rank/update historical rows. Migration 139 creates/captures the daily ledger using legacy keys but does not consolidate by future connection.
+Migration 138 adds nullable snapshots and indexes only. Migration 139 creates Inbox columns, supersession table, indexes, and delete rehome trigger but does not rank/update historical rows. Migration 140 creates/captures the daily ledger using legacy keys but does not consolidate by future connection.
 
 - [ ] **Step 6: Add PostgreSQL Expand integration coverage**
 
@@ -150,10 +150,10 @@ Expected: PASS.
 - [ ] **Step 8: Commit Expand migrations**
 
 ```bash
-git add api/internal/db/migrations/136_social_connections_and_profile_bindings.sql \
-  api/internal/db/migrations/137_delivery_job_connection_snapshot.sql \
-  api/internal/db/migrations/138_inbox_connection_deduplication.sql \
-  api/internal/db/migrations/139_physical_daily_publish_reservations.sql \
+git add api/internal/db/migrations/137_social_connections_and_profile_bindings.sql \
+  api/internal/db/migrations/138_delivery_job_connection_snapshot.sql \
+  api/internal/db/migrations/139_inbox_connection_deduplication.sql \
+  api/internal/db/migrations/140_physical_daily_publish_reservations.sql \
   api/internal/db/*social_connection* api/internal/db/migrate_test.go
 git commit -m "refactor(db): make social connection rollout expand-only"
 ```
@@ -161,7 +161,7 @@ git commit -m "refactor(db): make social connection rollout expand-only"
 ## Task 2: Enforce one selected binding per Post physical target
 
 **Files:**
-- Modify: `api/internal/db/migrations/137_delivery_job_connection_snapshot.sql`
+- Modify: `api/internal/db/migrations/138_delivery_job_connection_snapshot.sql`
 - Create: `api/internal/db/queries/social_connection_rollout.sql`
 - Modify: `api/internal/db/queries/post_delivery_jobs.sql`
 - Modify generated: `api/internal/db/models.go`, `api/internal/db/social_connection_rollout.sql.go`, `api/internal/db/post_delivery_jobs.sql.go`
@@ -266,7 +266,7 @@ Insert at least 100 same-binding thread jobs concurrently and assert one target 
 - [ ] **Step 7: Commit target enforcement**
 
 ```bash
-git add api/internal/db/migrations/137_delivery_job_connection_snapshot.sql \
+git add api/internal/db/migrations/138_delivery_job_connection_snapshot.sql \
   api/internal/db/queries/social_connection_rollout.sql \
   api/internal/db/queries/post_delivery_jobs.sql api/internal/db/*.sql.go \
   api/internal/db/models.go api/internal/db/*physical_targets* \
@@ -309,7 +309,7 @@ Expected: FAIL because the package does not exist.
 
 - [ ] **Step 3: Implement read-only classifier queries**
 
-Move the exact canonical grouping expressions from migration 136 into read-only queries. Return non-secret hashes/counts, not tokens. Add `pg_total_relation_size` queries for `social_accounts`, `post_delivery_jobs`, `social_post_results`, `inbox_items`, and physical daily tables.
+Move the exact canonical grouping expressions from migration 137 into read-only queries. Return non-secret hashes/counts, not tokens. Add `pg_total_relation_size` queries for `social_accounts`, `post_delivery_jobs`, `social_post_results`, `inbox_items`, and physical daily tables.
 
 - [ ] **Step 4: Implement heuristic alias warnings**
 
@@ -345,7 +345,7 @@ git commit -m "feat(api): add social connection cutover preflight"
 ## Task 4: Add database drain and Railway deployment proof
 
 **Files:**
-- Modify: `api/internal/db/migrations/137_delivery_job_connection_snapshot.sql`
+- Modify: `api/internal/db/migrations/138_delivery_job_connection_snapshot.sql`
 - Modify: `api/internal/db/queries/social_connection_rollout.sql`
 - Modify: `api/internal/db/queries/post_delivery_jobs.sql`
 - Modify: `api/internal/railwaybackup/client.go`
@@ -424,7 +424,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit drain proof**
 
 ```bash
-git add api/internal/db/migrations/137_delivery_job_connection_snapshot.sql \
+git add api/internal/db/migrations/138_delivery_job_connection_snapshot.sql \
   api/internal/db/queries/post_delivery_jobs.sql api/internal/db/queries/social_connection_rollout.sql \
   api/internal/railwaybackup api/cmd/api/main.go api/internal/db/*drain*
 git commit -m "feat(api): guard social connection cutover drain"

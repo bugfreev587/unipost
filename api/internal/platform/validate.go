@@ -48,6 +48,11 @@ type PlatformPostInput struct {
 	AccountID string
 	Caption   string
 	MediaURLs []string
+	// DispatchEnvironment is server-owned metadata used to keep
+	// provider resource identities isolated across runtime environments.
+	// It is persisted for scheduled delivery but is never accepted from
+	// the public request shape.
+	DispatchEnvironment string `json:"-"`
 	// MediaIDs (Sprint 2) references rows in the media library —
 	// uploaded via POST /v1/media before publish. The handler resolves
 	// each ID to a presigned download URL at dispatch time and adds

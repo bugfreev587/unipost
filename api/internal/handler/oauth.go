@@ -460,7 +460,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 					h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to encrypt tokens")
 					return
 				}
-				_, _ = h.queries.ReactivateSocialAccount(r.Context(), db.ReactivateSocialAccountParams{
+				_, reactivateErr := h.queries.ReactivateSocialAccount(r.Context(), db.ReactivateSocialAccountParams{
 					ID:               existing.ID,
 					AccessToken:      encAccess,
 					RefreshToken:     pgtype.Text{String: encRefresh, Valid: encRefresh != ""},
@@ -471,6 +471,9 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 					Scope:            result.Scopes,
 					XAppMode:         resolvedXAppMode,
 				})
+				if reactivateErr == nil {
+					platform.InvalidateAccountState(platformName, existing.ID)
+				}
 				h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
 					Level:     integrationlogs.LevelInfo,
 					Status:    integrationlogs.StatusSuccess,
