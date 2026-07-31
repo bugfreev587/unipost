@@ -206,40 +206,47 @@ func detectISOBaseMediaType(prefix []byte) string {
 		return ""
 	}
 	box := prefix[:boxSize]
-	for offset := 8; offset+4 <= len(box); offset += 4 {
-		if isISOBaseImageBrand(string(box[offset : offset+4])) {
-			return ""
-		}
-		if offset == 8 {
-			// Skip the four-byte minor version between the major brand and
-			// compatible brands.
-			offset += 4
-		}
-	}
-	majorBrand := string(prefix[8:12])
+	majorBrand := string(box[8:12])
 	if majorBrand == "qt  " {
+		for offset := 16; offset+4 <= len(box); offset += 4 {
+			if string(box[offset:offset+4]) != "qt  " {
+				return ""
+			}
+		}
 		return "video/quicktime"
 	}
-	if isMP4VideoBrand(majorBrand) {
-		return "video/mp4"
+	if !isPermittedMP4Brand(majorBrand) {
+		return ""
 	}
-	return ""
+	hasVideoBrand := isDefinitiveMP4VideoBrand(majorBrand)
+	for offset := 16; offset+4 <= len(box); offset += 4 {
+		brand := string(box[offset : offset+4])
+		if !isPermittedMP4Brand(brand) {
+			return ""
+		}
+		if isDefinitiveMP4VideoBrand(brand) {
+			hasVideoBrand = true
+		}
+	}
+	if !hasVideoBrand {
+		return ""
+	}
+	return "video/mp4"
 }
 
-func isISOBaseImageBrand(brand string) bool {
+func isPermittedMP4Brand(brand string) bool {
 	switch brand {
-	case "avif", "avis", "heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs",
-		"mif1", "msf1", "miaf", "MiHB", "MiHA", "jpeg", "j2ki", "j2is":
+	case "isom", "iso2", "iso3", "iso4", "iso5", "iso6", "iso7", "iso8", "iso9", "dash",
+		"avc1", "M4V ", "M4VH", "M4VP", "mp41", "mp42", "mp71", "MSNV":
 		return true
 	default:
 		return false
 	}
 }
 
-func isMP4VideoBrand(brand string) bool {
+func isDefinitiveMP4VideoBrand(brand string) bool {
 	switch brand {
-	case "isom", "iso2", "iso3", "iso4", "iso5", "iso6", "iso7", "iso8", "iso9",
-		"avc1", "dash", "M4V ", "M4VH", "M4VP", "mp41", "mp42", "mp71", "MSNV":
+	case "avc1", "M4V ", "M4VH", "M4VP", "mp41", "mp42", "mp71", "MSNV":
 		return true
 	default:
 		return false

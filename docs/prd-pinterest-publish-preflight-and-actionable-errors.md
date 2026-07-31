@@ -675,6 +675,7 @@ The safe fetcher must:
 - enforce connection, response-header, idle-read, and total-operation timeouts;
 - stream the response through a hard byte ceiling and terminate immediately when the configured maximum is exceeded; unbounded `io.ReadAll` is prohibited;
 - detect media type from a bounded byte sample and verify it against allowed Pinterest types rather than trusting the response header, extension, or query string;
+- classify ISO-BMFF video fail-closed: the complete declared `ftyp` box must fit in the bounded sample, every declared major/compatible brand must be in a reviewed video-safe allowlist, and generic container brands alone are insufficient without a definitive video brand;
 - choose the category-specific byte ceiling only after bounded-prefix byte detection; a URL extension must not select either the image or video budget;
 - redact query strings, credentials, response bodies, and unsafe redirect targets from public errors and routine logs;
 - clean staged objects through the existing lifecycle policy.

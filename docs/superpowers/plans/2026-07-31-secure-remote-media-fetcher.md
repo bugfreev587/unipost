@@ -284,6 +284,8 @@ Cover:
 - missing body and zero-byte media fail permanently;
 - header says image while bytes are HTML, JSON, SVG, or an executable signature;
 - extension/query says image while bytes are unsupported;
+- ISO-BMFF image, unknown, and generic-only brand combinations are rejected even when the major brand is `isom`; the complete declared `ftyp` box must fit in the bounded sample;
+- a URL suffix cannot select a category budget: extensionless video uses the detected-video ceiling and a `.mp4` URL serving image bytes uses the detected-image ceiling;
 - an exact `MaxBytes` response succeeds;
 - `MaxBytes+1` fails after reading at most `MaxBytes+1`, closes the body, and removes the temp file;
 - cancellation removes the temp file;
@@ -301,7 +303,7 @@ Expected: no result streaming or MIME verification.
 
 - [ ] **Step 3: Implement bounded streaming and byte sniffing**
 
-Create the file with `os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)`. Copy through `io.LimitReader(body, policy.MaxBytes+1)` while hashing. Retain only the first 512 bytes for `http.DetectContentType`, normalize MIME without parameters, and verify it against `AllowedMediaTypes`. Never call unbounded `io.ReadAll`.
+Create the file with `os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)`. Read at most the 512-byte sniff prefix first under the absolute policy ceiling, detect and normalize MIME, then select the strictest configured ceiling for that detected MIME before streaming the remainder through `io.LimitReader(remaining+1)` while hashing. URL extensions and query strings never select a limit. ISO-BMFF classification is fail-closed: require the entire declared `ftyp` box in the prefix, allow only reviewed brands, reject any unrecognized compatible brand, and require a definitive video brand rather than generic container brands alone. Never call unbounded `io.ReadAll`.
 
 On every error, close and remove the partial file. On success, sync/close before returning `Result`. Ensure `Result.Open` opens read-only.
 
