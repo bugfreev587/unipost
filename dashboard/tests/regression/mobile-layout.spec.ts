@@ -31,6 +31,10 @@ const mobilePublicRoutes = [
     marker: /Decide whether UniPost will retry a failed destination automatically/i,
     verifyFallbackFonts: true,
   },
+  {
+    path: "/docs/guides/x/profile-and-post-history",
+    marker: /Read X profiles and post history/i,
+  },
 ];
 
 test.describe("mobile public layout", () => {
