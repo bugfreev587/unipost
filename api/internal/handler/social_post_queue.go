@@ -1077,6 +1077,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	oc := h.publishOneContext(
 		ctx,
 		post.WorkspaceID,
+		post.ID,
 		xUsageKeyForResult(res.ID),
 		pp,
 		dbAccounts,

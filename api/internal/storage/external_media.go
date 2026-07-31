@@ -18,6 +18,7 @@ var (
 
 type ExternalMediaResult struct {
 	PublicURL string
+	ObjectKey string
 	MediaType string
 	SizeBytes int64
 	SHA256Hex string
@@ -65,11 +66,32 @@ func stageExternalMedia(
 		return ExternalMediaResult{}, ErrExternalMediaFetch
 	}
 	key := path.Join("pull", hash+extension)
+	lifecycle, ok := publishingObjectContextFromContext(ctx)
+	if !ok {
+		return ExternalMediaResult{}, ErrExternalMediaLifecycle
+	}
+	reservation := PublishingObjectReservation{
+		ObjectKey:   key,
+		WorkspaceID: lifecycle.WorkspaceID,
+		PostID:      lifecycle.PostID,
+		ContentType: fetched.MediaType,
+		SizeBytes:   fetched.SizeBytes,
+	}
+	if err := lifecycle.Lifecycle.ReservePublishingObject(ctx, reservation); err != nil {
+		return ExternalMediaResult{}, fmt.Errorf("%w: reservation failed", ErrExternalMediaLifecycle)
+	}
 	if err := putFile(ctx, key, fetched.Path, fetched.MediaType, "public, max-age=86400, immutable"); err != nil {
+		if abandonErr := lifecycle.Lifecycle.AbandonPublishingObject(ctx, reservation); abandonErr != nil {
+			return ExternalMediaResult{}, errors.Join(
+				fmt.Errorf("%w: object storage unavailable", ErrExternalMediaUpload),
+				fmt.Errorf("%w: failed upload reservation could not be released", ErrExternalMediaLifecycle),
+			)
+		}
 		return ExternalMediaResult{}, fmt.Errorf("%w: object storage unavailable", ErrExternalMediaUpload)
 	}
 	return ExternalMediaResult{
 		PublicURL: publicURL(key),
+		ObjectKey: key,
 		MediaType: fetched.MediaType,
 		SizeBytes: fetched.SizeBytes,
 		SHA256Hex: hash,

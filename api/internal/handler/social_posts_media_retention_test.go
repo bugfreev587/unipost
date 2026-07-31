@@ -19,6 +19,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
 func TestMediaIDsForRetentionFromPostMetadataDedupesAcrossPlatformPosts(t *testing.T) {
@@ -69,6 +70,27 @@ func TestSyncPostMediaRetentionSchedulesCancelledPostMediaForCleanup(t *testing.
 		if upsert.CleanupAfterAt.Time.Before(before) || upsert.CleanupAfterAt.Time.After(after) {
 			t.Fatalf("cleanup_after_at = %s, want about 48h from now", upsert.CleanupAfterAt.Time)
 		}
+	}
+}
+
+func TestSyncPostMediaRetentionAppliesSamePolicyToPublishingPullObjects(t *testing.T) {
+	post := mediaRetentionPost(t, "failed")
+	dbtx := &mediaRetentionTestDB{}
+	handler := &SocialPostHandler{queries: db.New(dbtx), storage: &storage.Client{}}
+
+	before := time.Now().Add(47 * time.Hour)
+	handler.syncPostMediaRetention(context.Background(), post, post.Status)
+	after := time.Now().Add(49 * time.Hour)
+
+	if len(dbtx.publishingUsageUpdates) != 1 {
+		t.Fatalf("publishing pull usage updates = %d, want 1", len(dbtx.publishingUsageUpdates))
+	}
+	update := dbtx.publishingUsageUpdates[0]
+	if update.PostID != post.ID || update.PostStatus != "failed" || update.RetentionReason != "plan_status" {
+		t.Fatalf("publishing pull usage update = %#v", update)
+	}
+	if !update.CleanupAfterAt.Valid || update.CleanupAfterAt.Time.Before(before) || update.CleanupAfterAt.Time.After(after) {
+		t.Fatalf("cleanup_after_at = %#v, want about 48h from now", update.CleanupAfterAt)
 	}
 }
 
@@ -492,18 +514,28 @@ func mediaRetentionPost(t *testing.T, status string) db.SocialPost {
 }
 
 type mediaRetentionTestDB struct {
-	cancelPost        db.SocialPost
-	planID            string
-	retentionDeadline pgtype.Timestamptz
-	upserts           []db.UpsertMediaPostUsageParams
-	deleteAllErr      error
-	deleteExceptErr   error
-	upsertErr         error
-	upsertCalls       int
+	cancelPost               db.SocialPost
+	planID                   string
+	retentionDeadline        pgtype.Timestamptz
+	upserts                  []db.UpsertMediaPostUsageParams
+	deleteAllErr             error
+	deleteExceptErr          error
+	upsertErr                error
+	upsertCalls              int
+	publishingUsageUpdates   []db.UpdatePublishingPullObjectUsagesForPostParams
+	publishingUsageUpdateErr error
 }
 
 func (f *mediaRetentionTestDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	switch {
+	case strings.Contains(query, "-- name: UpdatePublishingPullObjectUsagesForPost"):
+		f.publishingUsageUpdates = append(f.publishingUsageUpdates, db.UpdatePublishingPullObjectUsagesForPostParams{
+			PostStatus:      args[0].(string),
+			CleanupAfterAt:  args[1].(pgtype.Timestamptz),
+			RetentionReason: args[2].(string),
+			PostID:          args[3].(string),
+		})
+		return pgconn.CommandTag{}, f.publishingUsageUpdateErr
 	case strings.Contains(query, "-- name: DeleteMediaPostUsagesForPostExcept"):
 		return pgconn.CommandTag{}, f.deleteExceptErr
 	case strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"):

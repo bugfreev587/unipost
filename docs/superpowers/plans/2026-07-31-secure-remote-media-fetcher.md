@@ -326,8 +326,15 @@ git commit -m "feat: stream and verify remote media safely"
 
 - Add: `api/internal/storage/external_media.go`
 - Add: `api/internal/storage/external_media_test.go`
+- Add: `api/internal/storage/publishing_object_lifecycle.go`
+- Add: `api/internal/db/migrations/136_publishing_pull_object_lifecycle.sql`
+- Add: `api/internal/db/queries/publishing_pull_objects.sql`
+- Add: `api/internal/handler/publishing_pull_objects.go`
 - Modify: `api/internal/storage/r2.go`
 - Modify: `api/internal/storage/media.go`
+- Modify: `api/internal/handler/social_posts.go`
+- Modify: `api/internal/handler/social_posts_media_retention.go`
+- Modify: `api/internal/worker/media_cleanup.go`
 
 - [ ] **Step 1: Add failing storage-boundary tests**
 
@@ -338,6 +345,10 @@ Use a fake `safefetch.Fetcher` and an injected narrow file uploader function. As
 - the result temp file is removed after success and upload failure;
 - the object key contains no source hostname, path, or query;
 - identical content resolves to the same content-addressed key;
+- lifecycle reservation is persisted before upload and contains no source URL;
+- upload failure marks that post usage immediately eligible for cleanup;
+- a shared object remains while any post usage is active or inside retention;
+- cleanup claims the object before R2 deletion, releases the claim after R2 failure, and safely retries database-finalization failure;
 - a fetch failure performs no storage call;
 - a storage failure is distinguishable from a fetch failure and remains temporary.
 
@@ -356,6 +367,7 @@ Add:
 ```go
 type ExternalMediaResult struct {
 	PublicURL string
+	ObjectKey string
 	MediaType string
 	SizeBytes int64
 	SHA256Hex string
@@ -363,6 +375,8 @@ type ExternalMediaResult struct {
 
 func (c *Client) StageExternalMedia(ctx context.Context, rawURL string, policy safefetch.Policy) (ExternalMediaResult, error)
 ```
+
+Attach server-owned workspace/post lifecycle metadata to the dispatch context. Reserve `publishing_pull_objects` plus `publishing_pull_object_usages` atomically before `PutFile`. Terminal post transitions update those usages with `mediaretention.RetentionForPlanStatus`; the existing media cleanup worker deletes an object only when no usage has a missing or future cleanup deadline. This remains provider-neutral and introduces no Pinterest-specific retention window.
 
 `storage.New` initializes a default production fetcher. The method fetches, defers `Result.Close`, derives extension only from detected MIME, calls existing `PutFile`, and returns the existing public URL. It does not call `UploadFromURL`.
 

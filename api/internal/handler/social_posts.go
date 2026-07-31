@@ -2266,7 +2266,7 @@ func (h *SocialPostHandler) runDispatchGroup(
 		}
 
 		usageKey := fmt.Sprintf("%s:%d", postID, postIdx)
-		oc := h.publishOne(r, workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
+		oc := h.publishOne(r, workspaceID, postID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
 		outcomes[postIdx] = oc
 
 		if oc.err != nil {
@@ -2305,6 +2305,7 @@ func (h *SocialPostHandler) runDispatchGroup(
 func (h *SocialPostHandler) publishOne(
 	r *http.Request,
 	workspaceID string,
+	postID string,
 	usageKey string,
 	pp platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
@@ -2313,12 +2314,13 @@ func (h *SocialPostHandler) publishOne(
 	dailyTracker *quota.PerPlatformDailyTracker,
 	disallowedPlatforms map[string]bool,
 ) (oc publishOneOutcome) {
-	return h.publishOneContext(r.Context(), workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
+	return h.publishOneContext(r.Context(), workspaceID, postID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
 }
 
 func (h *SocialPostHandler) publishOneContext(
 	ctx context.Context,
 	workspaceID string,
+	postID string,
 	usageKey string,
 	pp platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
@@ -2472,6 +2474,11 @@ func (h *SocialPostHandler) publishOneContext(
 		SocialAccountID: acc.ID,
 		Environment:     pp.DispatchEnvironment,
 		Events:          dispatchEventRec,
+	})
+	dispatchCtx = storage.WithPublishingObjectLifecycle(dispatchCtx, storage.PublishingObjectContext{
+		WorkspaceID: workspaceID,
+		PostID:      postID,
+		Lifecycle:   publishingObjectLifecycleRecorder{queries: h.queries},
 	})
 
 	usageEvent, usageErr := h.reserveManagedXUsage(dispatchCtx, workspaceID, usageKey+":main", acc, pp.Caption)

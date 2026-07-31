@@ -87,8 +87,8 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("read final Goose version: %v", err)
 	}
-	if version != 135 {
-		t.Fatalf("final Goose version = %d, want 135", version)
+	if version != 136 {
+		t.Fatalf("final Goose version = %d, want 136", version)
 	}
 	timezoneTx, err := database.Begin()
 	if err != nil {
@@ -225,8 +225,8 @@ func TestLatestEmbeddedMigrationVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 135 {
-		t.Fatalf("latest embedded migration version = %d, want 135", version)
+	if version != 136 {
+		t.Fatalf("latest embedded migration version = %d, want 136", version)
 	}
 }
 
@@ -521,6 +521,58 @@ func TestMediaCleanupRunsMigrationAndQueriesExist(t *testing.T) {
 	} {
 		if !strings.Contains(querySQL, want) {
 			t.Fatalf("media cleanup run queries missing %q, got:\n%s", want, querySQL)
+		}
+	}
+}
+
+func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/136_publishing_pull_object_lifecycle.sql")
+	if err != nil {
+		t.Fatalf("read publishing pull object lifecycle migration: %v", err)
+	}
+
+	sql := strings.Join(strings.Fields(strings.ToLower(string(body))), " ")
+	for _, want := range []string{
+		"create table publishing_pull_objects",
+		"object_key text primary key",
+		"cleanup_state text not null default 'active'",
+		"check (cleanup_state in ('active', 'deleting'))",
+		"create table publishing_pull_object_usages",
+		"workspace_id text not null references workspaces(id) on delete cascade",
+		"post_id text not null references social_posts(id) on delete cascade",
+		"unique (object_key, post_id)",
+		"publishing_pull_object_usages_cleanup_due_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("publishing pull object lifecycle migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+
+	queries, err := os.ReadFile("queries/publishing_pull_objects.sql")
+	if err != nil {
+		t.Fatalf("read publishing pull object queries: %v", err)
+	}
+	querySQL := string(queries)
+	for _, want := range []string{
+		"-- name: ReservePublishingPullObjectUsage :one",
+		"-- name: AbandonPublishingPullObjectUsage :exec",
+		"-- name: UpdatePublishingPullObjectUsagesForPost :exec",
+		"-- name: ClaimPublishingPullObjectsDue :many",
+		"-- name: ReleasePublishingPullObjectClaim :exec",
+		"-- name: HardDeletePublishingPullObject :exec",
+	} {
+		if !strings.Contains(querySQL, want) {
+			t.Fatalf("publishing pull object queries missing %q, got:\n%s", want, querySQL)
+		}
+	}
+	queryCompact := strings.Join(strings.Fields(strings.ToLower(querySQL)), " ")
+	for _, want := range []string{
+		"where publishing_pull_objects.cleanup_state = 'active'",
+		"candidate.cleanup_state in ('active', 'deleting')",
+		"usage.cleanup_after_at is null or usage.cleanup_after_at > now()",
+	} {
+		if !strings.Contains(queryCompact, want) {
+			t.Fatalf("publishing pull object queries missing lifecycle guard %q, got:\n%s", want, querySQL)
 		}
 	}
 }

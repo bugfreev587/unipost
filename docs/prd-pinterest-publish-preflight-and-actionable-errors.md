@@ -328,6 +328,18 @@ After the security gate passes:
 
 The staged object must reuse the existing publishing-object retention and cleanup policy. This PRD does not create a Pinterest-specific retention period.
 
+Because external media has no media-library row, storage must keep a provider-neutral lifecycle ledger for `pull/` objects:
+
+- reserve the content-addressed object and its post usage atomically before upload;
+- never persist the source URL, credentials, path, or query string in that ledger;
+- keep the usage active while the post is draft, queued, publishing, processing, or otherwise non-terminal;
+- on a terminal post transition, apply the same plan/status retention deadline already used by publishing media;
+- allow one content-addressed object to be shared by multiple posts and workspaces, and delete it only after every usage is past its deadline;
+- mark an upload failure immediately eligible for cleanup;
+- claim an object before R2 deletion so a concurrent staging request cannot reactivate and then lose the object; release the claim when R2 deletion fails, and retry database-finalization failures safely.
+
+The existing media cleanup worker owns this sweep and includes these objects in its cleanup run counts and byte totals.
+
 Media failure outcomes:
 
 | Failure | `error_code` | `next_action` | Retriable |
@@ -671,7 +683,7 @@ AppSec review and negative security tests are a release-blocking gate for arbitr
 ### 15.2 Storage and adapter boundary
 
 - The safe fetcher validates and streams bytes; it does not decide object retention or expose a public URL.
-- Existing UniPost storage persists verified bytes and applies the existing publishing-object lifecycle.
+- Existing UniPost storage persists verified bytes. A provider-neutral `pull/` object ledger connects content-addressed objects to post usages, and the existing media cleanup worker applies the same plan/status publishing-media retention policy.
 - The Pinterest adapter receives the staged public URL and selects Pinterest's `image_url` or `video_url` media-source shape.
 - Typed fetch failures remain provider-neutral until the Pinterest adapter maps them to `media_error`, `temporary_platform_error`, `fix_media`, or `retry_later`.
 - No caller may bypass the safe fetcher and pass arbitrary external URLs into the existing unhardened `UploadFromURL` path.

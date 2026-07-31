@@ -25,7 +25,7 @@ func TestExternalMediaStagesContentAddressedVerifiedFile(t *testing.T) {
 	rawURL := "https://secret.example/private/path/photo.jpg?token=hidden"
 
 	result, err := stageExternalMedia(
-		context.Background(),
+		testPublishingLifecycleContext(),
 		rawURL,
 		safefetch.Policy{MaxBytes: 1024, AllowedMediaTypes: []string{"image/jpeg"}},
 		fetcher,
@@ -54,6 +54,93 @@ func TestExternalMediaStagesContentAddressedVerifiedFile(t *testing.T) {
 	assertRemoved(t, tempPath)
 }
 
+func TestExternalMediaReservesPublishingLifecycleBeforeUpload(t *testing.T) {
+	t.Parallel()
+
+	tempPath := writeVerifiedTemp(t, []byte("verified image bytes"))
+	fetcher := &fakeExternalFetcher{result: &safefetch.Result{
+		Path: tempPath, MediaType: "image/jpeg", SizeBytes: 20, SHA256Hex: strings.Repeat("d", 64),
+	}}
+	recorder := &recordingPublishingObjectLifecycle{}
+	uploader := &recordingFileUploader{beforePut: func() {
+		if len(recorder.reservations) != 1 {
+			t.Fatalf("lifecycle reservations before upload = %d, want 1", len(recorder.reservations))
+		}
+	}}
+	ctx := WithPublishingObjectLifecycle(context.Background(), PublishingObjectContext{
+		WorkspaceID: "workspace_1",
+		PostID:      "post_1",
+		Lifecycle:   recorder,
+	})
+
+	result, err := stageExternalMedia(
+		ctx,
+		"https://cdn.example/photo.jpg",
+		safefetch.Policy{},
+		fetcher,
+		uploader.put,
+		func(key string) string { return key },
+	)
+	if err != nil {
+		t.Fatalf("stageExternalMedia returned error: %v", err)
+	}
+	if len(recorder.reservations) != 1 {
+		t.Fatalf("lifecycle reservations = %d, want 1", len(recorder.reservations))
+	}
+	reservation := recorder.reservations[0]
+	if reservation.ObjectKey != result.ObjectKey || reservation.WorkspaceID != "workspace_1" || reservation.PostID != "post_1" {
+		t.Fatalf("reservation = %#v, result = %#v", reservation, result)
+	}
+	if len(recorder.abandoned) != 0 {
+		t.Fatalf("abandoned reservations = %v, want none", recorder.abandoned)
+	}
+}
+
+func TestExternalMediaUploadFailureReleasesPublishingLifecycle(t *testing.T) {
+	t.Parallel()
+
+	tempPath := writeVerifiedTemp(t, []byte("verified image bytes"))
+	fetcher := &fakeExternalFetcher{result: &safefetch.Result{
+		Path: tempPath, MediaType: "image/jpeg", SizeBytes: 20, SHA256Hex: strings.Repeat("e", 64),
+	}}
+	recorder := &recordingPublishingObjectLifecycle{}
+	uploader := &recordingFileUploader{err: errors.New("R2 unavailable")}
+	ctx := WithPublishingObjectLifecycle(context.Background(), PublishingObjectContext{
+		WorkspaceID: "workspace_1",
+		PostID:      "post_1",
+		Lifecycle:   recorder,
+	})
+
+	_, err := stageExternalMedia(ctx, "https://cdn.example/photo.jpg", safefetch.Policy{}, fetcher, uploader.put, func(key string) string { return key })
+	if !errors.Is(err, ErrExternalMediaUpload) {
+		t.Fatalf("error = %v, want ErrExternalMediaUpload", err)
+	}
+	if len(recorder.reservations) != 1 || len(recorder.abandoned) != 1 {
+		t.Fatalf("reservations/abandoned = %d/%d, want 1/1", len(recorder.reservations), len(recorder.abandoned))
+	}
+	if recorder.abandoned[0] != recorder.reservations[0] {
+		t.Fatalf("abandoned = %#v, reservation = %#v", recorder.abandoned[0], recorder.reservations[0])
+	}
+}
+
+func TestExternalMediaRequiresPublishingLifecycleBeforeUpload(t *testing.T) {
+	t.Parallel()
+
+	tempPath := writeVerifiedTemp(t, []byte("verified image bytes"))
+	fetcher := &fakeExternalFetcher{result: &safefetch.Result{
+		Path: tempPath, MediaType: "image/jpeg", SizeBytes: 20, SHA256Hex: strings.Repeat("f", 64),
+	}}
+	uploader := &recordingFileUploader{}
+
+	_, err := stageExternalMedia(context.Background(), "https://cdn.example/photo.jpg", safefetch.Policy{}, fetcher, uploader.put, func(key string) string { return key })
+	if !errors.Is(err, ErrExternalMediaLifecycle) {
+		t.Fatalf("error = %v, want ErrExternalMediaLifecycle", err)
+	}
+	if uploader.calls != 0 {
+		t.Fatalf("storage called %d times without lifecycle reservation", uploader.calls)
+	}
+}
+
 func TestVerifiedMediaIdenticalContentUsesSameKey(t *testing.T) {
 	t.Parallel()
 
@@ -67,7 +154,7 @@ func TestVerifiedMediaIdenticalContentUsesSameKey(t *testing.T) {
 		fetcher := &fakeExternalFetcher{result: &safefetch.Result{
 			Path: path, MediaType: "image/png", SizeBytes: 12, SHA256Hex: sha,
 		}}
-		if _, err := stageExternalMedia(context.Background(), rawURL, safefetch.Policy{}, fetcher, uploader.put, func(key string) string { return key }); err != nil {
+		if _, err := stageExternalMedia(testPublishingLifecycleContext(), rawURL, safefetch.Policy{}, fetcher, uploader.put, func(key string) string { return key }); err != nil {
 			t.Fatalf("stageExternalMedia(%q): %v", rawURL, err)
 		}
 	}
@@ -100,7 +187,7 @@ func TestExternalMediaUploadFailureIsTemporaryAndCleansFile(t *testing.T) {
 	}}
 	uploader := &recordingFileUploader{err: errors.New("R2 unavailable")}
 	_, err := stageExternalMedia(
-		context.Background(),
+		testPublishingLifecycleContext(),
 		"https://secret.example/video.mp4?token=hidden",
 		safefetch.Policy{},
 		fetcher,
@@ -118,6 +205,14 @@ func TestExternalMediaUploadFailureIsTemporaryAndCleansFile(t *testing.T) {
 		t.Fatalf("storage error disclosed source URL: %q", err.Error())
 	}
 	assertRemoved(t, path)
+}
+
+func testPublishingLifecycleContext() context.Context {
+	return WithPublishingObjectLifecycle(context.Background(), PublishingObjectContext{
+		WorkspaceID: "workspace_test",
+		PostID:      "post_test",
+		Lifecycle:   &recordingPublishingObjectLifecycle{},
+	})
 }
 
 func TestExternalMediaNilResultSkipsStorage(t *testing.T) {
@@ -154,6 +249,7 @@ type recordingFileUploader struct {
 	keys        []string
 	contentType string
 	err         error
+	beforePut   func()
 }
 
 func (u *recordingFileUploader) put(_ context.Context, key, path, contentType, _ string) error {
@@ -163,10 +259,33 @@ func (u *recordingFileUploader) put(_ context.Context, key, path, contentType, _
 	u.key = key
 	u.keys = append(u.keys, key)
 	u.contentType = contentType
+	if u.beforePut != nil {
+		u.beforePut()
+	}
 	if _, err := os.Stat(path); err != nil {
 		return err
 	}
 	return u.err
+}
+
+type recordingPublishingObjectLifecycle struct {
+	reservations []PublishingObjectReservation
+	abandoned    []PublishingObjectReservation
+	reserveErr   error
+	abandonErr   error
+}
+
+func (r *recordingPublishingObjectLifecycle) ReservePublishingObject(_ context.Context, reservation PublishingObjectReservation) error {
+	if r.reserveErr != nil {
+		return r.reserveErr
+	}
+	r.reservations = append(r.reservations, reservation)
+	return nil
+}
+
+func (r *recordingPublishingObjectLifecycle) AbandonPublishingObject(_ context.Context, reservation PublishingObjectReservation) error {
+	r.abandoned = append(r.abandoned, reservation)
+	return r.abandonErr
 }
 
 func writeVerifiedTemp(t *testing.T, data []byte) string {
