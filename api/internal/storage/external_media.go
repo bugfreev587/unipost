@@ -77,11 +77,12 @@ func stageExternalMedia(
 		ContentType: fetched.MediaType,
 		SizeBytes:   fetched.SizeBytes,
 	}
-	if err := lifecycle.Lifecycle.ReservePublishingObject(ctx, reservation); err != nil {
+	usageID, err := lifecycle.Lifecycle.ReservePublishingObject(ctx, reservation)
+	if err != nil || strings.TrimSpace(usageID) == "" {
 		return ExternalMediaResult{}, fmt.Errorf("%w: reservation failed", ErrExternalMediaLifecycle)
 	}
 	if err := putFile(ctx, key, fetched.Path, fetched.MediaType, "public, max-age=86400, immutable"); err != nil {
-		if abandonErr := lifecycle.Lifecycle.AbandonPublishingObject(ctx, reservation); abandonErr != nil {
+		if abandonErr := lifecycle.Lifecycle.AbandonPublishingObject(ctx, usageID); abandonErr != nil {
 			return ExternalMediaResult{}, errors.Join(
 				fmt.Errorf("%w: object storage unavailable", ErrExternalMediaUpload),
 				fmt.Errorf("%w: failed upload reservation could not be released", ErrExternalMediaLifecycle),

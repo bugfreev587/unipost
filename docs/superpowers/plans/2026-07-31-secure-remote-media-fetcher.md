@@ -345,8 +345,8 @@ Use a fake `safefetch.Fetcher` and an injected narrow file uploader function. As
 - the result temp file is removed after success and upload failure;
 - the object key contains no source hostname, path, or query;
 - identical content resolves to the same content-addressed key;
-- lifecycle reservation is persisted before upload and contains no source URL;
-- upload failure marks that post usage immediately eligible for cleanup;
+- a unique lifecycle usage ID is persisted for every staging attempt before upload and contains no source URL;
+- upload failure marks only that attempt's usage immediately eligible for cleanup, preserving concurrent successful usages for the same post/content;
 - a shared object remains while any post usage is active or inside retention;
 - cleanup claims the object before R2 deletion, releases the claim after R2 failure, and safely retries database-finalization failure;
 - a fetch failure performs no storage call;
@@ -376,7 +376,7 @@ type ExternalMediaResult struct {
 func (c *Client) StageExternalMedia(ctx context.Context, rawURL string, policy safefetch.Policy) (ExternalMediaResult, error)
 ```
 
-Attach server-owned workspace/post lifecycle metadata to the dispatch context. Reserve `publishing_pull_objects` plus `publishing_pull_object_usages` atomically before `PutFile`. Terminal post transitions update those usages with `mediaretention.RetentionForPlanStatus`; the existing media cleanup worker deletes an object only when no usage has a missing or future cleanup deadline. This remains provider-neutral and introduces no Pinterest-specific retention window.
+Attach server-owned workspace/post lifecycle metadata to the dispatch context. Reserve `publishing_pull_objects` plus a unique per-attempt `publishing_pull_object_usages` row atomically before `PutFile`, return its usage ID, and abandon only that ID on upload failure. Terminal post transitions update all usages for the post with `mediaretention.RetentionForPlanStatus`; the existing media cleanup worker deletes an object only when no usage has a missing or future cleanup deadline. This remains provider-neutral and introduces no Pinterest-specific retention window.
 
 `storage.New` initializes a default production fetcher. The method fetches, defers `Result.Close`, derives extension only from detected MIME, calls existing `PutFile`, and returns the existing public URL. It does not call `UploadFromURL`.
 

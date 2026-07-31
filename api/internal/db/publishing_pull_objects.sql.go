@@ -17,17 +17,11 @@ SET post_status = 'failed',
     cleanup_after_at = NOW(),
     retention_reason = 'upload_failed',
     updated_at = NOW()
-WHERE object_key = $1
-  AND post_id = $2
+WHERE id = $1
 `
 
-type AbandonPublishingPullObjectUsageParams struct {
-	ObjectKey string `json:"object_key"`
-	PostID    string `json:"post_id"`
-}
-
-func (q *Queries) AbandonPublishingPullObjectUsage(ctx context.Context, arg AbandonPublishingPullObjectUsageParams) error {
-	_, err := q.db.Exec(ctx, abandonPublishingPullObjectUsage, arg.ObjectKey, arg.PostID)
+func (q *Queries) AbandonPublishingPullObjectUsage(ctx context.Context, usageID string) error {
+	_, err := q.db.Exec(ctx, abandonPublishingPullObjectUsage, usageID)
 	return err
 }
 
@@ -144,13 +138,7 @@ SELECT
   NULL,
   'active_post'
 FROM reserved_object
-ON CONFLICT (object_key, post_id) DO UPDATE
-SET workspace_id = EXCLUDED.workspace_id,
-    post_status = 'publishing',
-    cleanup_after_at = NULL,
-    retention_reason = 'active_post',
-    updated_at = NOW()
-RETURNING object_key
+RETURNING id
 `
 
 type ReservePublishingPullObjectUsageParams struct {
@@ -169,9 +157,9 @@ func (q *Queries) ReservePublishingPullObjectUsage(ctx context.Context, arg Rese
 		arg.ContentType,
 		arg.SizeBytes,
 	)
-	var object_key string
-	err := row.Scan(&object_key)
-	return object_key, err
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const updatePublishingPullObjectUsagesForPost = `-- name: UpdatePublishingPullObjectUsagesForPost :exec

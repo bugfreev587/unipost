@@ -330,12 +330,12 @@ The staged object must reuse the existing publishing-object retention and cleanu
 
 Because external media has no media-library row, storage must keep a provider-neutral lifecycle ledger for `pull/` objects:
 
-- reserve the content-addressed object and its post usage atomically before upload;
+- reserve the content-addressed object and a unique per-staging-attempt usage ID atomically before upload;
 - never persist the source URL, credentials, path, or query string in that ledger;
 - keep the usage active while the post is draft, queued, publishing, processing, or otherwise non-terminal;
 - on a terminal post transition, apply the same plan/status retention deadline already used by publishing media;
 - allow one content-addressed object to be shared by multiple posts and workspaces, and delete it only after every usage is past its deadline;
-- mark an upload failure immediately eligible for cleanup;
+- mark only the failed attempt's usage immediately eligible for cleanup, so a concurrent successful dispatch for the same post and content remains protected;
 - claim an object before R2 deletion so a concurrent staging request cannot reactivate and then lose the object; release the claim when R2 deletion fails, and retry database-finalization failures safely.
 
 The existing media cleanup worker owns this sweep and includes these objects in its cleanup run counts and byte totals.
@@ -675,6 +675,7 @@ The safe fetcher must:
 - enforce connection, response-header, idle-read, and total-operation timeouts;
 - stream the response through a hard byte ceiling and terminate immediately when the configured maximum is exceeded; unbounded `io.ReadAll` is prohibited;
 - detect media type from a bounded byte sample and verify it against allowed Pinterest types rather than trusting the response header, extension, or query string;
+- choose the category-specific byte ceiling only after bounded-prefix byte detection; a URL extension must not select either the image or video budget;
 - redact query strings, credentials, response bodies, and unsafe redirect targets from public errors and routine logs;
 - clean staged objects through the existing lifecycle policy.
 

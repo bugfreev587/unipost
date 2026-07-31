@@ -24,8 +24,8 @@ type PublishingObjectReservation struct {
 // recorded, or neither is. Abandon marks a failed upload attempt as immediately
 // eligible for the normal publishing-object cleanup worker.
 type PublishingObjectLifecycle interface {
-	ReservePublishingObject(context.Context, PublishingObjectReservation) error
-	AbandonPublishingObject(context.Context, PublishingObjectReservation) error
+	ReservePublishingObject(context.Context, PublishingObjectReservation) (string, error)
+	AbandonPublishingObject(context.Context, string) error
 }
 
 type PublishingObjectContext struct {

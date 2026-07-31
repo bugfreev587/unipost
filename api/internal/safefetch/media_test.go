@@ -140,6 +140,9 @@ func TestMediaRejectsEmptyAndTypeConfusedBodies(t *testing.T) {
 		{name: "header mismatch", header: "image/png", body: append([]byte{0xff, 0xd8, 0xff, 0xe0}, bytes.Repeat([]byte{0}, 64)...), allowed: []string{"image/jpeg", "image/png"}, wantKind: ErrorUnsupportedMedia},
 		{name: "heic is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
 		{name: "avif is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypavif\x00\x00\x00\x00mif1avif"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
+		{name: "isom with avif compatible brand is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypisom\x00\x00\x00\x00avifmp42"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
+		{name: "isom with heic compatible brand is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypisom\x00\x00\x00\x00heicmp42"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
+		{name: "incomplete ftyp box is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x04\x00ftypisom\x00\x00\x00\x00mp42"), bytes.Repeat([]byte{0}, 600)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
 		{name: "unknown bmff brand is not mp4", header: "video/mp4", body: append([]byte("\x00\x00\x00\x18ftypzzzz\x00\x00\x00\x00zzzzzzzz"), bytes.Repeat([]byte{0}, 64)...), allowed: []string{"video/mp4"}, wantKind: ErrorUnsupportedMedia},
 	}
 
@@ -173,6 +176,61 @@ func TestOversizeReadsAtMostLimitPlusOneAndRemovesTemporaryFile(t *testing.T) {
 	assertDirectoryEmpty(t, tempDir)
 	if !body.wasClosed() {
 		t.Fatal("oversized response body was not closed")
+	}
+}
+
+func TestMediaTypeSpecificByteCeilingUsesDetectedBytes(t *testing.T) {
+	t.Parallel()
+
+	limits := map[string]int64{
+		"image/png": 64,
+		"video/mp4": 128,
+	}
+	video := append([]byte("\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp42"), bytes.Repeat([]byte{0x55}, 76)...)
+	result, err := mediaFetcher(t.TempDir(), http.StatusOK, "video/mp4", newTrackedBody(video)).Fetch(
+		context.Background(),
+		"https://cdn.example/extensionless",
+		Policy{
+			MaxBytes:            128,
+			MaxBytesByMediaType: limits,
+			AllowedMediaTypes:   []string{"image/png", "video/mp4"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("extensionless detected video returned error: %v", err)
+	}
+	_ = result.Close()
+
+	image := newTrackedBody(append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0x99}, 120)...))
+	_, err = mediaFetcher(t.TempDir(), http.StatusOK, "image/png", image).Fetch(
+		context.Background(),
+		"https://cdn.example/untrusted.mp4",
+		Policy{
+			MaxBytes:            128,
+			MaxBytesByMediaType: limits,
+			AllowedMediaTypes:   []string{"image/png", "video/mp4"},
+		},
+	)
+	assertFetchErrorKind(t, err, ErrorTooLarge)
+	if got := image.bytesRead(); got > 129 {
+		t.Fatalf("image behind .mp4 URL read %d bytes, want at most overall bounded prefix", got)
+	}
+}
+
+func TestMediaTypeSpecificByteCeilingUsesStrictestNormalizedLimit(t *testing.T) {
+	t.Parallel()
+
+	policy := Policy{
+		MaxBytes: 256,
+		MaxBytesByMediaType: map[string]int64{
+			"image/png":                 128,
+			"image/png; charset=binary": 64,
+		},
+	}
+	for range 100 {
+		if got := mediaTypeMaximumBytes(policy, "image/png", policy.MaxBytes); got != 64 {
+			t.Fatalf("mediaTypeMaximumBytes() = %d, want strictest normalized limit 64", got)
+		}
 	}
 }
 

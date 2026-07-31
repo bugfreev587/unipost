@@ -420,16 +420,22 @@ func pinterestTransportFailure(_ string, _ error, stage string) error {
 	)
 }
 
-func pinterestExternalMediaPolicy(kind MediaKind) safefetch.Policy {
+func pinterestExternalMediaPolicy(_ MediaKind) safefetch.Policy {
 	capability := Capabilities["pinterest"].Media
-	policy := safefetch.Policy{MaxRedirects: 5}
-	formats := capability.Images.AllowedFormats
-	policy.MaxBytes = capability.Images.MaxFileSizeBytes
-	if kind == MediaKindVideo {
-		formats = capability.Videos.AllowedFormats
-		policy.MaxBytes = capability.Videos.MaxFileSizeBytes
+	imageTypes := pinterestMediaTypesForFormats(capability.Images.AllowedFormats)
+	videoTypes := pinterestMediaTypesForFormats(capability.Videos.AllowedFormats)
+	policy := safefetch.Policy{
+		MaxBytes:            max(capability.Images.MaxFileSizeBytes, capability.Videos.MaxFileSizeBytes),
+		MaxBytesByMediaType: make(map[string]int64, len(imageTypes)+len(videoTypes)),
+		AllowedMediaTypes:   append(imageTypes, videoTypes...),
+		MaxRedirects:        5,
 	}
-	policy.AllowedMediaTypes = pinterestMediaTypesForFormats(formats)
+	for _, mediaType := range imageTypes {
+		policy.MaxBytesByMediaType[mediaType] = capability.Images.MaxFileSizeBytes
+	}
+	for _, mediaType := range videoTypes {
+		policy.MaxBytesByMediaType[mediaType] = capability.Videos.MaxFileSizeBytes
+	}
 	return policy
 }
 

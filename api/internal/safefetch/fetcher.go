@@ -13,9 +13,10 @@ import (
 )
 
 type Policy struct {
-	MaxBytes          int64
-	AllowedMediaTypes []string
-	MaxRedirects      int
+	MaxBytes            int64
+	MaxBytesByMediaType map[string]int64
+	AllowedMediaTypes   []string
+	MaxRedirects        int
 }
 
 type Result struct {

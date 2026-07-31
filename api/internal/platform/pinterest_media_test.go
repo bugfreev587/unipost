@@ -78,11 +78,15 @@ func TestPinterestExternalMediaStagesAfterBoardPreflight(t *testing.T) {
 	if want := []string{"user_account", "board", "stage_media", "create_pin"}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("operation order = %#v, want %#v", order, want)
 	}
-	if stager.policy.MaxBytes != Capabilities["pinterest"].Media.Images.MaxFileSizeBytes {
-		t.Fatalf("image MaxBytes = %d", stager.policy.MaxBytes)
+	if stager.policy.MaxBytes != Capabilities["pinterest"].Media.Videos.MaxFileSizeBytes {
+		t.Fatalf("overall MaxBytes = %d", stager.policy.MaxBytes)
 	}
-	if want := []string{"image/jpeg", "image/png", "image/webp"}; !reflect.DeepEqual(stager.policy.AllowedMediaTypes, want) {
-		t.Fatalf("image allowed types = %#v, want %#v", stager.policy.AllowedMediaTypes, want)
+	if want := []string{"image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime"}; !reflect.DeepEqual(stager.policy.AllowedMediaTypes, want) {
+		t.Fatalf("allowed types = %#v, want %#v", stager.policy.AllowedMediaTypes, want)
+	}
+	if stager.policy.MaxBytesByMediaType["image/jpeg"] != Capabilities["pinterest"].Media.Images.MaxFileSizeBytes ||
+		stager.policy.MaxBytesByMediaType["video/mp4"] != Capabilities["pinterest"].Media.Videos.MaxFileSizeBytes {
+		t.Fatalf("per-type limits = %#v", stager.policy.MaxBytesByMediaType)
 	}
 }
 
@@ -91,11 +95,14 @@ func TestPinterestExternalVideoPolicyFollowsCapabilities(t *testing.T) {
 	if policy.MaxBytes != Capabilities["pinterest"].Media.Videos.MaxFileSizeBytes {
 		t.Fatalf("video MaxBytes = %d", policy.MaxBytes)
 	}
-	if want := []string{"video/mp4", "video/quicktime"}; !reflect.DeepEqual(policy.AllowedMediaTypes, want) {
-		t.Fatalf("video allowed types = %#v, want %#v", policy.AllowedMediaTypes, want)
+	if want := []string{"image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime"}; !reflect.DeepEqual(policy.AllowedMediaTypes, want) {
+		t.Fatalf("allowed types = %#v, want %#v", policy.AllowedMediaTypes, want)
 	}
 	if policy.MaxRedirects != 5 {
 		t.Fatalf("video MaxRedirects = %d, want 5", policy.MaxRedirects)
+	}
+	if !reflect.DeepEqual(policy, pinterestExternalMediaPolicy(MediaKindImage)) {
+		t.Fatalf("safe-fetch policy must not depend on untrusted URL-derived media kind")
 	}
 }
 

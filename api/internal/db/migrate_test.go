@@ -540,12 +540,15 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 		"create table publishing_pull_object_usages",
 		"workspace_id text not null references workspaces(id) on delete cascade",
 		"post_id text not null references social_posts(id) on delete cascade",
-		"unique (object_key, post_id)",
+		"publishing_pull_object_usages_object_post_idx",
 		"publishing_pull_object_usages_cleanup_due_idx",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("publishing pull object lifecycle migration missing %q, got:\n%s", want, string(body))
 		}
+	}
+	if strings.Contains(sql, "unique (object_key, post_id)") {
+		t.Fatalf("publishing pull usage must be per staging attempt, not shared by object/post:\n%s", string(body))
 	}
 
 	queries, err := os.ReadFile("queries/publishing_pull_objects.sql")
@@ -570,10 +573,15 @@ func TestPublishingPullObjectLifecycleMigrationAndQueriesExist(t *testing.T) {
 		"where publishing_pull_objects.cleanup_state = 'active'",
 		"candidate.cleanup_state in ('active', 'deleting')",
 		"usage.cleanup_after_at is null or usage.cleanup_after_at > now()",
+		"returning id",
+		"where id = sqlc.arg(usage_id)",
 	} {
 		if !strings.Contains(queryCompact, want) {
 			t.Fatalf("publishing pull object queries missing lifecycle guard %q, got:\n%s", want, querySQL)
 		}
+	}
+	if strings.Contains(queryCompact, "on conflict (object_key, post_id)") {
+		t.Fatalf("publishing pull reservation must insert an independent usage per attempt:\n%s", querySQL)
 	}
 }
 

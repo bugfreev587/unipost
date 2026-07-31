@@ -28,10 +28,11 @@ func storeVerifiedMedia(ctx context.Context, response *http.Response, policy Pol
 	if response.Body == nil {
 		return nil, newFetchStatusError(ErrorSourceRejected, response.StatusCode, false)
 	}
-	if policy.MaxBytes <= 0 {
+	absoluteMaxBytes := maximumMediaBytes(policy)
+	if absoluteMaxBytes <= 0 {
 		return nil, newFetchStatusError(ErrorSourceRejected, response.StatusCode, false)
 	}
-	if response.ContentLength > policy.MaxBytes {
+	if response.ContentLength > absoluteMaxBytes {
 		return nil, newFetchStatusError(ErrorTooLarge, response.StatusCode, false)
 	}
 
@@ -47,27 +48,51 @@ func storeVerifiedMedia(ctx context.Context, response *http.Response, policy Pol
 		}
 	}()
 
-	hash := sha256.New()
-	prefix := &prefixWriter{limit: sniffBytes}
-	limited := io.LimitReader(response.Body, policy.MaxBytes+1)
-	written, err := io.CopyBuffer(io.MultiWriter(file, hash, prefix), limited, make([]byte, 32*1024))
-	if err != nil {
-		return nil, mapMediaReadError(ctx, err, response.StatusCode)
+	prefixLimit := int64(sniffBytes)
+	if absoluteMaxBytes < prefixLimit {
+		prefixLimit = absoluteMaxBytes + 1
 	}
-	if written > policy.MaxBytes {
-		return nil, newFetchStatusError(ErrorTooLarge, response.StatusCode, false)
+	prefix := make([]byte, int(prefixLimit))
+	prefixBytes, readErr := io.ReadFull(response.Body, prefix)
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return nil, mapMediaReadError(ctx, readErr, response.StatusCode)
 	}
-	if written == 0 {
+	if prefixBytes == 0 {
 		return nil, newFetchStatusError(ErrorSourceRejected, response.StatusCode, false)
 	}
+	if int64(prefixBytes) > absoluteMaxBytes {
+		return nil, newFetchStatusError(ErrorTooLarge, response.StatusCode, false)
+	}
 
-	detected := detectMediaType(prefix.bytes)
+	detected := detectMediaType(prefix[:prefixBytes])
 	if detected == "" || !mediaTypeAllowed(detected, policy.AllowedMediaTypes) {
 		return nil, newFetchStatusError(ErrorUnsupportedMedia, response.StatusCode, false)
+	}
+	mediaMaxBytes := mediaTypeMaximumBytes(policy, detected, absoluteMaxBytes)
+	if mediaMaxBytes <= 0 {
+		return nil, newFetchStatusError(ErrorUnsupportedMedia, response.StatusCode, false)
+	}
+	if response.ContentLength > mediaMaxBytes || int64(prefixBytes) > mediaMaxBytes {
+		return nil, newFetchStatusError(ErrorTooLarge, response.StatusCode, false)
 	}
 	declared, err := normalizeDeclaredMediaType(response.Header.Get("Content-Type"))
 	if err != nil || (declared != "" && declared != "application/octet-stream" && declared != detected) {
 		return nil, newFetchStatusError(ErrorUnsupportedMedia, response.StatusCode, false)
+	}
+
+	hash := sha256.New()
+	destination := io.MultiWriter(file, hash)
+	if _, err := destination.Write(prefix[:prefixBytes]); err != nil {
+		return nil, mapMediaReadError(ctx, err, response.StatusCode)
+	}
+	remainingLimit := mediaMaxBytes - int64(prefixBytes) + 1
+	remainingBytes, err := io.CopyBuffer(destination, io.LimitReader(response.Body, remainingLimit), make([]byte, 32*1024))
+	if err != nil {
+		return nil, mapMediaReadError(ctx, err, response.StatusCode)
+	}
+	written := int64(prefixBytes) + remainingBytes
+	if written > mediaMaxBytes {
+		return nil, newFetchStatusError(ErrorTooLarge, response.StatusCode, false)
 	}
 	if err := file.Sync(); err != nil {
 		return nil, newFetchStatusError(ErrorSourceTemporary, response.StatusCode, true)
@@ -82,6 +107,42 @@ func storeVerifiedMedia(ctx context.Context, response *http.Response, policy Pol
 		SizeBytes: written,
 		SHA256Hex: hex.EncodeToString(hash.Sum(nil)),
 	}, nil
+}
+
+func maximumMediaBytes(policy Policy) int64 {
+	if policy.MaxBytes > 0 {
+		return policy.MaxBytes
+	}
+	var maximum int64
+	for _, limit := range policy.MaxBytesByMediaType {
+		if limit > maximum {
+			maximum = limit
+		}
+	}
+	return maximum
+}
+
+func mediaTypeMaximumBytes(policy Policy, detected string, absoluteMaximum int64) int64 {
+	if len(policy.MaxBytesByMediaType) == 0 {
+		return absoluteMaximum
+	}
+	var strictestLimit int64
+	for rawMediaType, limit := range policy.MaxBytesByMediaType {
+		normalized, err := normalizeDeclaredMediaType(rawMediaType)
+		if err != nil || normalized != detected || limit <= 0 {
+			continue
+		}
+		if strictestLimit == 0 || limit < strictestLimit {
+			strictestLimit = limit
+		}
+	}
+	if strictestLimit == 0 {
+		return 0
+	}
+	if absoluteMaximum > 0 && strictestLimit > absoluteMaximum {
+		return absoluteMaximum
+	}
+	return strictestLimit
 }
 
 func validateMediaResponseStatus(status int) error {
@@ -141,8 +202,19 @@ func detectISOBaseMediaType(prefix []byte) string {
 		return ""
 	}
 	boxSize := binary.BigEndian.Uint32(prefix[:4])
-	if boxSize < 16 || boxSize%4 != 0 {
+	if boxSize < 16 || boxSize%4 != 0 || uint64(boxSize) > uint64(len(prefix)) {
 		return ""
+	}
+	box := prefix[:boxSize]
+	for offset := 8; offset+4 <= len(box); offset += 4 {
+		if isISOBaseImageBrand(string(box[offset : offset+4])) {
+			return ""
+		}
+		if offset == 8 {
+			// Skip the four-byte minor version between the major brand and
+			// compatible brands.
+			offset += 4
+		}
 	}
 	majorBrand := string(prefix[8:12])
 	if majorBrand == "qt  " {
@@ -152,6 +224,16 @@ func detectISOBaseMediaType(prefix []byte) string {
 		return "video/mp4"
 	}
 	return ""
+}
+
+func isISOBaseImageBrand(brand string) bool {
+	switch brand {
+	case "avif", "avis", "heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs",
+		"mif1", "msf1", "miaf", "MiHB", "MiHA", "jpeg", "j2ki", "j2is":
+		return true
+	default:
+		return false
+	}
 }
 
 func isMP4VideoBrand(brand string) bool {
@@ -203,20 +285,4 @@ func mapMediaReadError(ctx context.Context, err error, status int) error {
 		return newFetchStatusError(ErrorTimeout, status, true)
 	}
 	return newFetchStatusError(ErrorSourceTemporary, status, true)
-}
-
-type prefixWriter struct {
-	bytes []byte
-	limit int
-}
-
-func (w *prefixWriter) Write(buffer []byte) (int, error) {
-	remaining := w.limit - len(w.bytes)
-	if remaining > 0 {
-		if remaining > len(buffer) {
-			remaining = len(buffer)
-		}
-		w.bytes = append(w.bytes, buffer[:remaining]...)
-	}
-	return len(buffer), nil
 }

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -61,7 +62,7 @@ func TestExternalMediaReservesPublishingLifecycleBeforeUpload(t *testing.T) {
 	fetcher := &fakeExternalFetcher{result: &safefetch.Result{
 		Path: tempPath, MediaType: "image/jpeg", SizeBytes: 20, SHA256Hex: strings.Repeat("d", 64),
 	}}
-	recorder := &recordingPublishingObjectLifecycle{}
+	recorder := &recordingPublishingObjectLifecycle{usageIDs: []string{"usage_1"}}
 	uploader := &recordingFileUploader{beforePut: func() {
 		if len(recorder.reservations) != 1 {
 			t.Fatalf("lifecycle reservations before upload = %d, want 1", len(recorder.reservations))
@@ -103,7 +104,7 @@ func TestExternalMediaUploadFailureReleasesPublishingLifecycle(t *testing.T) {
 	fetcher := &fakeExternalFetcher{result: &safefetch.Result{
 		Path: tempPath, MediaType: "image/jpeg", SizeBytes: 20, SHA256Hex: strings.Repeat("e", 64),
 	}}
-	recorder := &recordingPublishingObjectLifecycle{}
+	recorder := &recordingPublishingObjectLifecycle{usageIDs: []string{"usage_failed"}}
 	uploader := &recordingFileUploader{err: errors.New("R2 unavailable")}
 	ctx := WithPublishingObjectLifecycle(context.Background(), PublishingObjectContext{
 		WorkspaceID: "workspace_1",
@@ -118,8 +119,39 @@ func TestExternalMediaUploadFailureReleasesPublishingLifecycle(t *testing.T) {
 	if len(recorder.reservations) != 1 || len(recorder.abandoned) != 1 {
 		t.Fatalf("reservations/abandoned = %d/%d, want 1/1", len(recorder.reservations), len(recorder.abandoned))
 	}
-	if recorder.abandoned[0] != recorder.reservations[0] {
-		t.Fatalf("abandoned = %#v, reservation = %#v", recorder.abandoned[0], recorder.reservations[0])
+	if recorder.abandoned[0] != "usage_failed" {
+		t.Fatalf("abandoned usage = %q, want usage_failed", recorder.abandoned[0])
+	}
+}
+
+func TestExternalMediaConcurrentReservationsAbandonOnlyFailedUsage(t *testing.T) {
+	t.Parallel()
+
+	sha := strings.Repeat("1", 64)
+	recorder := &recordingPublishingObjectLifecycle{usageIDs: []string{"usage_success", "usage_failed"}}
+	ctx := WithPublishingObjectLifecycle(context.Background(), PublishingObjectContext{
+		WorkspaceID: "workspace_1",
+		PostID:      "post_1",
+		Lifecycle:   recorder,
+	})
+	for index, uploadErr := range []error{nil, errors.New("R2 unavailable")} {
+		path := writeVerifiedTemp(t, []byte("same verified image bytes"))
+		fetcher := &fakeExternalFetcher{result: &safefetch.Result{
+			Path: path, MediaType: "image/jpeg", SizeBytes: 25, SHA256Hex: sha,
+		}}
+		_, err := stageExternalMedia(ctx, "https://cdn.example/photo.jpg", safefetch.Policy{}, fetcher, (&recordingFileUploader{err: uploadErr}).put, func(key string) string { return key })
+		if index == 0 && err != nil {
+			t.Fatalf("successful reservation returned error: %v", err)
+		}
+		if index == 1 && !errors.Is(err, ErrExternalMediaUpload) {
+			t.Fatalf("failed reservation error = %v, want ErrExternalMediaUpload", err)
+		}
+	}
+	if len(recorder.reservations) != 2 {
+		t.Fatalf("reservations = %d, want 2", len(recorder.reservations))
+	}
+	if len(recorder.abandoned) != 1 || recorder.abandoned[0] != "usage_failed" {
+		t.Fatalf("abandoned usages = %v, want only usage_failed", recorder.abandoned)
 	}
 }
 
@@ -270,21 +302,26 @@ func (u *recordingFileUploader) put(_ context.Context, key, path, contentType, _
 
 type recordingPublishingObjectLifecycle struct {
 	reservations []PublishingObjectReservation
-	abandoned    []PublishingObjectReservation
+	usageIDs     []string
+	abandoned    []string
 	reserveErr   error
 	abandonErr   error
 }
 
-func (r *recordingPublishingObjectLifecycle) ReservePublishingObject(_ context.Context, reservation PublishingObjectReservation) error {
+func (r *recordingPublishingObjectLifecycle) ReservePublishingObject(_ context.Context, reservation PublishingObjectReservation) (string, error) {
 	if r.reserveErr != nil {
-		return r.reserveErr
+		return "", r.reserveErr
 	}
 	r.reservations = append(r.reservations, reservation)
-	return nil
+	index := len(r.reservations) - 1
+	if index < len(r.usageIDs) {
+		return r.usageIDs[index], nil
+	}
+	return fmt.Sprintf("usage_%d", index+1), nil
 }
 
-func (r *recordingPublishingObjectLifecycle) AbandonPublishingObject(_ context.Context, reservation PublishingObjectReservation) error {
-	r.abandoned = append(r.abandoned, reservation)
+func (r *recordingPublishingObjectLifecycle) AbandonPublishingObject(_ context.Context, usageID string) error {
+	r.abandoned = append(r.abandoned, usageID)
 	return r.abandonErr
 }
 

@@ -34,13 +34,7 @@ SELECT
   NULL,
   'active_post'
 FROM reserved_object
-ON CONFLICT (object_key, post_id) DO UPDATE
-SET workspace_id = EXCLUDED.workspace_id,
-    post_status = 'publishing',
-    cleanup_after_at = NULL,
-    retention_reason = 'active_post',
-    updated_at = NOW()
-RETURNING object_key;
+RETURNING id;
 
 -- name: AbandonPublishingPullObjectUsage :exec
 UPDATE publishing_pull_object_usages
@@ -48,8 +42,7 @@ SET post_status = 'failed',
     cleanup_after_at = NOW(),
     retention_reason = 'upload_failed',
     updated_at = NOW()
-WHERE object_key = sqlc.arg(object_key)
-  AND post_id = sqlc.arg(post_id);
+WHERE id = sqlc.arg(usage_id);
 
 -- name: UpdatePublishingPullObjectUsagesForPost :exec
 UPDATE publishing_pull_object_usages

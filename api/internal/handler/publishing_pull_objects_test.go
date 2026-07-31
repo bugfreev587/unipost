@@ -22,8 +22,12 @@ func TestPublishingObjectLifecycleRecorderPersistsAndAbandonsReservation(t *test
 		SizeBytes:   42,
 	}
 
-	if err := recorder.ReservePublishingObject(context.Background(), reservation); err != nil {
+	usageID, err := recorder.ReservePublishingObject(context.Background(), reservation)
+	if err != nil {
 		t.Fatalf("ReservePublishingObject returned error: %v", err)
+	}
+	if usageID != "usage_1" {
+		t.Fatalf("usage ID = %q, want usage_1", usageID)
 	}
 	if len(queries.reservations) != 1 {
 		t.Fatalf("reservations = %d, want 1", len(queries.reservations))
@@ -33,10 +37,10 @@ func TestPublishingObjectLifecycleRecorderPersistsAndAbandonsReservation(t *test
 		t.Fatalf("reservation params = %#v", got)
 	}
 
-	if err := recorder.AbandonPublishingObject(context.Background(), reservation); err != nil {
+	if err := recorder.AbandonPublishingObject(context.Background(), usageID); err != nil {
 		t.Fatalf("AbandonPublishingObject returned error: %v", err)
 	}
-	if len(queries.abandoned) != 1 || queries.abandoned[0].ObjectKey != reservation.ObjectKey || queries.abandoned[0].PostID != reservation.PostID {
+	if len(queries.abandoned) != 1 || queries.abandoned[0] != usageID {
 		t.Fatalf("abandoned params = %#v", queries.abandoned)
 	}
 }
@@ -46,7 +50,7 @@ func TestPublishingObjectLifecycleRecorderPropagatesReservationConflict(t *testi
 
 	want := errors.New("object is being deleted")
 	recorder := publishingObjectLifecycleRecorder{queries: &fakePublishingObjectLifecycleQueries{reserveErr: want}}
-	err := recorder.ReservePublishingObject(context.Background(), storage.PublishingObjectReservation{
+	_, err := recorder.ReservePublishingObject(context.Background(), storage.PublishingObjectReservation{
 		ObjectKey: "pull/abc.jpg", WorkspaceID: "workspace_1", PostID: "post_1", ContentType: "image/jpeg", SizeBytes: 42,
 	})
 	if !errors.Is(err, want) {
@@ -56,17 +60,17 @@ func TestPublishingObjectLifecycleRecorderPropagatesReservationConflict(t *testi
 
 type fakePublishingObjectLifecycleQueries struct {
 	reservations []db.ReservePublishingPullObjectUsageParams
-	abandoned    []db.AbandonPublishingPullObjectUsageParams
+	abandoned    []string
 	reserveErr   error
 	abandonErr   error
 }
 
 func (q *fakePublishingObjectLifecycleQueries) ReservePublishingPullObjectUsage(_ context.Context, arg db.ReservePublishingPullObjectUsageParams) (string, error) {
 	q.reservations = append(q.reservations, arg)
-	return arg.ObjectKey, q.reserveErr
+	return "usage_1", q.reserveErr
 }
 
-func (q *fakePublishingObjectLifecycleQueries) AbandonPublishingPullObjectUsage(_ context.Context, arg db.AbandonPublishingPullObjectUsageParams) error {
-	q.abandoned = append(q.abandoned, arg)
+func (q *fakePublishingObjectLifecycleQueries) AbandonPublishingPullObjectUsage(_ context.Context, usageID string) error {
+	q.abandoned = append(q.abandoned, usageID)
 	return q.abandonErr
 }

@@ -26,12 +26,14 @@ CREATE TABLE publishing_pull_object_usages (
   cleanup_after_at TIMESTAMPTZ,
   retention_reason TEXT NOT NULL DEFAULT 'active_post',
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (object_key, post_id)
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX publishing_pull_object_usages_post_idx
   ON publishing_pull_object_usages (post_id);
+
+CREATE INDEX publishing_pull_object_usages_object_post_idx
+  ON publishing_pull_object_usages (object_key, post_id);
 
 CREATE INDEX publishing_pull_object_usages_cleanup_due_idx
   ON publishing_pull_object_usages (cleanup_after_at)
@@ -39,6 +41,7 @@ CREATE INDEX publishing_pull_object_usages_cleanup_due_idx
 
 -- +goose Down
 DROP INDEX IF EXISTS publishing_pull_object_usages_cleanup_due_idx;
+DROP INDEX IF EXISTS publishing_pull_object_usages_object_post_idx;
 DROP INDEX IF EXISTS publishing_pull_object_usages_post_idx;
 DROP TABLE IF EXISTS publishing_pull_object_usages;
 DROP TABLE IF EXISTS publishing_pull_objects;
