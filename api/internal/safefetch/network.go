@@ -212,5 +212,9 @@ func (c *idleDeadlineConn) Read(buffer []byte) (int, error) {
 			return 0, newFetchStatusError(ErrorSourceTemporary, 0, true)
 		}
 	}
-	return c.Conn.Read(buffer)
+	read, err := c.Conn.Read(buffer)
+	if err != nil && isTimeoutError(err) {
+		return read, newFetchStatusError(ErrorTimeout, 0, true)
+	}
+	return read, err
 }
