@@ -1,10 +1,15 @@
 -- name: UpsertMediaPostUsage :one
+-- 'uploaded' and 'attached' are both live, publishable states — the rest of
+-- the codebase treats them as one (platform/validate.go, social_posts_validate.go,
+-- media_gif_conversions.go, media_audio_overlays.go). Accepting only 'uploaded'
+-- here made a live 'attached' row look unretainable, so the ledger silently
+-- skipped a real retention obligation while the post still published it.
 WITH locked_media AS MATERIALIZED (
   UPDATE media parent
   SET usage_version = usage_version + 1
   WHERE parent.id = sqlc.arg(media_id)
     AND parent.workspace_id = sqlc.arg(workspace_id)
-    AND parent.status = 'uploaded'
+    AND parent.status IN ('uploaded', 'attached')
   RETURNING parent.id
 ), updated_usage AS (
   UPDATE media_post_usages usage
