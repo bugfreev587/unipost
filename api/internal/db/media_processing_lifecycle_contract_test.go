@@ -159,7 +159,9 @@ func TestPostUsageUpsertLocksAvailableParentForInsertAndReactivation(t *testing.
 		"with locked_media as",
 		"update media",
 		"usage_version = usage_version + 1",
-		"status = 'uploaded'",
+		// 'attached' is live and retainable too — the ledger must accept it
+		// or a real retention obligation is silently dropped.
+		"status in ('uploaded', 'attached')",
 		"from locked_media",
 		"select true::boolean as applied",
 	} {

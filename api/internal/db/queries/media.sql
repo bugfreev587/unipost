@@ -6,6 +6,12 @@ RETURNING *;
 -- name: GetMedia :one
 SELECT * FROM media WHERE id = $1;
 
+-- name: GetMediaRetentionState :one
+-- Diagnoses a zero-row UpsertMediaPostUsage. Workspace-agnostic on purpose:
+-- the caller compares workspace_id itself so a cross-tenant reference is
+-- distinguishable from a missing row.
+SELECT workspace_id, status FROM media WHERE id = $1;
+
 -- name: GetMediaByHash :one
 SELECT * FROM media
 WHERE workspace_id = $1 AND content_hash = $2 AND status = 'uploaded'
