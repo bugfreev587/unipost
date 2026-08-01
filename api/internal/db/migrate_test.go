@@ -225,8 +225,11 @@ func TestLatestEmbeddedMigrationVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 135 {
-		t.Fatalf("latest embedded migration version = %d, want 135", version)
+	// This staging hotfix carries dev's additive 136 (publishing pull object
+	// lifecycle) ahead of its feature code so the goose default no-out-of-order
+	// rule holds at the next dev -> staging promotion, and takes 137 itself.
+	if version != 137 {
+		t.Fatalf("latest embedded migration version = %d, want 137", version)
 	}
 }
 

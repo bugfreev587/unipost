@@ -261,8 +261,12 @@ func (r xCapabilityAccountRow) Scan(dest ...any) error {
 		pgtype.Timestamptz{}, []byte(`{}`), r.scopes, "active", "byo",
 		pgtype.Text{}, pgtype.Text{String: r.externalUser, Valid: r.externalUser != ""}, pgtype.Text{}, pgtype.Timestamptz{},
 	}
-	if len(dest) == len(values)+1 {
+	if len(dest) >= len(values)+1 {
 		values = append(values, pgtype.Text{String: r.appMode, Valid: r.appMode != ""})
+	}
+	if len(dest) == len(values)+1 {
+		// last_connected_at (migration 137)
+		values = append(values, pgtype.Timestamptz{})
 	}
 	return scanRow{values: values}.Scan(dest...)
 }
