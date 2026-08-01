@@ -189,7 +189,10 @@ SELECT
       AND disconnected_at IS NULL),
   (SELECT COUNT(*) FROM social_accounts
     WHERE platform = 'instagram'
-      AND NULLIF(BTRIM(metadata->>'instagram_webhook_user_id'), '') IS NULL),
+      AND NULLIF(BTRIM(metadata->>'instagram_webhook_user_id'), '') IS NULL
+      AND connection_id IS NULL
+      AND disconnected_at IS NULL
+      AND status <> 'disconnected'),
   (SELECT COUNT(*) FROM post_delivery_jobs
     WHERE state IN ('running', 'retrying'))
 `
@@ -217,6 +220,10 @@ WITH source AS (
       - 'dismissed_at'
       - 'disconnect_notified_at'
       - 'reconnect_required_at' AS authority_metadata,
+    -- Must stay identical to sql/cutover.sql. This report is the only thing an
+    -- operator sees before committing an irreversible cutover; a predicate that
+    -- drifts from the reconciliation makes the report actively misleading.
+    (sa.disconnected_at IS NULL AND sa.status <> 'disconnected') AS is_live,
     CASE
       WHEN sa.platform = 'instagram'
         THEN NULLIF(BTRIM(sa.metadata->>'instagram_webhook_user_id'), '')
@@ -238,23 +245,23 @@ WITH source AS (
   FROM source
   WHERE provider_identity IS NULL
     AND connection_id IS NULL
+    AND is_live
 ), grouped AS (
   SELECT
     workspace_id,
     platform,
     provider_identity,
     COUNT(*) AS account_count,
+    COUNT(*) FILTER (WHERE is_live) AS live_account_count,
     COUNT(DISTINCT profile_id) AS profile_count,
     COUNT(DISTINCT connection_type) AS connection_type_count,
     COUNT(DISTINCT external_user_id) FILTER (WHERE external_user_id IS NOT NULL) AS managed_owner_count,
     COUNT(*) FILTER (WHERE connection_type = 'managed' AND external_user_id IS NULL) AS missing_managed_owner_count,
     COUNT(*) FILTER (WHERE connection_type = 'byo' AND external_user_id IS NOT NULL) AS byo_owner_count,
-    COUNT(DISTINCT x_app_mode) AS app_mode_count,
-    COUNT(DISTINCT access_token) AS access_token_count,
-    COUNT(DISTINCT refresh_token) AS refresh_token_count,
-    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) AS token_expiry_count,
-    COUNT(DISTINCT authority_scope) AS scope_count,
-    COUNT(DISTINCT authority_metadata) AS routing_metadata_count,
+    COUNT(DISTINCT x_app_mode) FILTER (WHERE is_live) AS app_mode_count,
+    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) FILTER (WHERE is_live) AS token_expiry_count,
+    COUNT(DISTINCT authority_scope) FILTER (WHERE is_live) AS scope_count,
+    COUNT(DISTINCT authority_metadata) FILTER (WHERE is_live) AS routing_metadata_count,
     BOOL_OR(connection_type = 'managed') AS has_managed,
     BOOL_OR(connection_type = 'byo') AS has_byo,
     BOOL_OR(connection_id IS NULL) AS has_legacy_candidate,
@@ -275,7 +282,7 @@ WITH source AS (
       WHEN has_byo AND byo_owner_count > 0 THEN 'owner_on_byo_connection'
       WHEN account_count <> profile_count THEN 'duplicate_profile_binding'
       WHEN app_mode_count > 1 THEN 'incompatible_app_mode'
-      WHEN access_token_count > 1 OR refresh_token_count > 1 OR token_expiry_count > 1 THEN 'incompatible_credential_state'
+      WHEN token_expiry_count > 1 THEN 'incompatible_credential_state'
       WHEN scope_count > 1 THEN 'incompatible_scope'
       WHEN routing_metadata_count > 1 THEN 'incompatible_routing_metadata'
     END AS reason
@@ -295,8 +302,7 @@ WITH source AS (
       'profile_count', profile_count,
       'managed_owner_count', managed_owner_count,
       'app_mode_count', app_mode_count,
-      'access_token_count', access_token_count,
-      'refresh_token_count', refresh_token_count,
+      'live_account_count', live_account_count,
       'token_expiry_count', token_expiry_count,
       'scope_count', scope_count,
       'routing_metadata_count', routing_metadata_count

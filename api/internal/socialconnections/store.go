@@ -23,6 +23,13 @@ var (
 	ErrInvalidCredentialInput  = errors.New("invalid social connection input")
 	ErrProfileNotInWorkspace   = errors.New("profile is not in workspace")
 	ErrLegacyBinding           = errors.New("legacy social account has no shareable connection")
+	// ErrLegacyFallbackRequired means this workspace still holds a pre-cutover
+	// row for the verified identity, so the connection model cannot own it yet.
+	// Callers must fall back to their pre-existing legacy write path, which
+	// keeps the original account ID (and every FK pointing at it) intact. The
+	// cutover promotes those rows later; until then reconnect must keep working
+	// exactly as it did before this feature shipped.
+	ErrLegacyFallbackRequired = errors.New("social account predates connection authority")
 	ErrBindingNotFound         = errors.New("social account binding not found")
 	ErrReconnectRequired       = errors.New("social connection must be reconnected before binding")
 	ErrReconnectTargetConflict = errors.New("reconnect target does not match verified social identity")
@@ -160,7 +167,7 @@ func (s *PostgresStore) SaveVerified(ctx context.Context, mode SaveMode, input C
 				continue
 			}
 			if !match.ConnectionID.Valid || strings.TrimSpace(match.ConnectionID.String) == "" {
-				return db.SocialAccount{}, ErrLegacyBinding
+				return db.SocialAccount{}, ErrLegacyFallbackRequired
 			}
 		}
 		if len(legacyMatches) != 0 {

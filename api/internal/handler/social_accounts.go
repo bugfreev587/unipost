@@ -284,8 +284,23 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Connection authority can own this account only when the verified provider
+	// identity is derivable. Otherwise this endpoint keeps its pre-feature
+	// behavior: workspace dedup, then a plain social_accounts insert.
+	providerIdentity := ""
+	useConnectionAuthority := h.connections != nil
+	if useConnectionAuthority {
+		identity, identityErr := socialconnections.ProviderIdentity(body.Platform, result.ExternalAccountID, result.Metadata)
+		if identityErr != nil {
+			slog.Warn("connect: provider identity unavailable, using legacy account path",
+				"platform", body.Platform, "error", identityErr)
+			useConnectionAuthority = false
+		}
+		providerIdentity = identity
+	}
+
 	// Dedup: check if this platform account is already connected in the workspace
-	if h.connections == nil && result.ExternalAccountID != "" {
+	if !useConnectionAuthority && result.ExternalAccountID != "" {
 		existing, err := h.queries.FindSocialAccountByExternalID(r.Context(), db.FindSocialAccountByExternalIDParams{
 			Platform:          body.Platform,
 			ExternalAccountID: result.ExternalAccountID,
@@ -321,12 +336,7 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var account db.SocialAccount
-	if h.connections != nil {
-		providerIdentity, identityErr := socialconnections.ProviderIdentity(body.Platform, result.ExternalAccountID, result.Metadata)
-		if identityErr != nil {
-			writeError(w, http.StatusBadGateway, "PROVIDER_IDENTITY_MISSING", "Provider account identity is missing")
-			return
-		}
+	if useConnectionAuthority {
 		account, err = h.connections.SaveVerified(r.Context(), socialconnections.SaveDirectCreate, socialconnections.CredentialInput{
 			WorkspaceID: profile.WorkspaceID, ProfileID: profileID, Platform: body.Platform,
 			ProviderIdentity: providerIdentity, ExternalAccountID: result.ExternalAccountID,
@@ -352,16 +362,24 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err != nil {
-		if errors.Is(err, socialconnections.ErrAlreadyConnected) {
+		switch {
+		case errors.Is(err, socialconnections.ErrAlreadyConnected):
 			writeError(w, http.StatusConflict, "ACCOUNT_ALREADY_CONNECTED",
 				"This "+body.Platform+" account is already connected in your workspace. Use the Profile binding operation to share it with another Profile.")
-			return
-		}
-		if errors.Is(err, socialconnections.ErrReconnectTargetConflict) {
+		case errors.Is(err, socialconnections.ErrLegacyFallbackRequired):
+			// A pre-cutover row already owns this identity in the workspace.
+			// Keep the exact response this endpoint returned before the feature.
+			writeError(w, http.StatusConflict, "ACCOUNT_ALREADY_CONNECTED",
+				"This "+body.Platform+" account is already connected in your workspace. Disconnect the existing one first if you want to reconnect.")
+		case errors.Is(err, socialconnections.ErrReconnectTargetConflict):
 			writeError(w, http.StatusConflict, "RECONNECT_TARGET_INVALID", "The selected account does not match the verified provider identity")
-			return
+		case errors.Is(err, socialconnections.ErrOwnershipConflict):
+			writeError(w, http.StatusConflict, "ACCOUNT_OWNERSHIP_CONFLICT", "This social account cannot be connected for the selected user")
+		case errors.Is(err, socialconnections.ErrProfileNotInWorkspace):
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save account")
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save account")
 		return
 	}
 

@@ -378,47 +378,24 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if h.connections != nil {
-		if profErr != nil {
-			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to load Profile")
+	// Connection authority may own this identity only when the workspace holds
+	// no pre-cutover row for it. Anything else falls through to the legacy
+	// reactivate path below, which keeps the original account ID and every FK
+	// pointing at it. Reconnect must behave exactly as it did before this
+	// feature shipped until the operator-run cutover promotes those rows.
+	if h.connections != nil && profErr == nil {
+		if h.saveOAuthAccountViaConnection(w, r, oauthCallbackSave{
+			oauthState:       oauthState,
+			workspaceID:      profile.WorkspaceID,
+			platformName:     platformName,
+			result:           result,
+			encAccess:        encAccess,
+			encRefresh:       encRefresh,
+			metadataJSON:     metadataJSON,
+			resolvedXAppMode: resolvedXAppMode.String,
+		}) {
 			return
 		}
-		providerIdentity, identityErr := socialconnections.ProviderIdentity(platformName, result.ExternalAccountID, result.Metadata)
-		if identityErr != nil {
-			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Provider account identity is missing")
-			return
-		}
-		account, saveErr := h.connections.SaveVerified(r.Context(), socialconnections.SaveOAuthReuse, socialconnections.CredentialInput{
-			WorkspaceID: profile.WorkspaceID, ProfileID: oauthState.ProfileID, Platform: platformName,
-			ProviderIdentity: providerIdentity, ExternalAccountID: result.ExternalAccountID,
-			AccessToken: encAccess, RefreshToken: encRefresh, TokenExpiresAt: result.TokenExpiresAt,
-			AccountName: result.AccountName, AvatarURL: result.AvatarURL, Metadata: metadataJSON,
-			Scopes: result.Scopes, XAppMode: resolvedXAppMode.String,
-			ReconnectAccountID: oauthState.ReconnectAccountID.String,
-			Ownership:          socialconnections.Ownership{ConnectionType: "byo"},
-		})
-		if saveErr != nil {
-			slog.Error("oauth callback: failed to save shared connection", "error", saveErr)
-			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Failed to save account")
-			return
-		}
-		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
-			Level: integrationlogs.LevelInfo, Status: integrationlogs.StatusSuccess,
-			Action:    integrationlogs.ActionAccountConnectCallbackOK,
-			Message:   "OAuth callback completed and account binding is active.",
-			ProfileID: oauthState.ProfileID, Platform: platformName,
-			Metadata: map[string]any{"flow": "dashboard_oauth", "account_id": account.ID, "external_account_id": result.ExternalAccountID, "connection_type": "byo"},
-		})
-		redirectURL := oauthState.RedirectUrl.String
-		if redirectURL == "" {
-			redirectURL = "https://app.unipost.dev"
-		}
-		separator := "?"
-		if strings.Contains(redirectURL, "?") {
-			separator = "&"
-		}
-		http.Redirect(w, r, redirectURL+separator+"status=success&account_name="+result.AccountName, http.StatusFound)
-		return
 	}
 
 	// Dedup: check if this platform account is already connected in the workspace
@@ -795,6 +772,86 @@ func (h *OAuthHandler) resolveProfileID(r *http.Request, requestedID string) (st
 		code:   "UNAUTHORIZED",
 		msg:    "Missing profile context",
 	}
+}
+
+// oauthCallbackSave carries everything the connection-authority save needs from
+// the callback, so the fallback decision stays a single small function.
+type oauthCallbackSave struct {
+	oauthState       db.OauthState
+	workspaceID      string
+	platformName     string
+	result           *platform.ConnectResult
+	encAccess        string
+	encRefresh       string
+	metadataJSON     []byte
+	resolvedXAppMode string
+}
+
+// saveOAuthAccountViaConnection persists the verified account through the
+// social-connection store. It reports whether the HTTP response was written.
+//
+// false means "not handled — use the legacy account path". That happens when
+// the provider identity cannot be derived, or when the workspace still holds a
+// pre-cutover row for this identity. Both must keep working through the legacy
+// reactivate path: it preserves the existing account ID, so scheduled posts,
+// analytics, and Inbox rows keep resolving after a reconnect.
+func (h *OAuthHandler) saveOAuthAccountViaConnection(
+	w http.ResponseWriter,
+	r *http.Request,
+	save oauthCallbackSave,
+) bool {
+	providerIdentity, identityErr := socialconnections.ProviderIdentity(
+		save.platformName, save.result.ExternalAccountID, save.result.Metadata,
+	)
+	if identityErr != nil {
+		slog.Warn("oauth callback: provider identity unavailable, using legacy account path",
+			"platform", save.platformName, "error", identityErr)
+		return false
+	}
+
+	account, saveErr := h.connections.SaveVerified(r.Context(), socialconnections.SaveOAuthReuse, socialconnections.CredentialInput{
+		WorkspaceID: save.workspaceID, ProfileID: save.oauthState.ProfileID, Platform: save.platformName,
+		ProviderIdentity: providerIdentity, ExternalAccountID: save.result.ExternalAccountID,
+		AccessToken: save.encAccess, RefreshToken: save.encRefresh, TokenExpiresAt: save.result.TokenExpiresAt,
+		AccountName: save.result.AccountName, AvatarURL: save.result.AvatarURL, Metadata: save.metadataJSON,
+		Scopes: save.result.Scopes, XAppMode: save.resolvedXAppMode,
+		ReconnectAccountID: save.oauthState.ReconnectAccountID.String,
+		Ownership:          socialconnections.Ownership{ConnectionType: "byo"},
+	})
+	if errors.Is(saveErr, socialconnections.ErrLegacyFallbackRequired) {
+		slog.Info("oauth callback: account predates connection authority, using legacy account path",
+			"platform", save.platformName, "profile_id", save.oauthState.ProfileID)
+		return false
+	}
+	if saveErr != nil {
+		slog.Error("oauth callback: failed to save shared connection", "error", saveErr)
+		h.redirectWithError(w, r, save.oauthState.RedirectUrl.String, "Failed to save account")
+		return true
+	}
+
+	// Drop any cached per-account provider state so the refreshed credentials
+	// take effect immediately, matching the legacy reactivate path.
+	platform.InvalidateAccountState(save.platformName, account.ID)
+	h.logOAuthEvent(r.Context(), save.workspaceID, integrationlogs.Event{
+		Level: integrationlogs.LevelInfo, Status: integrationlogs.StatusSuccess,
+		Action:    integrationlogs.ActionAccountConnectCallbackOK,
+		Message:   "OAuth callback completed and account binding is active.",
+		ProfileID: save.oauthState.ProfileID, Platform: save.platformName,
+		Metadata: map[string]any{
+			"flow": "dashboard_oauth", "account_id": account.ID,
+			"external_account_id": save.result.ExternalAccountID, "connection_type": "byo",
+		},
+	})
+	redirectURL := save.oauthState.RedirectUrl.String
+	if redirectURL == "" {
+		redirectURL = "https://app.unipost.dev"
+	}
+	separator := "?"
+	if strings.Contains(redirectURL, "?") {
+		separator = "&"
+	}
+	http.Redirect(w, r, redirectURL+separator+"status=success&account_name="+save.result.AccountName, http.StatusFound)
+	return true
 }
 
 func (h *OAuthHandler) redirectWithError(w http.ResponseWriter, r *http.Request, redirectURL, errMsg string) {

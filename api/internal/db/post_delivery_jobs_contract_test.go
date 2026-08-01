@@ -224,8 +224,6 @@ func TestPostDeliveryJobPhysicalConnectionClaimContract(t *testing.T) {
 		"COALESCE(active.connection_id, active.social_account_id) = COALESCE(j.connection_id, j.social_account_id)",
 		"sa.connection_id = j.connection_id",
 		"sa.binding_version = j.binding_version",
-		"sa.binding_status = 'active'",
-		"binding_version_mismatch",
 		"ValidateDeliveryBindingSnapshot",
 		"earlier.kind IN ('dispatch', 'retry')",
 		"CASE WHEN earlier.kind = 'retry' THEN COALESCE(earlier.next_run_at, earlier.created_at) ELSE earlier.created_at END",
@@ -236,6 +234,52 @@ func TestPostDeliveryJobPhysicalConnectionClaimContract(t *testing.T) {
 	}
 	if count := strings.Count(sql, "earlier.kind IN ('dispatch', 'retry')"); count != 2 {
 		t.Fatalf("dispatch and retry claims must both arbitrate across job kinds; found %d shared predicates", count)
+	}
+
+	// Claiming must never make a job terminal. Marking a job dead from inside
+	// the claim query skips post_failures, the parent post status rollup, and
+	// the terminal event outbox, which strands the parent post in a
+	// non-terminal state with no notification. Stale bindings and unavailable
+	// accounts are both detected after the claim, on the delivery path, which
+	// records all three.
+	for _, forbidden := range []string{
+		"SET state = 'dead'",
+		"UPDATE social_post_results r",
+	} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("claim queries must not terminate work; found %q", forbidden)
+		}
+	}
+}
+
+// Claim eligibility must not depend on account availability. Filtering
+// disconnected or unbound accounts out of the claim leaves their queued
+// deliveries pending forever, because the code that records a terminal failure
+// only ever runs on a claimed job.
+func TestPostDeliveryJobClaimDoesNotFilterUnavailableAccounts(t *testing.T) {
+	source, err := os.ReadFile("queries/post_delivery_jobs.sql")
+	if err != nil {
+		t.Fatalf("read post delivery job queries: %v", err)
+	}
+	sql := string(source)
+	for _, name := range []string{"ClaimPostDispatchJobs", "ClaimPostRetryJobs"} {
+		start := strings.Index(sql, "-- name: "+name)
+		if start < 0 {
+			t.Fatalf("%s not found", name)
+		}
+		end := strings.Index(sql[start+1:], "-- name: ")
+		if end < 0 {
+			t.Fatalf("%s end boundary not found", name)
+		}
+		query := sql[start : start+1+end]
+		for _, forbidden := range []string{
+			"sa.disconnected_at IS NULL",
+			"sa.binding_status = 'active'",
+		} {
+			if strings.Contains(query, forbidden) {
+				t.Fatalf("%s must not gate claims on account availability; found %q", name, forbidden)
+			}
+		}
 	}
 }
 

@@ -40,7 +40,7 @@ func TestSaveVerifiedCreatesConnectionAndBinding(t *testing.T) {
 	}
 }
 
-func TestSaveVerifiedFailsClosedWhenLegacyIdentityHasNoConnection(t *testing.T) {
+func TestSaveVerifiedDefersToLegacyPathWhenIdentityHasNoConnection(t *testing.T) {
 	queries := &fakeConnectionQueries{
 		canonicalErr: pgx.ErrNoRows,
 		profile:      db.Profile{ID: "profile-a", WorkspaceID: "workspace-a"},
@@ -51,11 +51,16 @@ func TestSaveVerifiedFailsClosedWhenLegacyIdentityHasNoConnection(t *testing.T) 
 	}
 	store, tx := newFakePostgresStore(queries)
 	_, err := store.SaveVerified(context.Background(), SaveOAuthReuse, byoCredentialInput())
-	if !errors.Is(err, ErrLegacyBinding) {
-		t.Fatalf("SaveVerified() error = %v, want ErrLegacyBinding", err)
+	// A pre-cutover row still owns this identity, so connection authority must
+	// stand down and let the caller use its legacy write path. That path keeps
+	// the existing account ID, which every scheduled post, analytics row, and
+	// Inbox row already points at. Failing closed here would break reconnect
+	// for every account that predates cutover.
+	if !errors.Is(err, ErrLegacyFallbackRequired) {
+		t.Fatalf("SaveVerified() error = %v, want ErrLegacyFallbackRequired", err)
 	}
 	if queries.createCalls != 0 || queries.bindCalls != 0 || tx.commitCalls != 0 {
-		t.Fatalf("quarantined identity mutated state: create=%d bind=%d commits=%d", queries.createCalls, queries.bindCalls, tx.commitCalls)
+		t.Fatalf("legacy identity mutated state: create=%d bind=%d commits=%d", queries.createCalls, queries.bindCalls, tx.commitCalls)
 	}
 }
 

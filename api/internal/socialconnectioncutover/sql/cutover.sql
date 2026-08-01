@@ -46,6 +46,7 @@ WITH source AS (
     sa.platform,
     sa.connection_type,
     sa.external_user_id,
+    (sa.disconnected_at IS NULL AND sa.status <> 'disconnected') AS is_live,
     CASE
       WHEN sa.platform = 'instagram'
         THEN NULLIF(BTRIM(sa.metadata->>'instagram_webhook_user_id'), '')
@@ -81,7 +82,11 @@ SELECT
   jsonb_build_object('account_id', account_id)
 FROM source
 WHERE provider_identity IS NULL
-  AND connection_id IS NULL;
+  AND connection_id IS NULL
+  -- Already-disconnected rows are not publishable and nobody is waiting on
+  -- them. Recording evidence for them only inflates the operator's conflict
+  -- count with rows that need no action.
+  AND is_live;
 
 -- Classify every non-null identity group before creating any connection. The
 -- expressions are intentionally explicit because these are security boundaries,
@@ -108,6 +113,13 @@ WITH source AS (
       - 'dismissed_at'
       - 'disconnect_notified_at'
       - 'reconnect_required_at' AS authority_metadata,
+    -- A row the customer already disconnected carries frozen credentials,
+    -- scopes, and routing metadata by definition. Divergence against such a row
+    -- says nothing about the live account, so credential-compatibility counters
+    -- below are computed over live rows only. Ownership and one-row-per-Profile
+    -- remain computed over every row: those are security and unique-index
+    -- boundaries, not staleness.
+    (sa.disconnected_at IS NULL AND sa.status <> 'disconnected') AS is_live,
     CASE
       WHEN sa.platform = 'instagram'
         THEN NULLIF(BTRIM(sa.metadata->>'instagram_webhook_user_id'), '')
@@ -122,6 +134,7 @@ WITH source AS (
     platform,
     provider_identity,
     COUNT(*) AS account_count,
+    COUNT(*) FILTER (WHERE is_live) AS live_account_count,
     COUNT(DISTINCT profile_id) AS profile_count,
     COUNT(DISTINCT connection_type) AS connection_type_count,
     COUNT(DISTINCT external_user_id) FILTER (
@@ -133,12 +146,16 @@ WITH source AS (
     COUNT(*) FILTER (
       WHERE connection_type = 'byo' AND external_user_id IS NOT NULL
     ) AS byo_owner_count,
-    COUNT(DISTINCT x_app_mode) AS app_mode_count,
-    COUNT(DISTINCT access_token) AS access_token_count,
-    COUNT(DISTINCT refresh_token) AS refresh_token_count,
-    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) AS token_expiry_count,
-    COUNT(DISTINCT authority_scope) AS scope_count,
-    COUNT(DISTINCT authority_metadata) AS routing_metadata_count,
+    -- access_token/refresh_token are deliberately NOT compared. They are
+    -- AES-256-GCM ciphertexts with a fresh random nonce per Encrypt call, so
+    -- COUNT(DISTINCT ...) over them is > 1 for any multi-row group even when
+    -- the underlying credentials are byte-identical. Comparing them quarantined
+    -- healthy accounts. Divergent credentials still surface through
+    -- token_expiry_count, and credential_rank picks a deterministic winner.
+    COUNT(DISTINCT x_app_mode) FILTER (WHERE is_live) AS app_mode_count,
+    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) FILTER (WHERE is_live) AS token_expiry_count,
+    COUNT(DISTINCT authority_scope) FILTER (WHERE is_live) AS scope_count,
+    COUNT(DISTINCT authority_metadata) FILTER (WHERE is_live) AS routing_metadata_count,
     BOOL_OR(connection_type = 'managed') AS has_managed,
     BOOL_OR(connection_type = 'byo') AS has_byo,
     BOOL_OR(connection_id IS NULL) AS has_legacy_candidate,
@@ -180,7 +197,7 @@ WITH source AS (
         THEN 'duplicate_profile_binding'
       WHEN app_mode_count > 1
         THEN 'incompatible_app_mode'
-      WHEN access_token_count > 1 OR refresh_token_count > 1 OR token_expiry_count > 1
+      WHEN token_expiry_count > 1
         THEN 'incompatible_credential_state'
       WHEN scope_count > 1
         THEN 'incompatible_scope'
@@ -214,8 +231,7 @@ SELECT
     'profile_count', profile_count,
     'managed_owner_count', managed_owner_count,
     'app_mode_count', app_mode_count,
-    'access_token_count', access_token_count,
-    'refresh_token_count', refresh_token_count,
+    'live_account_count', live_account_count,
     'token_expiry_count', token_expiry_count,
     'scope_count', scope_count,
     'routing_metadata_count', routing_metadata_count,
@@ -231,12 +247,27 @@ WHERE reason IS NOT NULL
 -- re-verification, but they must not remain publishable while connection_id is
 -- NULL: otherwise each public account ID would look like an independent
 -- physical account to validation and quota code.
+--
+-- 'reconnect_required' alone is what stops publishing —
+-- socialAccountDisconnectedForPublish and the retry policy_admission gate both
+-- treat it as unavailable. disconnected_at is deliberately NOT written: every
+-- account listing filters on `disconnected_at IS NULL`, so setting it would
+-- erase the account from the Dashboard and from GET /v1/accounts, leaving the
+-- customer with no surface to launch the targeted reconnect that clears the
+-- quarantine. Quarantine must be visible and self-serviceable, not silent.
+--
+-- Already-disconnected rows are skipped. They are not publishable, the customer
+-- is not waiting on them, and relabelling them 'reconnect_required' would
+-- resurrect dead accounts in the UI as if they needed action.
 UPDATE social_accounts sa
 SET status = 'reconnect_required',
-    disconnected_at = COALESCE(sa.disconnected_at, NOW())
+    metadata = COALESCE(sa.metadata, '{}'::JSONB)
+      || JSONB_BUILD_OBJECT('reconnect_required_at', NOW()::TEXT)
 FROM social_connection_migration_conflicts conflict
 WHERE sa.id = ANY(conflict.source_account_ids)
-  AND sa.connection_id IS NULL;
+  AND sa.connection_id IS NULL
+  AND sa.disconnected_at IS NULL
+  AND sa.status <> 'disconnected';
 
 -- Create one connection only for groups that passed every ownership, routing,
 -- and stable-binding check. Credential precedence is deterministic: active,
@@ -270,21 +301,30 @@ WITH source AS (
     COUNT(*) FILTER (
       WHERE connection_type = 'byo' AND external_user_id IS NOT NULL
     ) AS byo_owner_count,
-    COUNT(DISTINCT COALESCE(x_app_mode, '')) AS app_mode_count,
-    COUNT(DISTINCT access_token) AS access_token_count,
-    COUNT(DISTINCT COALESCE(refresh_token, '')) AS refresh_token_count,
-    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) AS token_expiry_count,
+    -- Must stay identical to the classification pass above, or a group could be
+    -- both quarantined and promoted. See there for why the encrypted token
+    -- columns are not compared and why staleness counters are live-scoped.
+    COUNT(DISTINCT COALESCE(x_app_mode, '')) FILTER (
+      WHERE disconnected_at IS NULL AND status <> 'disconnected'
+    ) AS app_mode_count,
+    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) FILTER (
+      WHERE disconnected_at IS NULL AND status <> 'disconnected'
+    ) AS token_expiry_count,
     COUNT(DISTINCT TO_JSONB(ARRAY(
       SELECT DISTINCT item
       FROM UNNEST(COALESCE(scope, ARRAY[]::TEXT[])) AS item
       ORDER BY item
-    ))) AS scope_count,
+    ))) FILTER (
+      WHERE disconnected_at IS NULL AND status <> 'disconnected'
+    ) AS scope_count,
     COUNT(DISTINCT (
       COALESCE(metadata, '{}'::JSONB)
         - 'dismissed_at'
         - 'disconnect_notified_at'
         - 'reconnect_required_at'
-    )) AS routing_metadata_count,
+    )) FILTER (
+      WHERE disconnected_at IS NULL AND status <> 'disconnected'
+    ) AS routing_metadata_count,
     BOOL_OR(connection_type = 'managed') AS has_managed,
     BOOL_OR(connection_type = 'byo') AS has_byo,
     BOOL_OR(connection_id IS NULL) AS has_legacy_candidate
@@ -301,8 +341,6 @@ WITH source AS (
     AND (NOT has_byo OR byo_owner_count = 0)
     AND account_count = profile_count
     AND app_mode_count <= 1
-    AND access_token_count <= 1
-    AND refresh_token_count <= 1
     AND token_expiry_count <= 1
     AND scope_count <= 1
     AND routing_metadata_count <= 1

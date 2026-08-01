@@ -4,7 +4,7 @@ This runbook promotes the additive Social Connection schema to connection-level 
 
 ## Preconditions
 
-- Migrations 136–139 are applied and `social_connection_rollout_state.phase` is `expand`.
+- Migrations 137–140 are applied and `social_connection_rollout_state.phase` is `expand`.
 - The API and every delivery-worker service are healthy on the same exact 40-character Git SHA.
 - `RAILWAY_MIGRATION_BACKUP_TOKEN` can read deployments and create/lock backups only in the target project and environment.
 - `UNIPOST_CUTOVER_RUNTIME_SERVICE_IDS` contains every API and delivery-worker Railway service ID, comma separated. `RAILWAY_API_SERVICE_ID` and `RAILWAY_POST_DELIVERY_WORKER_SERVICE_ID` are also accepted.
@@ -52,6 +52,41 @@ Keep both JSON files, the Railway backup ID/workflow ID, the exact SHA, and the 
 - Inbox visibility remains scoped by `(workspace_id, external_user_id)`;
 - current-day reservation units and operation rows are conserved; and
 - only the verified runtime SHA remains active.
+
+## If the command dies mid-run
+
+The command restores `expand` itself on any failure before a committed
+reconciliation. That compensation runs in-process, so it does **not** run if the
+process is killed outright — SIGKILL, an OOM kill, or a pod eviction.
+
+A phase left at `draining` or `cutting_over` halts publishing for every
+workspace: the claim trigger refuses new delivery leases, and `cutting_over`
+additionally rejects writes to any binding whose `connection_id` is NULL, which
+breaks account connect and reconnect. Nothing expires the phase on its own.
+
+If the command's process is gone and no other operator is running it, confirm
+that no reconciliation committed and then release the phase:
+
+```sql
+-- Expect phase draining/cutting_over with cutover_completed_at IS NULL.
+SELECT phase, cutover_completed_at, cutover_application_sha, cutover_backend_pid
+FROM social_connection_rollout_state WHERE id = 'global';
+
+-- Expect the latest run to be 'started' or 'failed', never 'succeeded'.
+SELECT id, status, phase_before, started_at, completed_at
+FROM social_connection_cutover_runs ORDER BY started_at DESC LIMIT 1;
+
+UPDATE social_connection_rollout_state
+SET phase = 'expand', cutover_backend_pid = NULL, updated_at = NOW()
+WHERE id = 'global' AND phase IN ('draining', 'cutting_over');
+```
+
+If the latest run is `succeeded`, or `cutover_completed_at` is set, a
+reconciliation committed. Do not reset the phase — treat it as a completed
+cutover and follow the rollback section below instead.
+
+Queued deliveries are not lost while the phase is stuck; they stay pending and
+resume once the phase is back to `expand`.
 
 ## Failure and rollback
 

@@ -23,6 +23,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -509,14 +510,21 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 				ReconnectAccountID: reconnectAccountID,
 				Ownership:          socialconnections.Ownership{ConnectionType: "byo"},
 			})
-			if err != nil {
-				slog.Error("facebook finalize: save shared connection failed", "err", err, "page_id", page.ID)
-				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("Failed to save Page %q", page.Name))
-				return
+			// A Page that predates cutover keeps its original account row, so
+			// scheduled posts and analytics stay attached across a reconnect.
+			// Fall through to the legacy reactivate path below for it.
+			if !errors.Is(err, socialconnections.ErrLegacyFallbackRequired) {
+				if err != nil {
+					slog.Error("facebook finalize: save shared connection failed", "err", err, "page_id", page.ID)
+					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", fmt.Sprintf("Failed to save Page %q", page.Name))
+					return
+				}
+				createdAccounts = append(createdAccounts, account.ID)
+				h.subscribePageToWebhooks(r, fbAdapter, page)
+				continue
 			}
-			createdAccounts = append(createdAccounts, account.ID)
-			h.subscribePageToWebhooks(r, fbAdapter, page)
-			continue
+			slog.Info("facebook finalize: Page predates connection authority, using legacy account path",
+				"page_id", page.ID, "profile_id", row.ProfileID)
 		}
 
 		existing, findErr := h.queries.FindSocialAccountByExternalID(r.Context(), db.FindSocialAccountByExternalIDParams{

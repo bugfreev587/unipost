@@ -168,10 +168,15 @@ WHERE id = $1 AND workspace_id = $2;
 
 -- name: ValidateDeliveryBindingSnapshot :one
 -- Final guard immediately before provider I/O. A migrated job is valid only
--- while its selected public binding is active and still points at the exact
--- connection/version captured at admission. Legacy jobs remain valid only
--- while both the job and binding are still unmigrated, preventing a NULL
--- snapshot from silently following a later rebind.
+-- while its selected public binding still points at the exact connection and
+-- version captured at admission. Legacy jobs remain valid only while both the
+-- job and binding are still unmigrated, preventing a NULL snapshot from
+-- silently following a later rebind.
+--
+-- Scope is deliberately limited to the snapshot itself. Account availability
+-- (disconnected, unbound, reconnect_required) is checked earlier by
+-- socialAccountUnavailableForDelivery so each failure keeps its own accurate
+-- error code instead of being reported as a binding version mismatch.
 SELECT EXISTS (
   SELECT 1
   FROM post_delivery_jobs j
@@ -179,8 +184,6 @@ SELECT EXISTS (
   WHERE j.id = sqlc.arg('id')
     AND j.workspace_id = sqlc.arg('workspace_id')
     AND j.state IN ('running', 'retrying')
-    AND sa.disconnected_at IS NULL
-    AND sa.binding_status = 'active'
     AND (
       (
         j.connection_id IS NULL
@@ -309,42 +312,13 @@ WHERE workspace_id = $1
 -- workspace's in-flight count = active_cnt + rn, so we admit only
 -- when (active_cnt + rn) <= cap. With ws_cap=0 the predicate is
 -- always satisfied and behavior matches the pre-Phase-2 query.
-WITH invalid_jobs AS (
-  UPDATE post_delivery_jobs j
-  SET state = 'dead',
-      failure_stage = 'dispatch_prepare',
-      error_code = 'binding_version_mismatch',
-      last_error = 'The selected social account binding changed after this delivery was queued.',
-      finished_at = NOW(),
-      updated_at = NOW()
-  WHERE j.kind = 'dispatch'
-    AND j.state = 'pending'
-    AND NOT EXISTS (
-      SELECT 1
-      FROM social_accounts sa
-      WHERE sa.id = j.social_account_id
-        AND sa.disconnected_at IS NULL
-        AND sa.binding_status = 'active'
-        AND (
-          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
-          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
-        )
-    )
-  RETURNING j.social_post_result_id
-),
-invalid_results AS (
-  UPDATE social_post_results r
-  SET status = 'failed',
-      error_message = 'The selected social account binding changed after this delivery was queued.',
-      failure_stage = 'dispatch_prepare',
-      error_code = 'binding_version_mismatch',
-      is_retriable = FALSE,
-      next_action = 'fix_request'
-  FROM invalid_jobs i
-  WHERE r.id = i.social_post_result_id
-  RETURNING r.id
-),
-active_per_ws AS (
+--
+-- Claiming never terminates a job. A disconnected/unbound account or a stale
+-- binding snapshot is detected after the claim by ProcessPostDeliveryJob, which
+-- records post_failures, rolls the parent post status up, and emits the
+-- terminal event. Failing a job from inside this query would skip all three and
+-- strand the parent post in a non-terminal state.
+WITH active_per_ws AS (
   SELECT workspace_id, COUNT(*)::int AS cnt
   FROM post_delivery_jobs
   WHERE state IN ('running', 'retrying')
@@ -383,17 +357,6 @@ ranked AS (
           )
         )
     )
-    AND EXISTS (
-      SELECT 1
-      FROM social_accounts sa
-      WHERE sa.id = j.social_account_id
-        AND sa.disconnected_at IS NULL
-        AND sa.binding_status = 'active'
-        AND (
-          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
-          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
-        )
-    )
 ),
 eligible AS (
   SELECT id, social_account_id, created_at, rn FROM ranked
@@ -412,19 +375,17 @@ locked_jobs AS (
   FOR UPDATE OF j SKIP LOCKED
 ),
 locked_accounts AS (
+  -- Serialize against concurrent binding/credential writes for this account.
+  -- Availability and binding-snapshot freshness are NOT filtered here: an
+  -- unavailable account must still be claimed so the delivery path can record a
+  -- proper terminal failure instead of leaving the job pending forever.
   SELECT sa.id
   FROM social_accounts sa
   WHERE EXISTS (
       SELECT 1
       FROM locked_jobs
       WHERE locked_jobs.social_account_id = sa.id
-        AND (
-          (locked_jobs.connection_id IS NULL AND locked_jobs.binding_version IS NULL AND sa.connection_id IS NULL)
-          OR (sa.connection_id = locked_jobs.connection_id AND sa.binding_version = locked_jobs.binding_version)
-        )
     )
-    AND sa.disconnected_at IS NULL
-    AND sa.binding_status = 'active'
   ORDER BY sa.id
   FOR UPDATE OF sa SKIP LOCKED
 ),
@@ -450,43 +411,8 @@ RETURNING j.*;
 -- name: ClaimPostRetryJobs :many
 -- $1 = batch limit (max jobs to claim in one tick)
 -- $2 = per-workspace concurrent cap (see ClaimPostDispatchJobs notes)
-WITH invalid_jobs AS (
-  UPDATE post_delivery_jobs j
-  SET state = 'dead',
-      failure_stage = 'dispatch_prepare',
-      error_code = 'binding_version_mismatch',
-      last_error = 'The selected social account binding changed after this delivery was queued.',
-      finished_at = NOW(),
-      updated_at = NOW()
-  WHERE j.kind = 'retry'
-    AND j.state = 'pending'
-    AND (j.next_run_at IS NULL OR j.next_run_at <= NOW())
-    AND NOT EXISTS (
-      SELECT 1
-      FROM social_accounts sa
-      WHERE sa.id = j.social_account_id
-        AND sa.disconnected_at IS NULL
-        AND sa.binding_status = 'active'
-        AND (
-          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
-          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
-        )
-    )
-  RETURNING j.social_post_result_id
-),
-invalid_results AS (
-  UPDATE social_post_results r
-  SET status = 'failed',
-      error_message = 'The selected social account binding changed after this delivery was queued.',
-      failure_stage = 'dispatch_prepare',
-      error_code = 'binding_version_mismatch',
-      is_retriable = FALSE,
-      next_action = 'fix_request'
-  FROM invalid_jobs i
-  WHERE r.id = i.social_post_result_id
-  RETURNING r.id
-),
-active_per_ws AS (
+-- See ClaimPostDispatchJobs: claiming never terminates a job.
+WITH active_per_ws AS (
   SELECT workspace_id, COUNT(*)::int AS cnt
   FROM post_delivery_jobs
   WHERE state IN ('running', 'retrying')
@@ -529,17 +455,6 @@ ranked AS (
           )
         )
     )
-    AND EXISTS (
-      SELECT 1
-      FROM social_accounts sa
-      WHERE sa.id = j.social_account_id
-        AND sa.disconnected_at IS NULL
-        AND sa.binding_status = 'active'
-        AND (
-          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
-          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
-        )
-    )
 ),
 eligible AS (
   SELECT id, social_account_id, sort_key, rn FROM ranked
@@ -559,19 +474,17 @@ locked_jobs AS (
   FOR UPDATE OF j SKIP LOCKED
 ),
 locked_accounts AS (
+  -- Serialize against concurrent binding/credential writes for this account.
+  -- Availability and binding-snapshot freshness are NOT filtered here: an
+  -- unavailable account must still be claimed so the delivery path can record a
+  -- proper terminal failure instead of leaving the job pending forever.
   SELECT sa.id
   FROM social_accounts sa
   WHERE EXISTS (
       SELECT 1
       FROM locked_jobs
       WHERE locked_jobs.social_account_id = sa.id
-        AND (
-          (locked_jobs.connection_id IS NULL AND locked_jobs.binding_version IS NULL AND sa.connection_id IS NULL)
-          OR (sa.connection_id = locked_jobs.connection_id AND sa.binding_version = locked_jobs.binding_version)
-        )
     )
-    AND sa.disconnected_at IS NULL
-    AND sa.binding_status = 'active'
   ORDER BY sa.id
   FOR UPDATE OF sa SKIP LOCKED
 ),
