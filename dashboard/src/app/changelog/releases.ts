@@ -47,6 +47,20 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "media-retention-fix",
+    date: "2026-07-31",
+    displayDate: "July 31, 2026",
+    title: "Fixed media retention classification performance",
+    summary: "Media retention strict classification now correctly handles zero rows without unnecessary iteration.",
+    category: "reliability",
+    impact: "fixed",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit e637c93", href: "https://github.com/bugfreev587/unipost/commit/e637c93d2b671d4757a32b479eb303c3097cf075" },
+  ],
+  },
+  {
     id: "managed-trials-billing",
     date: "2026-07-25",
     displayDate: "July 25, 2026",
