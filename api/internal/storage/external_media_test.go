@@ -484,3 +484,94 @@ func assertRemoved(t *testing.T, path string) {
 		t.Fatalf("temporary path %q still exists or stat failed unexpectedly: %v", path, err)
 	}
 }
+
+// A verified fetch stages media up to the caller's platform capability limit.
+// The library default budget of 30s could not carry a large video, so every
+// oversized-but-healthy source failed as a timeout and retried forever. The
+// staging budget must match the upload bound instead.
+func TestExternalFetchConfigBudgetCoversLargeMedia(t *testing.T) {
+	config := ExternalFetchConfig()
+	if config.TotalTimeout != externalMediaFetchTimeout {
+		t.Fatalf("TotalTimeout = %s, want %s", config.TotalTimeout, externalMediaFetchTimeout)
+	}
+	if config.TotalTimeout < publishingObjectUploadTimeout {
+		t.Fatalf("TotalTimeout %s must not be shorter than the upload bound %s",
+			config.TotalTimeout, publishingObjectUploadTimeout)
+	}
+	// Dead and stalled sources must still fail fast.
+	defaults := safefetch.DefaultConfig()
+	if config.ConnectTimeout != defaults.ConnectTimeout ||
+		config.ResponseHeaderTimeout != defaults.ResponseHeaderTimeout ||
+		config.IdleReadTimeout != defaults.IdleReadTimeout {
+		t.Fatalf("per-stage budgets changed: %#v", config)
+	}
+}
+
+func TestExternalFetchConfigHonoursDeploymentOverrides(t *testing.T) {
+	t.Setenv("EXTERNAL_MEDIA_FETCH_TIMEOUT", "90s")
+	t.Setenv("EXTERNAL_MEDIA_TEMP_DIR", "/mnt/staging")
+	config := ExternalFetchConfig()
+	if config.TotalTimeout != 90*time.Second {
+		t.Fatalf("TotalTimeout = %s, want 90s", config.TotalTimeout)
+	}
+	if config.TempDir != "/mnt/staging" {
+		t.Fatalf("TempDir = %q", config.TempDir)
+	}
+
+	t.Setenv("EXTERNAL_MEDIA_FETCH_TIMEOUT", "not-a-duration")
+	if got := ExternalFetchConfig().TotalTimeout; got != externalMediaFetchTimeout {
+		t.Fatalf("malformed override changed the budget: %s", got)
+	}
+}
+
+func TestExternalMediaByteCeilingOnlyLowersPolicyLimits(t *testing.T) {
+	policy := safefetch.Policy{
+		MaxBytes: 2 << 30,
+		MaxBytesByMediaType: map[string]int64{
+			"image/jpeg": 20 << 20,
+			"video/mp4":  2 << 30,
+		},
+	}
+
+	// Unset ceiling is the default and must leave the policy untouched, so no
+	// deployment silently narrows what publishes today.
+	unchanged := clampPolicyBytes(policy, 0)
+	if unchanged.MaxBytes != policy.MaxBytes ||
+		unchanged.MaxBytesByMediaType["video/mp4"] != 2<<30 ||
+		unchanged.MaxBytesByMediaType["image/jpeg"] != 20<<20 {
+		t.Fatalf("unset ceiling changed the policy: %#v", unchanged)
+	}
+
+	clamped := clampPolicyBytes(policy, 512<<20)
+	if clamped.MaxBytes != 512<<20 {
+		t.Fatalf("MaxBytes = %d, want %d", clamped.MaxBytes, 512<<20)
+	}
+	if clamped.MaxBytesByMediaType["video/mp4"] != 512<<20 {
+		t.Fatalf("video limit = %d, want clamped", clamped.MaxBytesByMediaType["video/mp4"])
+	}
+	// A limit already below the ceiling is left alone.
+	if clamped.MaxBytesByMediaType["image/jpeg"] != 20<<20 {
+		t.Fatalf("image limit = %d, want unchanged", clamped.MaxBytesByMediaType["image/jpeg"])
+	}
+	// Clamping must not mutate the caller's map.
+	if policy.MaxBytesByMediaType["video/mp4"] != 2<<30 {
+		t.Fatal("clampPolicyBytes mutated the caller's policy")
+	}
+}
+
+func TestExternalMediaByteCeilingDefaultsToUnset(t *testing.T) {
+	t.Setenv("EXTERNAL_MEDIA_MAX_BYTES", "")
+	if got := externalMediaByteCeiling(); got != 0 {
+		t.Fatalf("ceiling = %d, want 0", got)
+	}
+	for _, invalid := range []string{"0", "-1", "many"} {
+		t.Setenv("EXTERNAL_MEDIA_MAX_BYTES", invalid)
+		if got := externalMediaByteCeiling(); got != 0 {
+			t.Fatalf("ceiling for %q = %d, want 0", invalid, got)
+		}
+	}
+	t.Setenv("EXTERNAL_MEDIA_MAX_BYTES", "536870912")
+	if got := externalMediaByteCeiling(); got != 512<<20 {
+		t.Fatalf("ceiling = %d", got)
+	}
+}

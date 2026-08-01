@@ -33,6 +33,7 @@ const postgresTestsByPackage = {
     "TestPublishingRestrictionRetentionDeadlineSurvivesMediaHardDelete",
     "TestPublishingRestrictionRetentionDeadlineNotProjectedForTextOnlyPost",
     "TestPublishingRestrictionRetentionRepairsUnsafeMetadataBeforeHardDelete",
+    "TestPublishingPullObjectClaimCoordinatesWithReservations",
   ],
   "./internal/handler": [
     "TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity",

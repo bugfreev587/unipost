@@ -2,6 +2,7 @@ package postfailures
 
 import (
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -72,8 +73,15 @@ func classifyError(raw string, err error) Classification {
 			c.ErrorSource = ErrorSourcePlatform
 		}
 	}
-	if carrier, ok := err.(failureContractCarrier); ok {
-		fields := carrier.FailureContractFields()
+	// Unwrap rather than type-assert. The failure contract carries the error
+	// code and the retry decision, so a single fmt.Errorf("%w") between the
+	// adapter and here would turn a permanent, actionable destination failure
+	// into a generic platform error that the worker then retries. Scoped to
+	// this carrier deliberately: nothing outside the typed publish contract
+	// changes classification.
+	var contract failureContractCarrier
+	if errors.As(err, &contract) {
+		fields := contract.FailureContractFields()
 		if errorCode := stringFromAny(fields["error_code"]); errorCode != "" {
 			c.ErrorCode = errorCode
 		}
