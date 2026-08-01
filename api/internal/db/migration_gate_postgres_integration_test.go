@@ -908,7 +908,9 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO goose_db_version (version_id, is_applied) VALUES (141, TRUE);
+		-- One past the latest embedded migration, so the database looks like it
+		-- was migrated by a newer binary than this one.
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (142, TRUE);
 	`)
 	if err != nil {
 		t.Fatal(err)
