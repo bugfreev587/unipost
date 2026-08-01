@@ -777,6 +777,14 @@ export interface SocialAccount {
   external_user_id?: string;
   external_user_email?: string;
   scope?: string[];
+  // Explicit identity fields (TikTok identity accuracy, 2026-07-31).
+  // username is the verified provider handle; display_name is the editable
+  // profile name. identity_refresh_required marks legacy TikTok rows that
+  // need one reconnect before their username can be trusted.
+  username?: string | null;
+  display_name?: string | null;
+  identity_refresh_required?: boolean;
+  last_connected_at?: string | null;
 }
 
 export async function listSocialAccounts(

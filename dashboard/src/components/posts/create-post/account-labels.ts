@@ -1,4 +1,5 @@
 import type { SocialAccount } from "@/lib/api";
+import { accountIdentityLabels } from "@/lib/account-identity";
 
 function clean(value?: string | null): string {
   return (value || "").trim();
@@ -9,6 +10,13 @@ function isGenericAccountName(account: SocialAccount, name: string): boolean {
 }
 
 export function getAccountDisplayName(account: SocialAccount): string {
+  // Shared identity rule (TikTok identity accuracy PRD §9.6): the friendly
+  // display name leads, then the verified handle, before legacy fallbacks.
+  const identity = accountIdentityLabels(account);
+  if (identity.primary !== account.id && !isGenericAccountName(account, identity.primary)) {
+    return identity.primary;
+  }
+
   const accountName = clean(account.account_name);
   if (accountName && !isGenericAccountName(account, accountName)) return accountName;
 

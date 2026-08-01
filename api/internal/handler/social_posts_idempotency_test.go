@@ -670,7 +670,7 @@ func scheduledIdempotencySocialAccountValues(account db.SocialAccount) []any {
 		account.TokenExpiresAt, account.ExternalAccountID, account.AccountName, account.AccountAvatarUrl,
 		account.ConnectedAt, account.DisconnectedAt, account.Metadata, account.Scope, account.Status,
 		account.ConnectionType, account.ConnectSessionID, account.ExternalUserID, account.ExternalUserEmail,
-		account.LastRefreshedAt, account.XAppMode,
+		account.LastRefreshedAt, account.XAppMode, account.LastConnectedAt,
 	}
 }
 

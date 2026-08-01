@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -114,7 +115,11 @@ func (c *TikTokConnector) ExchangeCode(ctx context.Context, session SessionView,
 
 func (c *TikTokConnector) FetchProfile(ctx context.Context, accessToken string) (*Profile, error) {
 	q := url.Values{}
-	q.Set("fields", "open_id,display_name,avatar_url")
+	// username is the stable TikTok handle (for example robyn6608) and is
+	// authorized by the user.info.profile scope that every standard Connect
+	// Session already requests. display_name is the editable profile name
+	// (for example Robyn); the two must never be conflated.
+	q.Set("fields", "open_id,username,display_name,avatar_url")
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.UserInfoEndpoint+"?"+q.Encode(), nil)
 	if err != nil {
@@ -137,6 +142,7 @@ func (c *TikTokConnector) FetchProfile(ctx context.Context, accessToken string) 
 		Data struct {
 			User struct {
 				OpenID      string `json:"open_id"`
+				Username    string `json:"username"`
 				DisplayName string `json:"display_name"`
 				AvatarURL   string `json:"avatar_url"`
 			} `json:"user"`
@@ -155,11 +161,19 @@ func (c *TikTokConnector) FetchProfile(ctx context.Context, accessToken string) 
 	if raw.Data.User.OpenID == "" {
 		return nil, fmt.Errorf("tiktok profile empty open_id: %s", string(body))
 	}
+	if raw.Data.User.Username == "" {
+		// Sanitized diagnostic only: no token or raw response content. The
+		// shared callback falls back to DisplayName for the customer-facing
+		// account name while metadata records username_missing=true.
+		slog.Warn("tiktok profile: username missing from user info response", "username_missing", true)
+	}
 	return &Profile{
 		ExternalAccountID: raw.Data.User.OpenID,
-		Username:          raw.Data.User.DisplayName,
-		DisplayName:       raw.Data.User.DisplayName,
-		AvatarURL:         raw.Data.User.AvatarURL,
+		// Username stays empty when TikTok omits it; it must never be
+		// fabricated from the editable display name.
+		Username:    raw.Data.User.Username,
+		DisplayName: raw.Data.User.DisplayName,
+		AvatarURL:   raw.Data.User.AvatarURL,
 	}, nil
 }
 

@@ -51,6 +51,37 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
+// tiktokIdentitySchemaVersion marks TikTok rows whose metadata.username came
+// from the corrected User Info mapping (true `username` field, never the
+// editable display name). Rows without this marker predate the fix and need
+// one reconnect before their username can be trusted.
+const tiktokIdentitySchemaVersion = 2
+
+// buildConnectAccountMetadata builds the social_accounts.metadata payload for
+// an OAuth Hosted Connect save.
+//
+// TikTok rules (identity schema v2): metadata.username is written only when
+// TikTok returned the true `username` field. When TikTok omits it the key is
+// removed entirely and username_missing=true is recorded so nothing downstream
+// can mistake the editable display name for a verified username.
+func buildConnectAccountMetadata(platformName, providerIdentity string, profile *connect.Profile) map[string]any {
+	accountMetadata := map[string]any{
+		"username":     profile.Username,
+		"display_name": profile.DisplayName,
+	}
+	if platformName == "instagram" {
+		accountMetadata["instagram_webhook_user_id"] = providerIdentity
+	}
+	if platformName == "tiktok" {
+		accountMetadata["tiktok_identity_schema_version"] = tiktokIdentitySchemaVersion
+		if profile.Username == "" {
+			accountMetadata["username_missing"] = true
+			delete(accountMetadata, "username")
+		}
+	}
+	return accountMetadata
+}
+
 type instagramWebhookSubscriber interface {
 	Subscribe(context.Context, string, string) error
 }
@@ -684,14 +715,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	accountMetadata := map[string]any{
-		"username":     profile.Username,
-		"display_name": profile.DisplayName,
-	}
-	if platformName == "instagram" {
-		accountMetadata["instagram_webhook_user_id"] = providerIdentity
-	}
-	metadata, _ := json.Marshal(accountMetadata)
+	metadata, _ := json.Marshal(buildConnectAccountMetadata(platformName, providerIdentity, profile))
 
 	accountName := pgtype.Text{String: nonEmpty(profile.Username, profile.DisplayName), Valid: profile.Username != "" || profile.DisplayName != ""}
 	accountAvatarURL := pgtype.Text{String: profile.AvatarURL, Valid: profile.AvatarURL != ""}
@@ -731,6 +755,19 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		ExternalUserEmail: session.ExternalUserEmail,
 		XAppMode:          resolved.xAppMode,
 	}
+	// Best-effort pre-save read for identity-transition diagnostics
+	// (PRD §9.8). A read failure never blocks the connect.
+	previousProviderIdentity := ""
+	hadPreviousSlot := false
+	if prior, priorErr := h.queries.GetManagedSocialAccountIdentityBySlot(r.Context(), db.GetManagedSocialAccountIdentityBySlotParams{
+		ProfileID:      session.ProfileID,
+		Platform:       platformName,
+		ExternalUserID: pgtype.Text{String: session.ExternalUserID, Valid: true},
+	}); priorErr == nil {
+		previousProviderIdentity = prior.ExternalAccountID
+		hadPreviousSlot = true
+	}
+
 	saved, err := h.ownershipStore.Save(r.Context(), connectownership.SaveRequest{
 		WorkspaceID:      workspaceID,
 		ProfileID:        session.ProfileID,
@@ -798,11 +835,15 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// resolvedAccountName mirrors the persisted account_name fallback chain:
+	// verified username first, then the display name (for example a TikTok
+	// response that omits `username`).
+	resolvedAccountName := nonEmpty(profile.Username, profile.DisplayName)
 	h.bus.Publish(r.Context(), workspaceID, events.EventAccountConnected, map[string]any{
 		"social_account_id": saved.ID,
 		"profile_id":        session.ProfileID,
 		"platform":          platformName,
-		"account_name":      profile.Username,
+		"account_name":      resolvedAccountName,
 		"external_user_id":  session.ExternalUserID,
 		"connection_type":   "managed",
 	})
@@ -813,7 +854,19 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		"external_user_id", session.ExternalUserID,
 		"account_id", saved.ID,
 	)
-	outcome.Success(saved.ID, profile.Username)
+	if hadPreviousSlot {
+		// Safe bounded identity-transition diagnostic (PRD §9.8): names and a
+		// boolean only — never raw open_id values, tokens, or provider bodies.
+		slog.Info("connect.callback: managed identity transition",
+			"social_account_id", saved.ID,
+			"connect_session_id", session.ID,
+			"platform", platformName,
+			"account_username", profile.Username,
+			"account_display_name", profile.DisplayName,
+			"identity_changed", previousProviderIdentity != saved.ExternalAccountID,
+		)
+	}
+	outcome.Success(saved.ID, resolvedAccountName)
 	h.redirectWithStatus(w, r, session.ReturnUrl.String, "success", "", hidePoweredBy)
 }
 
