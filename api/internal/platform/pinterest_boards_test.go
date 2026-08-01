@@ -171,7 +171,12 @@ func TestPinterestBoardPreflightFallsBackToBoundedOwnedBoardList(t *testing.T) {
 	}
 }
 
-func TestPinterestBoardPreflightVisibleSharedBoardIsNotWritable(t *testing.T) {
+// A collaborative board is a legitimate pin destination: it is reachable by
+// this token in this environment, it is simply owned by someone else.
+// Preflight must not pre-emptively reject it — Pinterest is the authority on
+// whether the pin is allowed, and a refusal there still maps to an actionable
+// destination error rather than a generic platform failure.
+func TestPinterestBoardPreflightSharedBoardReachesCreatePin(t *testing.T) {
 	t.Setenv("PINTEREST_USE_SANDBOX", "")
 	pinCalls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -197,9 +202,46 @@ func TestPinterestBoardPreflightVisibleSharedBoardIsNotWritable(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
 
+	if err := pinterestTestPost(&PinterestAdapter{client: srv.Client()}, "sa_1", "token_1"); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if pinCalls != 1 {
+		t.Fatalf("create Pin calls = %d, want 1", pinCalls)
+	}
+}
+
+// The destination guarantee that must survive: a board the account's token
+// cannot reach at all never reaches create-pin, and fails permanently with the
+// actionable destination contract instead of a generic platform error.
+func TestPinterestBoardPreflightUnreachableBoardStillFailsClosed(t *testing.T) {
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	pinCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1", "username": pinterestTestOwner})
+		case "/v5/boards/" + pinterestTestBoardID:
+			writePinterestJSON(w, http.StatusOK, map[string]any{
+				"id": pinterestTestBoardID, "owner": map[string]any{"username": "stranger"},
+			})
+		case "/v5/boards":
+			writePinterestJSON(w, http.StatusOK, map[string]any{
+				"items":    []any{map[string]any{"id": "some_other_board", "owner": map[string]any{"username": pinterestTestOwner}}},
+				"bookmark": "",
+			})
+		case "/v5/pins":
+			pinCalls++
+			writePinterestJSON(w, http.StatusCreated, map[string]any{"id": "pin_1"})
+		default:
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+
 	err := pinterestTestPost(&PinterestAdapter{client: srv.Client()}, "sa_1", "token_1")
 	if err == nil {
-		t.Fatal("expected shared-board rejection")
+		t.Fatal("expected unreachable-board rejection")
 	}
 	if pinCalls != 0 {
 		t.Fatalf("create Pin calls = %d, want 0", pinCalls)
@@ -207,6 +249,40 @@ func TestPinterestBoardPreflightVisibleSharedBoardIsNotWritable(t *testing.T) {
 	failure := err.(interface{ FailureContractFields() map[string]any }).FailureContractFields()
 	if failure["error_code"] != "target_not_found" || failure["is_retriable"] != false {
 		t.Fatalf("failure fields = %#v", failure)
+	}
+}
+
+// An account whose profile omits a username loses only the owner fast path.
+// It must still be able to publish to a board its own collection lists.
+func TestPinterestBoardPreflightMissingUsernameStillPublishes(t *testing.T) {
+	t.Setenv("PINTEREST_USE_SANDBOX", "")
+	pinCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v5/user_account":
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": "user_1"})
+		case "/v5/boards/" + pinterestTestBoardID:
+			writePinterestJSON(w, http.StatusOK, map[string]any{"id": pinterestTestBoardID})
+		case "/v5/boards":
+			writePinterestJSON(w, http.StatusOK, map[string]any{
+				"items":    []any{map[string]any{"id": pinterestTestBoardID}},
+				"bookmark": "",
+			})
+		case "/v5/pins":
+			pinCalls++
+			writePinterestJSON(w, http.StatusCreated, map[string]any{"id": "pin_1"})
+		default:
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("PINTEREST_API_BASE_URL", srv.URL+"/v5")
+
+	if err := pinterestTestPost(&PinterestAdapter{client: srv.Client()}, "sa_1", "token_1"); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if pinCalls != 1 {
+		t.Fatalf("create Pin calls = %d, want 1", pinCalls)
 	}
 }
 
@@ -470,7 +546,11 @@ func TestPinterestBoardPreflightNeverLeaksBoardAPIURL(t *testing.T) {
 	}
 }
 
-func TestPinterestFetchBoardsReturnsOnlyBoardsOwnedByOperationUser(t *testing.T) {
+// Pinterest lets a user pin to boards they collaborate on but do not own, so
+// the picker must list every board the account's token can reach. Filtering to
+// owned boards hid usable destinations and blocked publishes the provider
+// would have accepted.
+func TestPinterestFetchBoardsReturnsEveryAccessibleBoard(t *testing.T) {
 	t.Setenv("PINTEREST_USE_SANDBOX", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -495,8 +575,9 @@ func TestPinterestFetchBoardsReturnsOnlyBoardsOwnedByOperationUser(t *testing.T)
 	if err != nil {
 		t.Fatalf("FetchBoards: %v", err)
 	}
-	if len(boards) != 1 || boards[0].ID != "owned_1" || boards[0].Name != "Owned" {
-		t.Fatalf("boards = %#v, want only owned_1", boards)
+	want := []PinterestBoard{{ID: "owned_1", Name: "Owned"}, {ID: "shared_1", Name: "Shared"}}
+	if fmt.Sprint(boards) != fmt.Sprint(want) {
+		t.Fatalf("boards = %#v, want %#v", boards, want)
 	}
 }
 
