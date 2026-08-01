@@ -1,8 +1,9 @@
+//go:build integration
+
 package socialconnectioncutover
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -11,31 +12,15 @@ import (
 
 func newAbandonedPhaseTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	url := os.Getenv("SOCIAL_CONNECTION_CUTOVER_TEST_ADMIN_URL")
-	if url == "" {
-		t.Skip("SOCIAL_CONNECTION_CUTOVER_TEST_ADMIN_URL is not configured")
-	}
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, url)
+	// A migrated database per test. Migration 138 creates
+	// social_connection_rollout_state seeded at 'expand', and each test moves it
+	// from there. Sharing one database across tests would let them race on the
+	// single 'global' row.
+	pool, err := pgxpool.New(context.Background(), newCutoverIntegrationDatabase(t))
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(pool.Close)
-
-	if _, err := pool.Exec(ctx, `
-DROP TABLE IF EXISTS social_connection_rollout_state;
-CREATE TABLE social_connection_rollout_state (
-  id                      TEXT PRIMARY KEY,
-  phase                   TEXT NOT NULL,
-  cutover_completed_at    TIMESTAMPTZ,
-  cutover_backend_pid     INTEGER,
-  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);`); err != nil {
-		t.Fatalf("create rollout state: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DROP TABLE IF EXISTS social_connection_rollout_state`)
-	})
 	return pool
 }
 

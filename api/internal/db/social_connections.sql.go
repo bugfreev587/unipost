@@ -484,6 +484,11 @@ JOIN profiles source_profile ON source_profile.id = source.profile_id
 JOIN social_accounts target
   ON target.connection_id = source.connection_id
  AND target.binding_status = 'active'
+ -- Disconnected rows are not selectable targets and must not be listed as
+ -- siblings. A historical row can share a connection with a live one, and
+ -- surfacing it would expose an account the caller can neither use nor see in
+ -- their own account list.
+ AND target.disconnected_at IS NULL
 JOIN profiles target_profile ON target_profile.id = target.profile_id
 LEFT JOIN social_connections sc ON sc.id = source.connection_id
 WHERE source.id = $1
@@ -531,6 +536,11 @@ JOIN profiles source_profile ON source_profile.id = source.profile_id
 JOIN social_accounts target
   ON target.connection_id = source.connection_id
  AND target.binding_status = 'active'
+ -- Disconnected rows are not selectable targets and must not be listed as
+ -- siblings. A historical row can share a connection with a live one, and
+ -- surfacing it would expose an account the caller can neither use nor see in
+ -- their own account list.
+ AND target.disconnected_at IS NULL
 JOIN profiles target_profile ON target_profile.id = target.profile_id
 LEFT JOIN social_connections sc ON sc.id = source.connection_id
 WHERE source.id = $1

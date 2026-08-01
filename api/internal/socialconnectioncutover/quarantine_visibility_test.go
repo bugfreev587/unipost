@@ -64,9 +64,8 @@ func TestCutoverNeverComparesEncryptedCredentialCiphertext(t *testing.T) {
 
 // A row the customer already disconnected carries frozen credentials, scopes,
 // and routing metadata. Letting it diverge from the live row quarantines the
-// live account for a difference that says nothing about it. Ownership and
-// one-row-per-Profile stay unscoped: those are security and unique-index
-// boundaries, not staleness.
+// live account for a difference that says nothing about it. One-row-per-Profile
+// stays unscoped: it guards a unique index, not staleness.
 func TestCutoverStalenessCountersAreScopedToLiveRows(t *testing.T) {
 	for name, sql := range map[string]string{
 		"cutover":   cutoverSQL,
@@ -139,4 +138,70 @@ func counterDefinition(t *testing.T, sqlName, sql, name string) string {
 		t.Fatalf("%s SQL definition of %q is not an aggregate", sqlName, name)
 	}
 	return sql[start : index+len(" AS "+name)]
+}
+
+// Live-scoped ownership classification is only safe because the attach step
+// refuses to bind a row whose owner differs from the promoted connection.
+// Without that equality, a group containing one live row and one
+// already-disconnected row belonging to a different managed end user would
+// promote on the live row's ownership and then bind the other user's
+// historical row to those credentials.
+func TestCutoverAttachRequiresOwnershipEquality(t *testing.T) {
+	attach := cutoverStatement(t, "SET connection_id = sc.id")
+	for _, want := range []string{
+		"sa.connection_type = sc.connection_type",
+		"sa.external_user_id IS NOT DISTINCT FROM sc.external_user_id",
+	} {
+		if !strings.Contains(attach, want) {
+			t.Fatalf("attach statement missing ownership guard %q:\n%s", want, attach)
+		}
+	}
+}
+
+// Ownership counters describe the accounts that are connected today. Letting an
+// account the customer disconnected long ago outvote the live account sharing
+// its provider identity quarantined healthy accounts: in production 18 of 22
+// conflict groups were a single live row outvoted by dead rows.
+func TestCutoverOwnershipCountersAreScopedToLiveRows(t *testing.T) {
+	for name, sql := range map[string]string{
+		"cutover":   cutoverSQL,
+		"preflight": preflightConflictsSQL,
+	} {
+		for _, counter := range []string{
+			"connection_type_count", "managed_owner_count",
+			"missing_managed_owner_count", "byo_owner_count",
+		} {
+			definition := counterDefinition(t, name, sql, counter)
+			if !strings.Contains(definition, "is_live") {
+				t.Fatalf("%s SQL counter %q is not scoped to live rows:\n%s", name, counter, definition)
+			}
+		}
+		for _, want := range []string{
+			"BOOL_OR(connection_type = 'managed' AND is_live) AS has_managed",
+			"BOOL_OR(connection_type = 'byo' AND is_live) AS has_byo",
+		} {
+			if !strings.Contains(sql, want) {
+				t.Fatalf("%s SQL ownership flag not scoped to live rows: %q", name, want)
+			}
+		}
+	}
+}
+
+// One row per (profile, connection) is a unique-index boundary, not staleness.
+// It must keep counting every row, or a profile holding both a live and a
+// historical row for one identity would attach both and abort the cutover.
+func TestCutoverDuplicateProfileBindingStillCountsEveryRow(t *testing.T) {
+	for name, sql := range map[string]string{
+		"cutover":   cutoverSQL,
+		"preflight": preflightConflictsSQL,
+	} {
+		for _, want := range []string{
+			"COUNT(*) AS account_count",
+			"COUNT(DISTINCT profile_id) AS profile_count",
+		} {
+			if !strings.Contains(sql, want) {
+				t.Fatalf("%s SQL must count every row for %q", name, want)
+			}
+		}
+	}
 }

@@ -114,11 +114,11 @@ WITH source AS (
       - 'disconnect_notified_at'
       - 'reconnect_required_at' AS authority_metadata,
     -- A row the customer already disconnected carries frozen credentials,
-    -- scopes, and routing metadata by definition. Divergence against such a row
-    -- says nothing about the live account, so credential-compatibility counters
-    -- below are computed over live rows only. Ownership and one-row-per-Profile
-    -- remain computed over every row: those are security and unique-index
-    -- boundaries, not staleness.
+    -- scopes, routing metadata, and owner by definition. Divergence against such
+    -- a row says nothing about the live account, so the classification counters
+    -- below describe live rows only. One-row-per-Profile (account_count vs
+    -- profile_count) still counts every row: it guards the
+    -- (profile_id, connection_id) unique index, not staleness.
     (sa.disconnected_at IS NULL AND sa.status <> 'disconnected') AS is_live,
     CASE
       WHEN sa.platform = 'instagram'
@@ -136,15 +136,22 @@ WITH source AS (
     COUNT(*) AS account_count,
     COUNT(*) FILTER (WHERE is_live) AS live_account_count,
     COUNT(DISTINCT profile_id) AS profile_count,
-    COUNT(DISTINCT connection_type) AS connection_type_count,
+    -- Ownership is a security boundary, but it must describe the accounts that
+    -- are connected today. A row the customer disconnected long ago carries a
+    -- frozen owner, and letting it vote quarantined the live account sharing its
+    -- provider identity: in production 18 of 22 conflict groups were a single
+    -- live row outvoted by dead rows. These counters therefore describe live
+    -- rows only, and the attach step binds live rows only, so a dead row never
+    -- joins another user's connection.
+    COUNT(DISTINCT connection_type) FILTER (WHERE is_live) AS connection_type_count,
     COUNT(DISTINCT external_user_id) FILTER (
-      WHERE external_user_id IS NOT NULL
+      WHERE external_user_id IS NOT NULL AND is_live
     ) AS managed_owner_count,
     COUNT(*) FILTER (
-      WHERE connection_type = 'managed' AND external_user_id IS NULL
+      WHERE connection_type = 'managed' AND external_user_id IS NULL AND is_live
     ) AS missing_managed_owner_count,
     COUNT(*) FILTER (
-      WHERE connection_type = 'byo' AND external_user_id IS NOT NULL
+      WHERE connection_type = 'byo' AND external_user_id IS NOT NULL AND is_live
     ) AS byo_owner_count,
     -- access_token/refresh_token are deliberately NOT compared. They are
     -- AES-256-GCM ciphertexts with a fresh random nonce per Encrypt call, so
@@ -156,8 +163,8 @@ WITH source AS (
     COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) FILTER (WHERE is_live) AS token_expiry_count,
     COUNT(DISTINCT authority_scope) FILTER (WHERE is_live) AS scope_count,
     COUNT(DISTINCT authority_metadata) FILTER (WHERE is_live) AS routing_metadata_count,
-    BOOL_OR(connection_type = 'managed') AS has_managed,
-    BOOL_OR(connection_type = 'byo') AS has_byo,
+    BOOL_OR(connection_type = 'managed' AND is_live) AS has_managed,
+    BOOL_OR(connection_type = 'byo' AND is_live) AS has_byo,
     BOOL_OR(connection_id IS NULL) AS has_legacy_candidate,
     ARRAY_AGG(account_id ORDER BY account_id) AS account_ids,
     ARRAY_AGG(profile_id ORDER BY account_id) AS profile_ids,
@@ -276,6 +283,7 @@ WITH source AS (
   SELECT
     sa.*,
     p.workspace_id,
+    (sa.disconnected_at IS NULL AND sa.status <> 'disconnected') AS is_live,
     CASE
       WHEN sa.platform = 'instagram'
         THEN NULLIF(BTRIM(sa.metadata->>'instagram_webhook_user_id'), '')
@@ -291,42 +299,41 @@ WITH source AS (
     provider_identity,
     COUNT(*) AS account_count,
     COUNT(DISTINCT profile_id) AS profile_count,
-    COUNT(DISTINCT connection_type) AS connection_type_count,
+    -- Ownership is a security boundary, but it must describe the accounts that
+    -- are connected today. A row the customer disconnected long ago carries a
+    -- frozen owner, and letting it vote quarantined the live account sharing its
+    -- provider identity: in production 18 of 22 conflict groups were a single
+    -- live row outvoted by dead rows. These counters therefore describe live
+    -- rows only, and the attach step binds live rows only, so a dead row never
+    -- joins another user's connection.
+    COUNT(DISTINCT connection_type) FILTER (WHERE is_live) AS connection_type_count,
     COUNT(DISTINCT external_user_id) FILTER (
-      WHERE external_user_id IS NOT NULL
+      WHERE external_user_id IS NOT NULL AND is_live
     ) AS managed_owner_count,
     COUNT(*) FILTER (
-      WHERE connection_type = 'managed' AND external_user_id IS NULL
+      WHERE connection_type = 'managed' AND external_user_id IS NULL AND is_live
     ) AS missing_managed_owner_count,
     COUNT(*) FILTER (
-      WHERE connection_type = 'byo' AND external_user_id IS NOT NULL
+      WHERE connection_type = 'byo' AND external_user_id IS NOT NULL AND is_live
     ) AS byo_owner_count,
     -- Must stay identical to the classification pass above, or a group could be
     -- both quarantined and promoted. See there for why the encrypted token
     -- columns are not compared and why staleness counters are live-scoped.
-    COUNT(DISTINCT COALESCE(x_app_mode, '')) FILTER (
-      WHERE disconnected_at IS NULL AND status <> 'disconnected'
-    ) AS app_mode_count,
-    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) FILTER (
-      WHERE disconnected_at IS NULL AND status <> 'disconnected'
-    ) AS token_expiry_count,
+    COUNT(DISTINCT COALESCE(x_app_mode, '')) FILTER (WHERE is_live) AS app_mode_count,
+    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) FILTER (WHERE is_live) AS token_expiry_count,
     COUNT(DISTINCT TO_JSONB(ARRAY(
       SELECT DISTINCT item
       FROM UNNEST(COALESCE(scope, ARRAY[]::TEXT[])) AS item
       ORDER BY item
-    ))) FILTER (
-      WHERE disconnected_at IS NULL AND status <> 'disconnected'
-    ) AS scope_count,
+    ))) FILTER (WHERE is_live) AS scope_count,
     COUNT(DISTINCT (
       COALESCE(metadata, '{}'::JSONB)
         - 'dismissed_at'
         - 'disconnect_notified_at'
         - 'reconnect_required_at'
-    )) FILTER (
-      WHERE disconnected_at IS NULL AND status <> 'disconnected'
-    ) AS routing_metadata_count,
-    BOOL_OR(connection_type = 'managed') AS has_managed,
-    BOOL_OR(connection_type = 'byo') AS has_byo,
+    )) FILTER (WHERE is_live) AS routing_metadata_count,
+    BOOL_OR(connection_type = 'managed' AND is_live) AS has_managed,
+    BOOL_OR(connection_type = 'byo' AND is_live) AS has_byo,
     BOOL_OR(connection_id IS NULL) AS has_legacy_candidate
   FROM source
   WHERE provider_identity IS NOT NULL
@@ -417,6 +424,7 @@ WITH source AS (
   SELECT
     sa.*,
     p.workspace_id,
+    (sa.disconnected_at IS NULL AND sa.status <> 'disconnected') AS is_live,
     CASE
       WHEN sa.platform = 'instagram'
         THEN NULLIF(BTRIM(sa.metadata->>'instagram_webhook_user_id'), '')
@@ -498,6 +506,18 @@ GROUP BY workspace_id, platform, provider_identity, promoted_connection_id;
 
 -- Only safe groups have a matching connection row, so conflict rows retain a
 -- null connection_id and continue to use the old credential/owner columns.
+--
+-- The ownership equality below is what makes live-scoped classification safe.
+-- Classification now ignores already-disconnected rows when deciding whether a
+-- group is ambiguous, so a group can contain a dead row whose owner differs
+-- from the promoted connection. Such a row must not be attached: in a managed
+-- workspace that would bind one end user's historical row to another end user's
+-- credentials. It keeps connection_id NULL instead, which leaves it exactly as
+-- it is today — disconnected and unpublishable.
+--
+-- Live rows always satisfy this equality by construction: their group passed
+-- the live ownership checks, and the promoted connection is built from the
+-- highest-ranked live row in that same group.
 UPDATE social_accounts sa
 SET connection_id = sc.id
 FROM profiles p, social_connections sc
@@ -511,6 +531,8 @@ WHERE p.id = sa.profile_id
     WHEN sa.platform <> 'instagram'
       THEN NULLIF(BTRIM(sa.external_account_id), '')
   END
+  AND sa.connection_type = sc.connection_type
+  AND sa.external_user_id IS NOT DISTINCT FROM sc.external_user_id
   AND NOT EXISTS (
     SELECT 1
     FROM social_connection_migration_conflicts conflict
