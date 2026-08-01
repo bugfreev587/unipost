@@ -168,7 +168,7 @@ func TestInboxConnectionDiscoveryDeduplicatesSiblingBindings(t *testing.T) {
 }
 
 func TestInboxPhysicalConnectionDeduplicationContract(t *testing.T) {
-	migration := compactInboxTenantIsolationSQL(readInboxTenantIsolationContractFile(t, "migrations/139_inbox_connection_deduplication.sql"))
+	migration := compactInboxTenantIsolationSQL(readInboxTenantIsolationContractFile(t, "migrations/140_inbox_connection_deduplication.sql"))
 	for _, want := range []string{
 		"add column connection_id text",
 		"inbox_items_connection_source_external_unique_idx",

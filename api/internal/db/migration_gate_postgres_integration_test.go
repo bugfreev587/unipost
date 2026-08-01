@@ -267,8 +267,8 @@ func TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup(t *testing.T)
 			`).Scan(&version); err != nil {
 				t.Fatal(err)
 			}
-			if version != 140 {
-				t.Fatalf("fresh disposable Preview final version = %d, want 140", version)
+			if version != 141 {
+				t.Fatalf("fresh disposable Preview final version = %d, want 141", version)
 			}
 		})
 	}
@@ -312,7 +312,7 @@ func TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup(t *te
 	}
 }
 
-func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues140(t *testing.T) {
+func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues141(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 	config := testMigrationGateConfig()
@@ -341,9 +341,9 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues140(t *t
 	`).Scan(&retryable, &ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 140 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 141 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"version=%d retryable=%v owner_user_ids=%v, want version=140 retryable=false canonical owner backfill",
+			"version=%d retryable=%v owner_user_ids=%v, want version=141 retryable=false canonical owner backfill",
 			version, retryable, ownerUserIDs,
 		)
 	}
@@ -372,8 +372,8 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues140(t *t
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 140 {
-		t.Fatalf("zero-row pending irreversible migration final version = %d, want 140", version)
+	if version != 141 {
+		t.Fatalf("zero-row pending irreversible migration final version = %d, want 141", version)
 	}
 }
 
@@ -711,9 +711,9 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 140 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 141 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=140 retention_reason=active_post retryable=false canonical owner backfill",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=141 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
 			retentionReason,
 			retryable,
@@ -816,8 +816,8 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 140 {
-		t.Fatalf("final migration version = %d, want 140", version)
+	if version != 141 {
+		t.Fatalf("final migration version = %d, want 141", version)
 	}
 }
 
@@ -875,17 +875,17 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 140 {
-		t.Fatalf("replacement runner final migration version = %d, want 140", version)
+	if version != 141 {
+		t.Fatalf("replacement runner final migration version = %d, want 141", version)
 	}
 }
 
-func TestRequireCurrentSchemaRejects124AndAccepts140(t *testing.T) {
+func TestRequireCurrentSchemaRejects124AndAccepts141(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 
 	err := RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 140") {
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 141") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 
@@ -915,7 +915,7 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 	}
 
 	err = RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 140") || !strings.Contains(err.Error(), "rollback is unsafe") {
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 141") || !strings.Contains(err.Error(), "rollback is unsafe") {
 		t.Fatalf("schema-ahead guard error = %v", err)
 	}
 }

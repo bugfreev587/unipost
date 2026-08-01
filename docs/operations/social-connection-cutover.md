@@ -4,7 +4,7 @@ This runbook promotes the additive Social Connection schema to connection-level 
 
 ## Preconditions
 
-- Migrations 137–140 are applied and `social_connection_rollout_state.phase` is `expand`.
+- Migrations 138–141 are applied and `social_connection_rollout_state.phase` is `expand`.
 - The API and every delivery-worker service are healthy on the same exact 40-character Git SHA.
 - `RAILWAY_MIGRATION_BACKUP_TOKEN` can read deployments and create/lock backups only in the target project and environment.
 - `UNIPOST_CUTOVER_RUNTIME_SERVICE_IDS` contains every API and delivery-worker Railway service ID, comma separated. `RAILWAY_API_SERVICE_ID` and `RAILWAY_POST_DELIVERY_WORKER_SERVICE_ID` are also accepted.

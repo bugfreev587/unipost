@@ -24,9 +24,9 @@ func compactSocialConnectionSQL(source string) string {
 
 func readSocialConnectionsMigration(t *testing.T) string {
 	t.Helper()
-	body, err := os.ReadFile("migrations/137_social_connections_and_profile_bindings.sql")
+	body, err := os.ReadFile("migrations/138_social_connections_and_profile_bindings.sql")
 	if err != nil {
-		t.Fatalf("read migration 137: %v", err)
+		t.Fatalf("read migration 138: %v", err)
 	}
 	return string(body)
 }
@@ -41,7 +41,7 @@ func TestSocialConnectionMigrationsAreExpandOnly(t *testing.T) {
 		"lock table social_accounts in share row exclusive mode",
 	} {
 		if strings.Contains(migration137, forbidden) {
-			t.Fatalf("migration 137 contains cutover mutation %q", forbidden)
+			t.Fatalf("migration 138 contains cutover mutation %q", forbidden)
 		}
 	}
 
@@ -59,19 +59,19 @@ func TestSocialConnectionMigrationsAreExpandOnly(t *testing.T) {
 		"pg_backend_pid()",
 	} {
 		if !strings.Contains(migration137, required) {
-			t.Fatalf("migration 137 missing Expand contract %q", required)
+			t.Fatalf("migration 138 missing Expand contract %q", required)
 		}
 	}
 
 	for migration, forbiddenMutations := range map[string][]string{
-		"138_delivery_job_connection_snapshot.sql": {
+		"139_delivery_job_connection_snapshot.sql": {
 			"update post_delivery_jobs j set connection_id",
 		},
-		"139_inbox_connection_deduplication.sql": {
+		"140_inbox_connection_deduplication.sql": {
 			"update inbox_items i set connection_id",
 			"insert into inbox_item_supersessions",
 		},
-		"140_physical_daily_publish_reservations.sql": {
+		"141_physical_daily_publish_reservations.sql": {
 			"delete from physical_daily_publish_reservations reservation using social_accounts",
 			"update physical_daily_publish_operations operation set physical_account_id = account.connection_id",
 		},
@@ -144,21 +144,21 @@ func TestSocialConnectionsMigrationPreservesReconnectIdentity(t *testing.T) {
 }
 
 func TestInboxConnectionMigrationRollbackPreservesSupersededEvidence(t *testing.T) {
-	body, err := os.ReadFile("migrations/139_inbox_connection_deduplication.sql")
+	body, err := os.ReadFile("migrations/140_inbox_connection_deduplication.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	downParts := strings.Split(string(body), "-- +goose Down")
 	if len(downParts) != 2 {
-		t.Fatal("migration 139 must have one Down section")
+		t.Fatal("migration 140 must have one Down section")
 	}
 	down := compactSocialConnectionSQL(downParts[1])
 	if !strings.Contains(down, "if exists (select 1 from inbox_item_supersessions)") ||
 		!strings.Contains(down, "raise exception 'refusing destructive rollback") {
-		t.Fatal("migration 139 Down must fail closed while superseded Inbox evidence exists")
+		t.Fatal("migration 140 Down must fail closed while superseded Inbox evidence exists")
 	}
 	if strings.Contains(down, "delete from inbox_items") {
-		t.Fatal("migration 139 Down must never delete preserved customer Inbox rows")
+		t.Fatal("migration 140 Down must never delete preserved customer Inbox rows")
 	}
 }
 
@@ -203,7 +203,7 @@ func TestSocialConnectionsExpandAllowsLegacyAndMirrorsExistingAuthority(t *testi
 		t.Fatalf("seed Expand fixture: %v", err)
 	}
 
-	applyMigrationUp(t, ctx, tx, "migrations/137_social_connections_and_profile_bindings.sql")
+	applyMigrationUp(t, ctx, tx, "migrations/138_social_connections_and_profile_bindings.sql")
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO social_accounts (
