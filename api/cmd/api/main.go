@@ -825,6 +825,11 @@ func main() {
 		xAccountReadRecoveryWorker := worker.NewXAccountReadRecoveryWorker(xAccountReadService)
 		go xAccountReadRecoveryWorker.Start(workerCtx)
 	}
+	// Runs in every process. A killed cutover leaves the rollout phase blocking
+	// delivery claims for all workspaces, and whichever process survives should
+	// be able to clear it. Concurrent attempts are safe: a live cutover holds
+	// the advisory lock, so every probe but its own declines.
+	go worker.NewSocialConnectionPhaseRecoveryWorker(pool).Start(workerCtx)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).
 		SetIntegrationLogger(integrationLogger).
 		SetConnectionStore(socialConnectionStore)

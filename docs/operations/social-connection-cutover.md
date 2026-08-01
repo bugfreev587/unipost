@@ -57,36 +57,47 @@ Keep both JSON files, the Railway backup ID/workflow ID, the exact SHA, and the 
 
 The command restores `expand` itself on any failure before a committed
 reconciliation. That compensation runs in-process, so it does **not** run if the
-process is killed outright — SIGKILL, an OOM kill, or a pod eviction.
+process is killed outright — SIGKILL, an OOM kill, or a pod eviction. A phase
+left at `draining` or `cutting_over` halts publishing for every workspace.
 
-A phase left at `draining` or `cutting_over` halts publishing for every
-workspace: the claim trigger refuses new delivery leases, and `cutting_over`
-additionally rejects writes to any binding whose `connection_id` is NULL, which
-breaks account connect and reconnect. Nothing expires the phase on its own.
+**This recovers on its own; no operator action is required.** Every API and
+worker process runs a recovery check every 30 seconds. It probes the cutover
+advisory lock, which Postgres releases automatically when the holding
+connection dies, and restores `expand` when all of the following hold:
 
-If the command's process is gone and no other operator is running it, confirm
-that no reconciliation committed and then release the phase:
+- the phase is `draining` or `cutting_over`;
+- no session holds the cutover advisory lock, so no cutover is running;
+- `cutover_completed_at` is NULL, so no reconciliation committed; and
+- the phase has been untouched for at least two minutes.
+
+Expect publishing to resume within roughly a minute of the process dying. The
+recovery logs at WARN:
+
+```
+restored social connection rollout phase to expand after an interrupted cutover
+```
+
+A live cutover holds the advisory lock for its entire run, so a slow drain is
+never mistaken for an abandoned one. A committed cutover sets phase `cutover`
+in the same transaction as the authority changes, so it can never be walked
+back.
+
+Queued deliveries are not lost while the phase is stuck; they stay pending and
+resume when the phase returns to `expand`.
+
+After a recovery fires, review the interrupted attempt before retrying:
 
 ```sql
--- Expect phase draining/cutting_over with cutover_completed_at IS NULL.
 SELECT phase, cutover_completed_at, cutover_application_sha, cutover_backend_pid
 FROM social_connection_rollout_state WHERE id = 'global';
 
--- Expect the latest run to be 'started' or 'failed', never 'succeeded'.
 SELECT id, status, phase_before, started_at, completed_at
 FROM social_connection_cutover_runs ORDER BY started_at DESC LIMIT 1;
-
-UPDATE social_connection_rollout_state
-SET phase = 'expand', cutover_backend_pid = NULL, updated_at = NOW()
-WHERE id = 'global' AND phase IN ('draining', 'cutting_over');
 ```
 
 If the latest run is `succeeded`, or `cutover_completed_at` is set, a
-reconciliation committed. Do not reset the phase — treat it as a completed
-cutover and follow the rollback section below instead.
-
-Queued deliveries are not lost while the phase is stuck; they stay pending and
-resume once the phase is back to `expand`.
+reconciliation committed — treat it as a completed cutover and use the rollback
+section below rather than retrying.
 
 ## Failure and rollback
 
