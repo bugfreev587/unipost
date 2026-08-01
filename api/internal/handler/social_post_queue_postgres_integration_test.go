@@ -219,7 +219,8 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			external_user_id TEXT,
 			external_user_email TEXT,
 			last_refreshed_at TIMESTAMPTZ,
-			x_app_mode TEXT
+			x_app_mode TEXT,
+			last_connected_at TIMESTAMPTZ
 		);
 		CREATE TABLE platform_publishing_restrictions (
 			platform TEXT PRIMARY KEY,

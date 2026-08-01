@@ -18,6 +18,7 @@ import {
 import { ArrowLeft, Unplug, Mail, Calendar } from "lucide-react";
 import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { YouTubeChannelIdentity } from "@/components/youtube/youtube-channel-identity";
+import { accountIdentityLabels, TIKTOK_IDENTITY_RECONNECT_GUIDANCE } from "@/lib/account-identity";
 import { ConfirmModal } from "@/components/confirm-modal";
 
 export default function ManagedUserDetailPage() {
@@ -132,12 +133,27 @@ export default function ManagedUserDetailPage() {
                 <div className="flex items-center gap-3">
                   <AccountDestinationIcon platform={acc.platform} size={24} />
                   <div className="min-w-0">
-                    <div className="truncate font-medium text-[var(--dtext)]">
-                      {acc.account_name || acc.id}
-                    </div>
-                    <div className="mt-0.5 text-xs text-[var(--dmuted)]">
-                      {acc.platform}
-                    </div>
+                    {(() => {
+                      const identity = accountIdentityLabels(acc);
+                      return (
+                        <>
+                          <div className="truncate font-medium text-[var(--dtext)]">
+                            {identity.primary}
+                            {identity.handle ? (
+                              <span className="ml-1.5 font-normal text-[var(--dmuted)]">{identity.handle}</span>
+                            ) : null}
+                          </div>
+                          <div className="mt-0.5 text-xs text-[var(--dmuted)]">
+                            {acc.platform}
+                          </div>
+                          {identity.identityRefreshRequired ? (
+                            <div data-identity-refresh-guidance className="mt-0.5 text-xs text-[var(--warning)]">
+                              {TIKTOK_IDENTITY_RECONNECT_GUIDANCE}
+                            </div>
+                          ) : null}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               )}

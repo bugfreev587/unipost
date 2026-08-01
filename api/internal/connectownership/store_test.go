@@ -149,7 +149,7 @@ func TestConnectOwnershipQuery(t *testing.T) {
 	for _, want := range []string{
 		"select sa.id, sa.profile_id, sa.platform, sa.access_token",
 		"sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email",
-		"sa.last_refreshed_at, sa.x_app_mode from social_accounts sa",
+		"sa.last_refreshed_at, sa.x_app_mode, sa.last_connected_at from social_accounts sa",
 		"join profiles p on p.id = sa.profile_id",
 		"p.workspace_id = @workspace_id",
 		"sa.platform = @platform",
