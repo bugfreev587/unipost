@@ -627,7 +627,7 @@ func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) 
 	if err != nil {
 		return nil, err
 	}
-	resources, complete, _, err := a.walkOwnedPinterestBoards(ctx, accessToken, account.Username, "")
+	resources, complete, _, err := a.walkAccessiblePinterestBoards(ctx, accessToken, "")
 	if err != nil {
 		return nil, err
 	}
@@ -635,10 +635,10 @@ func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) 
 		return nil, pinterestBoardProofTemporaryFailure("collection_incomplete")
 	}
 	boards := make([]PinterestBoard, 0, len(resources))
-	ownedIDs := make(map[string]struct{}, len(resources))
+	accessibleIDs := make(map[string]struct{}, len(resources))
 	for _, board := range resources {
 		boards = append(boards, PinterestBoard{ID: board.ID, Name: board.Name})
-		ownedIDs[board.ID] = struct{}{}
+		accessibleIDs[board.ID] = struct{}{}
 	}
 	metadata, _ := DispatchMetadataFromContext(ctx)
 	a.storePinterestBoardCache(pinterestBoardCacheKey{
@@ -647,7 +647,7 @@ func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) 
 	}, pinterestBoardCacheEntry{
 		TokenFingerprint: pinterestTokenFingerprint(accessToken),
 		Username:         strings.TrimSpace(account.Username),
-		OwnedIDs:         ownedIDs,
+		AccessibleIDs:    accessibleIDs,
 		Complete:         true,
 		ExpiresAt:        a.pinterestNow().Add(pinterestBoardCacheTTL),
 	})
