@@ -121,7 +121,9 @@ Clients should branch on `platform`, `error_code`, `failure_stage`, `platform_er
 
 ### Board missing or inaccessible
 
-Pinterest code `29` (not accessible) and code `40` (not found), plus board ownership failures found by preflight, use the destination contract:
+Pinterest code `29` (not accessible) and code `40` (not found), plus boards that preflight cannot reach with the connected account's token, use the destination contract:
+
+Preflight proves a board is *reachable* by the connected account in the active Pinterest environment — it does not require the account to own the board. Boards a user collaborates on are valid pin destinations and are both listed and publishable. A board the account's own board collection does not contain never reaches `POST /v5/pins` and fails permanently with `select_valid_target`. A board that is reachable but that Pinterest still refuses surfaces the same contract from create-pin.
 
 ```json
 {

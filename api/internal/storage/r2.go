@@ -92,7 +92,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		bucket:          cfg.Bucket,
 		publicBase:      strings.TrimRight(cfg.PublicDomain, "/"),
 		httpClient:      &http.Client{Timeout: 60 * time.Second},
-		externalFetcher: safefetch.New(safefetch.DefaultConfig()),
+		externalFetcher: safefetch.New(ExternalFetchConfig()),
 	}, nil
 }
 

@@ -40,7 +40,7 @@ type pinterestBoardCacheKey struct {
 type pinterestBoardCacheEntry struct {
 	TokenFingerprint string
 	Username         string
-	OwnedIDs         map[string]struct{}
+	AccessibleIDs    map[string]struct{}
 	Complete         bool
 	ExpiresAt        time.Time
 }
@@ -58,19 +58,19 @@ func (a *PinterestAdapter) preflightBoard(ctx context.Context, accessToken, boar
 	}
 	tokenFingerprint := pinterestTokenFingerprint(accessToken)
 	entry, cached := a.loadPinterestBoardCache(key, tokenFingerprint)
-	if !cached || strings.TrimSpace(entry.Username) == "" {
+	if !cached {
 		account, err := a.fetchUserAccount(ctx, accessToken, "destination_preflight")
 		if err != nil {
 			return err
 		}
+		// An empty username only costs the owner fast path below. Board
+		// reachability is proven by the account's own board collection, so
+		// this is not a reason to fail a publish.
 		entry = pinterestBoardCacheEntry{
 			TokenFingerprint: tokenFingerprint,
 			Username:         strings.TrimSpace(account.Username),
-			OwnedIDs:         make(map[string]struct{}),
+			AccessibleIDs:    make(map[string]struct{}),
 			ExpiresAt:        a.pinterestNow().Add(pinterestBoardCacheTTL),
-		}
-		if entry.Username == "" {
-			return pinterestBoardProofTemporaryFailure("missing_operation_username")
 		}
 		a.storePinterestBoardCache(key, entry)
 	}
@@ -82,26 +82,27 @@ func (a *PinterestAdapter) preflightBoard(ctx context.Context, accessToken, boar
 	if direct.ID != boardID {
 		return pinterestBoardProofTemporaryFailure("direct_id_mismatch")
 	}
+	// Fast path: a board owned by the operation user needs no collection walk.
 	if pinterestUsernameEqual(direct.Owner.Username, entry.Username) {
-		if entry.OwnedIDs == nil {
-			entry.OwnedIDs = make(map[string]struct{})
+		if entry.AccessibleIDs == nil {
+			entry.AccessibleIDs = make(map[string]struct{})
 		}
-		entry.OwnedIDs[boardID] = struct{}{}
+		entry.AccessibleIDs[boardID] = struct{}{}
 		a.storePinterestBoardCache(key, entry)
 		return nil
 	}
-	if _, ok := entry.OwnedIDs[boardID]; ok {
+	if _, ok := entry.AccessibleIDs[boardID]; ok {
 		return nil
 	}
 	if entry.Complete {
 		return pinterestBoardTargetFailure("board_not_accessible")
 	}
 
-	ownedIDs, complete, found, err := a.fetchOwnedPinterestBoardIDs(ctx, accessToken, entry.Username, boardID)
+	accessibleIDs, complete, found, err := a.fetchAccessiblePinterestBoardIDs(ctx, accessToken, boardID)
 	if err != nil {
 		return err
 	}
-	entry.OwnedIDs = ownedIDs
+	entry.AccessibleIDs = accessibleIDs
 	entry.Complete = complete
 	entry.ExpiresAt = a.pinterestNow().Add(pinterestBoardCacheTTL)
 	a.storePinterestBoardCache(key, entry)
@@ -111,7 +112,7 @@ func (a *PinterestAdapter) preflightBoard(ctx context.Context, accessToken, boar
 	if complete {
 		return pinterestBoardTargetFailure("board_not_accessible")
 	}
-	return pinterestBoardProofTemporaryFailure("ownership_unresolved")
+	return pinterestBoardProofTemporaryFailure("accessibility_unresolved")
 }
 
 func (a *PinterestAdapter) fetchPinterestBoard(ctx context.Context, accessToken, boardID string) (pinterestBoardResource, error) {
@@ -136,20 +137,27 @@ func (a *PinterestAdapter) fetchPinterestBoard(ctx context.Context, accessToken,
 	return board, nil
 }
 
-func (a *PinterestAdapter) fetchOwnedPinterestBoardIDs(ctx context.Context, accessToken, username, targetID string) (map[string]struct{}, bool, bool, error) {
-	resources, complete, found, err := a.walkOwnedPinterestBoards(ctx, accessToken, username, targetID)
+func (a *PinterestAdapter) fetchAccessiblePinterestBoardIDs(ctx context.Context, accessToken, targetID string) (map[string]struct{}, bool, bool, error) {
+	resources, complete, found, err := a.walkAccessiblePinterestBoards(ctx, accessToken, targetID)
 	if err != nil {
 		return nil, false, false, err
 	}
-	ownedIDs := make(map[string]struct{}, len(resources))
+	accessibleIDs := make(map[string]struct{}, len(resources))
 	for _, board := range resources {
-		ownedIDs[board.ID] = struct{}{}
+		accessibleIDs[board.ID] = struct{}{}
 	}
-	return ownedIDs, complete, found, nil
+	return accessibleIDs, complete, found, nil
 }
 
-func (a *PinterestAdapter) walkOwnedPinterestBoards(ctx context.Context, accessToken, username, targetID string) ([]pinterestBoardResource, bool, bool, error) {
-	ownedBoards := make([]pinterestBoardResource, 0)
+// walkAccessiblePinterestBoards enumerates every board the operation user's
+// token can reach in the active Pinterest environment. Membership in this
+// collection — not ownership — is what proves a board is a usable pin
+// destination: Pinterest lets a user pin to boards they collaborate on but do
+// not own, and filtering those out blocked publishes that the provider would
+// have accepted. Boards the provider still refuses surface as an actionable
+// code-29 destination failure from create-pin instead of a generic error.
+func (a *PinterestAdapter) walkAccessiblePinterestBoards(ctx context.Context, accessToken, targetID string) ([]pinterestBoardResource, bool, bool, error) {
+	accessibleBoards := make([]pinterestBoardResource, 0)
 	seenIDs := make(map[string]struct{})
 	seenBookmarks := make(map[string]struct{})
 	seenPages := make(map[string]struct{})
@@ -199,11 +207,9 @@ func (a *PinterestAdapter) walkOwnedPinterestBoards(ctx context.Context, accessT
 					return nil, false, false, pinterestBoardProofTemporaryFailure("board_count_cap")
 				}
 			}
-			if pinterestUsernameEqual(board.Owner.Username, username) {
-				ownedBoards = append(ownedBoards, board)
-				if targetID != "" && id == targetID {
-					return ownedBoards, false, true, nil
-				}
+			accessibleBoards = append(accessibleBoards, board)
+			if targetID != "" && id == targetID {
+				return accessibleBoards, false, true, nil
 			}
 		}
 		sort.Strings(pageIDs)
@@ -216,7 +222,7 @@ func (a *PinterestAdapter) walkOwnedPinterestBoards(ctx context.Context, accessT
 
 		nextBookmark := strings.TrimSpace(result.Bookmark)
 		if nextBookmark == "" {
-			return ownedBoards, true, false, nil
+			return accessibleBoards, true, false, nil
 		}
 		if _, seen := seenBookmarks[nextBookmark]; seen {
 			return nil, false, false, pinterestBoardProofTemporaryFailure("repeated_bookmark")
@@ -337,7 +343,7 @@ func (a *PinterestAdapter) loadPinterestBoardCache(key pinterestBoardCacheKey, t
 		}
 		return pinterestBoardCacheEntry{}, false
 	}
-	entry.OwnedIDs = clonePinterestBoardIDs(entry.OwnedIDs)
+	entry.AccessibleIDs = clonePinterestBoardIDs(entry.AccessibleIDs)
 	return entry, true
 }
 
@@ -347,7 +353,7 @@ func (a *PinterestAdapter) storePinterestBoardCache(key pinterestBoardCacheKey, 
 	if a.boardCache.entries == nil {
 		a.boardCache.entries = make(map[pinterestBoardCacheKey]pinterestBoardCacheEntry)
 	}
-	entry.OwnedIDs = clonePinterestBoardIDs(entry.OwnedIDs)
+	entry.AccessibleIDs = clonePinterestBoardIDs(entry.AccessibleIDs)
 	a.boardCache.entries[key] = entry
 }
 

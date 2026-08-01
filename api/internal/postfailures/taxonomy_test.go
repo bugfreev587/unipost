@@ -1,6 +1,7 @@
 package postfailures
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -467,5 +468,46 @@ func TestClassifyLegacyPinterestFailures(t *testing.T) {
 				t.Fatalf("ProviderError = %#v", got.ProviderError)
 			}
 		})
+	}
+}
+
+// A typed adapter failure must survive error wrapping. Without unwrapping, one
+// fmt.Errorf("%w") between the adapter and the failure recorder turns an
+// actionable, non-retriable destination error into a generic platform error
+// that the worker then retries.
+func TestBuildParamsFromErrorUnwrapsWrappedPinterestContract(t *testing.T) {
+	typed := pinterestContractTestError{
+		message: "The selected Pinterest board is unavailable for this connected account.",
+		provider: map[string]any{
+			"provider": "pinterest", "http_status": 403, "code": "29",
+			"reason": "board_not_accessible", "is_transient": false,
+		},
+		failure: map[string]any{
+			"error_code": "target_not_found", "failure_stage": "destination_preflight", "is_retriable": false,
+		},
+	}
+	wrapped := fmt.Errorf("upstream dispatch failed: %w", typed)
+
+	params := BuildParamsFromError("post_1", "result_1", "ws_1", "sa_1", "pinterest", "dispatch", wrapped, "")
+	if params.ErrorCode != "target_not_found" {
+		t.Fatalf("ErrorCode = %q, want target_not_found", params.ErrorCode)
+	}
+	if params.IsRetriable {
+		t.Fatal("wrapped permanent destination failure must not become retriable")
+	}
+	if got := NextActionForErrorCode(params.ErrorCode); got != "select_valid_target" {
+		t.Fatalf("next action = %q, want select_valid_target", got)
+	}
+}
+
+// The unwrap is scoped to the typed publish contract. Provider diagnostics for
+// every other platform keep their existing direct-assertion behavior, so this
+// change cannot move TikTok, YouTube, or Facebook classification.
+func TestBuildParamsFromErrorLeavesNonContractProviderErrorsUnchanged(t *testing.T) {
+	raw := "tiktok publish failed (403): {\"error\":{\"code\":\"spam_risk_too_many_posts\"}}"
+	direct := Classify(raw)
+	wrapped := Classify("upstream dispatch failed: " + raw)
+	if direct.ErrorCode != wrapped.ErrorCode || direct.IsRetriable != wrapped.IsRetriable {
+		t.Fatalf("wrapping changed non-contract classification: %#v vs %#v", direct, wrapped)
 	}
 }
