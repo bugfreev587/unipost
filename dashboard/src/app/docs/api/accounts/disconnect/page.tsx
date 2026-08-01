@@ -12,7 +12,8 @@ const PATH_FIELDS: ApiFieldItem[] = [
 ];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
-  { name: "disconnected", type: "boolean", description: "Always true when the account was disconnected successfully." },
+  { name: "disconnected", type: "boolean", description: "Always true when the physical account connection and all of its Profile bindings were disconnected successfully." },
+  { name: "affected_account_ids", type: "string[]", description: "Public binding account IDs disabled by the physical disconnect." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
@@ -85,7 +86,8 @@ const RESPONSE_SNIPPETS = [
     label: "200",
     code: `{
   "data": {
-    "disconnected": true
+    "disconnected": true,
+    "affected_account_ids": ["sa_twitter_development", "sa_twitter_staging"]
   },
   "request_id": "req_123"
 }`,
@@ -109,7 +111,7 @@ export default function DisconnectAccountPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Disconnect account"
-      description="Disconnects one social account from your workspace. UniPost also emits the account.disconnected developer webhook event when this succeeds."
+      description="Disconnects the physical social account from the workspace and disables every Profile binding that shares it. To remove only one Profile binding while keeping the connection active elsewhere, use DELETE /v1/accounts/:account_id/binding. UniPost emits one account.disconnected developer webhook event containing the affected binding IDs."
       method="DELETE"
       path="/v1/accounts/:account_id"
       requestSections={[

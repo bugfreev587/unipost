@@ -59,12 +59,13 @@ func collectMigrationPathsForTest(directory string, minimumVersion, maximumVersi
 	}
 
 	selected := make([]string, 0, maximumVersion-minimumVersion+1)
-	for version := minimumVersion; version <= maximumVersion; version++ {
-		path, exists := byVersion[version]
-		if !exists {
-			return nil, fmt.Errorf("missing migration version %d in %s", version, directory)
+	for version, path := range byVersion {
+		if version >= minimumVersion && version <= maximumVersion {
+			selected = append(selected, path)
 		}
-		selected = append(selected, path)
+	}
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("no migrations found in %s for versions %d through %d", directory, minimumVersion, maximumVersion)
 	}
 	sort.Slice(selected, func(i, j int) bool {
 		left, _ := migrationVersionForTest(selected[i])
@@ -152,8 +153,13 @@ func applyMigrationUp(
 	if !strings.Contains(upSQL, "-- +goose Up") {
 		t.Fatalf("migration %s is missing its Goose Up marker", path)
 	}
+	// Production correctly uses CONCURRENTLY outside a transaction. Disposable
+	// migration fixtures run every predecessor inside one rollback-only
+	// transaction, so remove only the concurrency modifier while preserving the
+	// index definitions and predicates under test.
 	if strings.Contains(upSQL, "-- +goose NO TRANSACTION") {
-		t.Fatalf("migration %s cannot be applied by the transactional fixture helper", path)
+		upSQL = strings.ReplaceAll(upSQL, " CONCURRENTLY", "")
+		upSQL = strings.Replace(upSQL, "-- +goose NO TRANSACTION", "", 1)
 	}
 	upSQL = strings.Replace(upSQL, "-- +goose Up", "", 1)
 	if _, err := database.ExecContext(ctx, upSQL); err != nil {
@@ -191,5 +197,25 @@ func TestXInboxMigrationFixtureRejectsMalformedVersion(t *testing.T) {
 		if _, err := migrationVersionForTest(name); err == nil {
 			t.Fatalf("migrationVersionForTest(%q) unexpectedly succeeded", name)
 		}
+	}
+}
+
+func TestXInboxMigrationFixtureAllowsIntentionalVersionGaps(t *testing.T) {
+	directory := t.TempDir()
+	for _, name := range []string{"001_first.sql", "003_third.sql"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte("-- +goose Up\nSELECT 1;\n-- +goose Down\nSELECT 1;\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	paths, err := collectMigrationPathsForTest(directory, 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("collected %d migrations, want 2", len(paths))
+	}
+	if got := filepath.Base(paths[1]); got != "003_third.sql" {
+		t.Fatalf("last migration = %q", got)
 	}
 }

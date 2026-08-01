@@ -91,101 +91,18 @@ func openMigrationGateIntegrationDatabase(t *testing.T) (string, *sql.DB) {
 
 func seedMigration124State(t *testing.T, database *sql.DB) {
 	t.Helper()
-	_, err := database.ExecContext(context.Background(), `
-		CREATE TABLE goose_db_version (
-			id SERIAL PRIMARY KEY,
-			version_id BIGINT NOT NULL,
-			is_applied BOOLEAN NOT NULL,
-			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-		CREATE TABLE integration_logs (
-			id BIGSERIAL PRIMARY KEY,
-			workspace_id TEXT NOT NULL DEFAULT '',
-			ts TIMESTAMPTZ NOT NULL
-		);
-		CREATE TABLE social_posts (
-			id TEXT PRIMARY KEY,
-			workspace_id TEXT NOT NULL,
-			idempotency_key TEXT,
-			status TEXT NOT NULL
-		);
-		CREATE TABLE workspaces (
-			id TEXT PRIMARY KEY
-		);
-		CREATE TABLE social_accounts (
-			id TEXT PRIMARY KEY
-		);
-		CREATE TABLE x_inbox_backfill_exposure_reservations (
-			id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-			workspace_id            TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-			social_account_id       TEXT NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
-			operation_key           TEXT NOT NULL,
-			idempotency_key         TEXT NOT NULL,
-			requested_resources     INTEGER NOT NULL CHECK (requested_resources > 0),
-			reserved_units          BIGINT NOT NULL,
-			actual_units            BIGINT,
-			period_start            TIMESTAMPTZ NOT NULL,
-			period_end              TIMESTAMPTZ NOT NULL,
-			utc_date                DATE NOT NULL,
-			status                  TEXT NOT NULL DEFAULT 'reserved',
-			reconciliation_deadline TIMESTAMPTZ,
-			reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
-			next_attempt_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			last_error              TEXT,
-			accounting_enabled      BOOLEAN NOT NULL DEFAULT TRUE,
-			created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			CONSTRAINT x_inbox_backfill_exposure_reservations_reserved_units_check
-				CHECK (reserved_units > 0),
-			UNIQUE (workspace_id, idempotency_key)
-		);
-		CREATE TABLE feature_flags (
-			key TEXT PRIMARY KEY CHECK (key IN ('x_dms_v1', 'x_credits_billing_v1')),
-			enabled BOOLEAN NOT NULL DEFAULT FALSE,
-			description TEXT NOT NULL,
-			updated_by TEXT NOT NULL DEFAULT 'system',
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-		CREATE TABLE feature_flag_changes (
-			id TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
-			flag_key TEXT NOT NULL REFERENCES feature_flags(key) ON DELETE RESTRICT,
-			previous_enabled BOOLEAN NOT NULL,
-			enabled BOOLEAN NOT NULL,
-			changed_by TEXT NOT NULL,
-			changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-		CREATE TABLE webhooks (
-			id TEXT PRIMARY KEY
-		);
-		CREATE TABLE webhook_deliveries (
-			id TEXT PRIMARY KEY,
-			webhook_id TEXT NOT NULL REFERENCES webhooks(id),
-			event TEXT NOT NULL,
-			payload JSONB NOT NULL
-		);
-		CREATE UNIQUE INDEX social_posts_workspace_scheduled_idempotency_uniq
-		  ON social_posts (workspace_id, idempotency_key)
-		  WHERE idempotency_key IS NOT NULL AND status = 'scheduled';
-		CREATE TABLE platform_publishing_restriction_email_recipients (
-			id TEXT PRIMARY KEY,
-			canonical_user_id TEXT NOT NULL,
-			represented_workspace_ids TEXT[] NOT NULL,
-			status TEXT NOT NULL,
-			retryable BOOLEAN NOT NULL DEFAULT TRUE
-		);
-		INSERT INTO platform_publishing_restriction_email_recipients (
-			id, canonical_user_id, represented_workspace_ids, status, retryable
-		) VALUES (
-			'failed-recipient', 'canonical-user', ARRAY['workspace-1','workspace-2']::TEXT[], 'failed', TRUE
-		);
-	`)
-	if err != nil {
-		t.Fatalf("seed migration 124 state: %v", err)
-	}
-	seedAppliedMigrationVersions(t, database, 124)
+	seedMigrationGateSchema(t, database, 124)
+	seedMigrationGateFailedRecipient(t, database)
 }
 
 func seedMigration123State(t *testing.T, database *sql.DB) {
+	t.Helper()
+	seedMigrationGateSchema(t, database, 123)
+	seedMigrationGateFailedRecipient(t, database)
+	seedMigrationGateRetentionUsage(t, database)
+}
+
+func seedMigrationGateSchema(t *testing.T, database *sql.DB, through int) {
 	t.Helper()
 	_, err := database.ExecContext(context.Background(), `
 		CREATE TABLE goose_db_version (
@@ -193,98 +110,67 @@ func seedMigration123State(t *testing.T, database *sql.DB) {
 			version_id BIGINT NOT NULL,
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-		CREATE TABLE integration_logs (
-			id BIGSERIAL PRIMARY KEY,
-			workspace_id TEXT NOT NULL DEFAULT '',
-			ts TIMESTAMPTZ NOT NULL
-		);
-		CREATE TABLE social_posts (
-			id TEXT PRIMARY KEY,
-			workspace_id TEXT NOT NULL,
-			idempotency_key TEXT,
-			status TEXT NOT NULL
-		);
-		CREATE TABLE workspaces (
-			id TEXT PRIMARY KEY
-		);
-		CREATE TABLE social_accounts (
-			id TEXT PRIMARY KEY
-		);
-		CREATE TABLE x_inbox_backfill_exposure_reservations (
-			id                      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
-			workspace_id            TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-			social_account_id       TEXT NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
-			operation_key           TEXT NOT NULL,
-			idempotency_key         TEXT NOT NULL,
-			requested_resources     INTEGER NOT NULL CHECK (requested_resources > 0),
-			reserved_units          BIGINT NOT NULL,
-			actual_units            BIGINT,
-			period_start            TIMESTAMPTZ NOT NULL,
-			period_end              TIMESTAMPTZ NOT NULL,
-			utc_date                DATE NOT NULL,
-			status                  TEXT NOT NULL DEFAULT 'reserved',
-			reconciliation_deadline TIMESTAMPTZ,
-			reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
-			next_attempt_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			last_error              TEXT,
-			accounting_enabled      BOOLEAN NOT NULL DEFAULT TRUE,
-			created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			CONSTRAINT x_inbox_backfill_exposure_reservations_reserved_units_check
-				CHECK (reserved_units > 0),
-			UNIQUE (workspace_id, idempotency_key)
-		);
-		CREATE TABLE feature_flags (
-			key TEXT PRIMARY KEY CHECK (key IN ('x_dms_v1', 'x_credits_billing_v1')),
-			enabled BOOLEAN NOT NULL DEFAULT FALSE,
-			description TEXT NOT NULL,
-			updated_by TEXT NOT NULL DEFAULT 'system',
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-		CREATE TABLE feature_flag_changes (
-			id TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
-			flag_key TEXT NOT NULL REFERENCES feature_flags(key) ON DELETE RESTRICT,
-			previous_enabled BOOLEAN NOT NULL,
-			enabled BOOLEAN NOT NULL,
-			changed_by TEXT NOT NULL,
-			changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		);
-		CREATE TABLE webhooks (
-			id TEXT PRIMARY KEY
-		);
-		CREATE TABLE webhook_deliveries (
-			id TEXT PRIMARY KEY,
-			webhook_id TEXT NOT NULL REFERENCES webhooks(id),
-			event TEXT NOT NULL,
-			payload JSONB NOT NULL
-		);
-		CREATE UNIQUE INDEX social_posts_workspace_scheduled_idempotency_uniq
-		  ON social_posts (workspace_id, idempotency_key)
-		  WHERE idempotency_key IS NOT NULL AND status = 'scheduled';
-		CREATE TABLE media_post_usages (
-			id TEXT PRIMARY KEY,
-			cleanup_after_at TIMESTAMPTZ,
-			retention_reason TEXT NOT NULL
-		);
-		CREATE TABLE platform_publishing_restriction_email_recipients (
-			id TEXT PRIMARY KEY,
-			canonical_user_id TEXT NOT NULL,
-			represented_workspace_ids TEXT[] NOT NULL,
-			status TEXT NOT NULL
-		);
-		INSERT INTO media_post_usages (id, cleanup_after_at, retention_reason)
-		VALUES ('active-usage', NULL, 'plan_status');
+		)
+	`)
+	if err != nil {
+		t.Fatalf("create migration gate version table: %v", err)
+	}
+	applyMigrationRangeForTest(t, context.Background(), database, 1, min(through, 119))
+	if through >= 121 {
+		applyMigrationRangeForTest(t, context.Background(), database, 121, through)
+	}
+	seedAppliedMigrationVersions(t, database, through)
+}
+
+func seedMigrationGateFailedRecipient(t *testing.T, database *sql.DB) {
+	t.Helper()
+	_, err := database.ExecContext(context.Background(), `
+		INSERT INTO users (id, email, name)
+		VALUES ('canonical-user', 'canonical@example.com', 'Canonical User');
+		INSERT INTO platform_publishing_restriction_email_campaigns (
+			id, restriction_id, cycle_id, campaign_type, subject_snapshot,
+			body_snapshot, restriction_version
+		)
+		SELECT
+			'migration-gate-campaign', id, 'migration-gate-cycle',
+			'restriction_notice', 'subject', 'body', version
+		FROM platform_publishing_restrictions
+		WHERE platform = 'tiktok';
 		INSERT INTO platform_publishing_restriction_email_recipients (
-			id, canonical_user_id, represented_workspace_ids, status
+			id, campaign_id, canonical_user_id, recipient_email,
+			normalized_email, represented_workspace_ids, status, idempotency_key
 		) VALUES (
-			'failed-recipient', 'canonical-user', ARRAY['workspace-1','workspace-2']::TEXT[], 'failed'
+			'failed-recipient', 'migration-gate-campaign', 'canonical-user',
+			'canonical@example.com', 'canonical@example.com',
+			ARRAY['workspace-1','workspace-2']::TEXT[], 'failed',
+			'migration-gate-recipient'
 		);
 	`)
 	if err != nil {
-		t.Fatalf("seed migration 123 state: %v", err)
+		t.Fatalf("seed migration gate failed recipient: %v", err)
 	}
-	seedAppliedMigrationVersions(t, database, 123)
+}
+
+func seedMigrationGateRetentionUsage(t *testing.T, database *sql.DB) {
+	t.Helper()
+	_, err := database.ExecContext(context.Background(), `
+		INSERT INTO workspaces (id, user_id, name)
+		VALUES ('workspace-1', 'canonical-user', 'Migration Gate Workspace');
+		INSERT INTO social_posts (id, workspace_id, status)
+		VALUES ('active-post', 'workspace-1', 'publishing');
+		INSERT INTO media (id, workspace_id, storage_key, content_type, status)
+		VALUES ('active-media', 'workspace-1', 'migration-gate/active-media', 'image/png', 'uploaded');
+		INSERT INTO media_post_usages (
+			id, workspace_id, media_id, post_id, post_status,
+			cleanup_after_at, retention_reason
+		) VALUES (
+			'active-usage', 'workspace-1', 'active-media', 'active-post',
+			'publishing', NULL, 'plan_status'
+		);
+	`)
+	if err != nil {
+		t.Fatalf("seed migration gate retention usage: %v", err)
+	}
 }
 
 func seedAppliedMigrationVersions(t *testing.T, database *sql.DB, through int) {
@@ -347,20 +233,44 @@ func freshPreviewGateConfig() MigrationGateConfig {
 }
 
 func TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup(t *testing.T) {
-	databaseURL, database := openMigrationGateIntegrationDatabase(t)
-	config := freshPreviewGateConfig()
+	tests := []struct {
+		name            string
+		environmentName string
+		publicDomain    string
+	}{
+		{
+			name:            "legacy PR environment",
+			environmentName: "unipost-pr-301",
+			publicDomain:    "preview-api-unipost-pr-301.up.railway.app",
+		},
+		{
+			name:            "hash scoped PR environment",
+			environmentName: "pr-5ba7dd-299",
+			publicDomain:    "preview-api-pr-5ba7dd-299.up.railway.app",
+		},
+	}
 
-	if err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil); err != nil {
-		t.Fatalf("fresh disposable Preview migration gate: %v", err)
-	}
-	var version int64
-	if err := database.QueryRowContext(context.Background(), `
-		SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
-	`).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if version != 136 {
-		t.Fatalf("fresh disposable Preview final version = %d, want 136", version)
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			databaseURL, database := openMigrationGateIntegrationDatabase(t)
+			config := freshPreviewGateConfig()
+			config.EnvironmentName = test.environmentName
+			config.ServicePublicDomain = test.publicDomain
+
+			if err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, nil); err != nil {
+				t.Fatalf("fresh disposable Preview migration gate: %v", err)
+			}
+			var version int64
+			if err := database.QueryRowContext(context.Background(), `
+				SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
+			`).Scan(&version); err != nil {
+				t.Fatal(err)
+			}
+			if version != 141 {
+				t.Fatalf("fresh disposable Preview final version = %d, want 141", version)
+			}
+		})
 	}
 }
 
@@ -402,7 +312,7 @@ func TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup(t *te
 	}
 }
 
-func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *testing.T) {
+func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues141(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 	config := testMigrationGateConfig()
@@ -431,9 +341,9 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&retryable, &ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 136 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 141 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"version=%d retryable=%v owner_user_ids=%v, want version=136 retryable=false canonical owner backfill",
+			"version=%d retryable=%v owner_user_ids=%v, want version=141 retryable=false canonical owner backfill",
 			version, retryable, ownerUserIDs,
 		)
 	}
@@ -462,8 +372,8 @@ func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *t
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 136 {
-		t.Fatalf("zero-row pending irreversible migration final version = %d, want 136", version)
+	if version != 141 {
+		t.Fatalf("zero-row pending irreversible migration final version = %d, want 141", version)
 	}
 }
 
@@ -801,9 +711,9 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 136 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+	if version != 141 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=136 retention_reason=active_post retryable=false canonical owner backfill",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=141 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
 			retentionReason,
 			retryable,
@@ -906,8 +816,8 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 136 {
-		t.Fatalf("final migration version = %d, want 136", version)
+	if version != 141 {
+		t.Fatalf("final migration version = %d, want 141", version)
 	}
 }
 
@@ -965,17 +875,17 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 136 {
-		t.Fatalf("replacement runner final migration version = %d, want 136", version)
+	if version != 141 {
+		t.Fatalf("replacement runner final migration version = %d, want 141", version)
 	}
 }
 
-func TestRequireCurrentSchemaRejects124AndAccepts136(t *testing.T) {
+func TestRequireCurrentSchemaRejects124AndAccepts141(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 
 	err := RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 136") {
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 141") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 
@@ -998,14 +908,16 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO goose_db_version (version_id, is_applied) VALUES (137, TRUE);
+		-- One past the latest embedded migration, so the database looks like it
+		-- was migrated by a newer binary than this one.
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (142, TRUE);
 	`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	err = RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 136") || !strings.Contains(err.Error(), "rollback is unsafe") {
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 141") || !strings.Contains(err.Error(), "rollback is unsafe") {
 		t.Fatalf("schema-ahead guard error = %v", err)
 	}
 }

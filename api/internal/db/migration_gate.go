@@ -24,6 +24,26 @@ type irreversibleMigration struct {
 	CountAffected func(context.Context, migrationQueryer, int64) (int64, error)
 }
 
+type irreversibleOperation struct {
+	Key                    string
+	Description            string
+	AffectedRowsClassifier string
+	BackupAction           string
+	RollbackAction         string
+}
+
+const SocialConnectionsCutoverOperation = "social-connections-cutover"
+
+var irreversibleOperations = []irreversibleOperation{
+	{
+		Key:                    SocialConnectionsCutoverOperation,
+		Description:            "promotes connection authority and quarantines ambiguous historical bindings",
+		AffectedRowsClassifier: "the secret-free cutover preflight report counts affected account, delivery, Inbox, result, and daily-ledger rows",
+		BackupAction:           "create and lock a fresh exact-environment Railway volume backup immediately before reconciliation",
+		RollbackAction:         "restore the exact pre-cutover Railway backup and deploy the Expand-compatible SHA",
+	},
+}
+
 var irreversibleMigrations = []irreversibleMigration{
 	{
 		Version:       124,
@@ -43,6 +63,7 @@ type AffectedMigration struct {
 }
 
 type MigrationGateConfig struct {
+	DatabaseURL          string
 	ProjectID            string
 	EnvironmentID        string
 	EnvironmentName      string
@@ -66,6 +87,7 @@ func RunMigrationsWithBackupGate(
 	client railwaybackup.Client,
 ) error {
 	config.databaseURL = databaseURL
+	config.DatabaseURL = databaseURL
 	database, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return fmt.Errorf("open database for migration backup gate: %w", err)
@@ -130,7 +152,49 @@ func RunMigrationsWithBackupGate(
 	})
 }
 
-var disposablePreviewEnvironmentPattern = regexp.MustCompile(`^unipost-pr-([1-9][0-9]*)$`)
+func RunIrreversibleOperationWithBackupGate(
+	ctx context.Context,
+	config MigrationGateConfig,
+	client railwaybackup.Client,
+	affected []AffectedMigration,
+	operation func(context.Context) error,
+) error {
+	if strings.TrimSpace(config.databaseURL) == "" {
+		config.databaseURL = strings.TrimSpace(config.DatabaseURL)
+	}
+	return runAfterBackupGate(ctx, config, client, affected, operation)
+}
+
+func RunRegisteredIrreversibleOperationWithBackupGate(
+	ctx context.Context,
+	operationKey string,
+	config MigrationGateConfig,
+	client railwaybackup.Client,
+	affected []AffectedMigration,
+	operation func(context.Context) error,
+) error {
+	registered := false
+	for _, candidate := range irreversibleOperations {
+		if candidate.Key == operationKey {
+			registered = true
+			break
+		}
+	}
+	if !registered {
+		return fmt.Errorf("irreversible operation %q is not registered", operationKey)
+	}
+	return RunIrreversibleOperationWithBackupGate(ctx, config, client, affected, operation)
+}
+
+var disposablePreviewEnvironmentPattern = regexp.MustCompile(`^(?:unipost-pr-[1-9][0-9]*|pr-[a-f0-9]{6}-[1-9][0-9]*)$`)
+
+func isDisposablePreviewIdentity(environmentName, servicePublicDomain string) bool {
+	environmentName = strings.TrimSpace(environmentName)
+	if !disposablePreviewEnvironmentPattern.MatchString(environmentName) {
+		return false
+	}
+	return strings.TrimSpace(servicePublicDomain) == fmt.Sprintf("preview-api-%s.up.railway.app", environmentName)
+}
 
 func freshDisposablePreviewCanBypassBackup(
 	ctx context.Context,
@@ -148,12 +212,7 @@ func freshDisposablePreviewCanBypassBackup(
 		}
 	}
 	environmentName := strings.TrimSpace(config.EnvironmentName)
-	match := disposablePreviewEnvironmentPattern.FindStringSubmatch(environmentName)
-	if len(match) != 2 {
-		return false, nil
-	}
-	expectedPublicDomain := fmt.Sprintf("preview-api-unipost-pr-%s.up.railway.app", match[1])
-	if strings.TrimSpace(config.ServicePublicDomain) != expectedPublicDomain {
+	if !isDisposablePreviewIdentity(environmentName, config.ServicePublicDomain) {
 		return false, nil
 	}
 	for _, value := range []string{

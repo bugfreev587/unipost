@@ -201,6 +201,7 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ExternalUserEmail    string `json:"external_user_email"`
 		ReturnURL            string `json:"return_url"`
 		AllowQuickstartCreds bool   `json:"allow_quickstart_creds"`
+		ReconnectAccountID   string `json:"reconnect_account_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -329,6 +330,7 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:            pgtype.Timestamptz{Time: expiresAt, Valid: true},
 		AllowQuickstartCreds: body.AllowQuickstartCreds,
 		XAppMode:             xAppMode,
+		ReconnectAccountID:   pgtype.Text{String: strings.TrimSpace(body.ReconnectAccountID), Valid: strings.TrimSpace(body.ReconnectAccountID) != ""},
 	})
 	if err != nil {
 		slog.Error("connect session create failed",

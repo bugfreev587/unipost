@@ -166,6 +166,114 @@ func validOpts(posts []PlatformPostInput) ValidateOptions {
 	}
 }
 
+func duplicateConnectionOpts(posts []PlatformPostInput) ValidateOptions {
+	return ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts: map[string]ValidateAccount{
+			"acc_dev":     {Platform: "twitter", ConnectionID: "conn_x", ProfileID: "pr_dev"},
+			"acc_staging": {Platform: "twitter", ConnectionID: "conn_x", ProfileID: "pr_staging"},
+			"acc_prod":    {Platform: "twitter", ConnectionID: "conn_x", ProfileID: "pr_prod"},
+			"acc_li_dev":  {Platform: "linkedin", ConnectionID: "conn_li", ProfileID: "pr_dev"},
+			"acc_li_prod": {Platform: "linkedin", ConnectionID: "conn_li", ProfileID: "pr_prod"},
+			"legacy_a":    {Platform: "twitter", ProfileID: "pr_dev"},
+			"legacy_b":    {Platform: "twitter", ProfileID: "pr_staging"},
+		},
+		Posts: posts,
+		Now:   time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+func duplicateConnectionIssues(res ValidationResult) []Issue {
+	var out []Issue
+	for _, issue := range res.Errors {
+		if issue.Code == CodeDuplicateSocialConnection {
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+func TestValidateDuplicateSocialConnectionAllowsOneBinding(t *testing.T) {
+	res := ValidatePlatformPosts(duplicateConnectionOpts([]PlatformPostInput{{
+		AccountID: "acc_dev", Caption: "release",
+	}}))
+	hasNoError(t, res, CodeDuplicateSocialConnection)
+}
+
+func TestValidateDuplicateSocialConnectionAllowsRepeatedSameBindingThread(t *testing.T) {
+	res := ValidatePlatformPosts(duplicateConnectionOpts([]PlatformPostInput{
+		{AccountID: "acc_dev", Caption: "part 1", ThreadPosition: 1},
+		{AccountID: "acc_dev", Caption: "part 2", ThreadPosition: 2},
+	}))
+	hasNoError(t, res, CodeDuplicateSocialConnection)
+}
+
+func TestValidateDuplicateSocialConnectionRejectsMatchingSiblingBindings(t *testing.T) {
+	res := ValidatePlatformPosts(duplicateConnectionOpts([]PlatformPostInput{
+		{AccountID: "acc_dev", Caption: "release"},
+		{AccountID: "acc_staging", Caption: "release"},
+	}))
+	issues := duplicateConnectionIssues(res)
+	if len(issues) != 2 {
+		t.Fatalf("duplicate issues = %#v, want two", issues)
+	}
+	for i, issue := range issues {
+		if issue.PlatformPostIndex != i {
+			t.Fatalf("issue[%d].PlatformPostIndex = %d", i, issue.PlatformPostIndex)
+		}
+	}
+}
+
+func TestValidateDuplicateSocialConnectionRejectsDifferentSiblingPayloads(t *testing.T) {
+	res := ValidatePlatformPosts(duplicateConnectionOpts([]PlatformPostInput{
+		{AccountID: "acc_dev", Caption: "dev release"},
+		{AccountID: "acc_staging", Caption: "staging release"},
+	}))
+	if got := len(duplicateConnectionIssues(res)); got != 2 {
+		t.Fatalf("duplicate issue count = %d, want 2", got)
+	}
+}
+
+func TestValidateDuplicateSocialConnectionReportsEverySibling(t *testing.T) {
+	res := ValidatePlatformPosts(duplicateConnectionOpts([]PlatformPostInput{
+		{AccountID: "acc_prod", Caption: "release"},
+		{AccountID: "acc_dev", Caption: "release"},
+		{AccountID: "acc_staging", Caption: "release"},
+	}))
+	issues := duplicateConnectionIssues(res)
+	if len(issues) != 3 {
+		t.Fatalf("duplicate issues = %#v, want three", issues)
+	}
+}
+
+func TestValidateDuplicateSocialConnectionOrderingIsDeterministic(t *testing.T) {
+	res := ValidatePlatformPosts(duplicateConnectionOpts([]PlatformPostInput{
+		{AccountID: "acc_dev", Caption: "x"},
+		{AccountID: "acc_li_prod", Caption: "x"},
+		{AccountID: "acc_staging", Caption: "x"},
+		{AccountID: "acc_li_dev", Caption: "x"},
+	}))
+	issues := duplicateConnectionIssues(res)
+	if len(issues) != 4 {
+		t.Fatalf("duplicate issues = %#v, want four", issues)
+	}
+	got := []string{issues[0].Platform, issues[1].Platform, issues[2].Platform, issues[3].Platform}
+	want := []string{"linkedin", "linkedin", "twitter", "twitter"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("platform order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestValidateDuplicateSocialConnectionDoesNotCollapseLegacyAccounts(t *testing.T) {
+	res := ValidatePlatformPosts(duplicateConnectionOpts([]PlatformPostInput{
+		{AccountID: "legacy_a", Caption: "a"},
+		{AccountID: "legacy_b", Caption: "b"},
+	}))
+	hasNoError(t, res, CodeDuplicateSocialConnection)
+}
+
 // ─── happy path ───────────────────────────────────────────────────────
 
 func TestValidate_HappyPath(t *testing.T) {

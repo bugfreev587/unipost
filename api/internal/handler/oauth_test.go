@@ -554,6 +554,9 @@ func (f *oauthPKCETestDB) socialAccountRow() scanRow {
 		pgtype.Text{},
 		now,
 		f.savedXAppMode,
+		pgtype.Text{},
+		int64(1),
+		"active",
 	}}
 }
 

@@ -87,8 +87,8 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("read final Goose version: %v", err)
 	}
-	if version != 136 {
-		t.Fatalf("final Goose version = %d, want 136", version)
+	if version != 141 {
+		t.Fatalf("final Goose version = %d, want 141", version)
 	}
 	timezoneTx, err := database.Begin()
 	if err != nil {
@@ -225,8 +225,8 @@ func TestLatestEmbeddedMigrationVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 136 {
-		t.Fatalf("latest embedded migration version = %d, want 136", version)
+	if version != 141 {
+		t.Fatalf("latest embedded migration version = %d, want 141", version)
 	}
 }
 

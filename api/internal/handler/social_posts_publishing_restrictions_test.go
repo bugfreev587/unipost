@@ -965,6 +965,8 @@ func (f *policySnapshotTx) Conn() *pgx.Conn { return nil }
 
 func (f *policySnapshotDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	switch {
+	case strings.Contains(query, "-- name: ReserveSocialPostPhysicalTargets"):
+		return pgconn.CommandTag{}, nil
 	case strings.Contains(query, "-- name: UpdateSocialPostStatus"):
 		f.updatedStatus = args[1].(string)
 		f.post.Status = f.updatedStatus
@@ -1027,12 +1029,12 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 		return socialPostScanRow(f.post)
 	case strings.Contains(query, "scheduled_execution_reservation_period") && strings.Contains(query, "UPDATE social_posts"):
 		return scanRow{values: []any{f.post.ID}}
-	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+	case strings.Contains(query, "-- name: GetResolvedSocialAccountByIDAndWorkspace"):
 		account, ok := f.accounts[args[0].(string)]
 		if !ok {
 			return scanRow{err: pgx.ErrNoRows}
 		}
-		return policySnapshotSocialAccountRow(account)
+		return scanRow{values: inboxTenantIsolationResolvedSocialAccountValues(account)}
 	case strings.Contains(query, "-- name: GetSocialAccount :one"):
 		account, ok := f.accounts[args[0].(string)]
 		if !ok {
@@ -1062,12 +1064,14 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 			SocialPostResultID: args[1].(string),
 			WorkspaceID:        args[2].(string),
 			SocialAccountID:    args[3].(string),
-			Platform:           args[4].(string),
-			PostInputIndex:     args[5].(int32),
-			Kind:               args[6].(string),
-			State:              args[7].(string),
-			Attempts:           args[8].(int32),
-			MaxAttempts:        args[9].(int32),
+			ConnectionID:       args[4].(pgtype.Text),
+			BindingVersion:     args[5].(pgtype.Int8),
+			Platform:           args[6].(string),
+			PostInputIndex:     args[7].(int32),
+			Kind:               args[8].(string),
+			State:              args[9].(string),
+			Attempts:           args[10].(int32),
+			MaxAttempts:        args[11].(int32),
 			CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		}
 		f.jobs = append(f.jobs, job)
@@ -1143,7 +1147,8 @@ func policySnapshotSocialAccountValues(account db.SocialAccount) []any {
 		account.TokenExpiresAt, account.ExternalAccountID, account.AccountName, account.AccountAvatarUrl,
 		account.ConnectedAt, account.DisconnectedAt, account.Metadata, account.Scope, account.Status,
 		account.ConnectionType, account.ConnectSessionID, account.ExternalUserID, account.ExternalUserEmail,
-		account.LastRefreshedAt, account.XAppMode,
+		account.LastRefreshedAt, account.XAppMode, account.ConnectionID, account.BindingVersion,
+		account.BindingStatus,
 	}
 }
 
@@ -1239,6 +1244,40 @@ func TestQueuedPolicyPreflightPrecedesEveryResultAndJobWrite(t *testing.T) {
 	}
 	if strings.Count(fn, "publishingRestrictions.Evaluate") != 0 {
 		t.Fatal("persistence loop must not perform policy reads")
+	}
+}
+
+func TestQueuedPhysicalTargetsAreReservedBeforeEveryResultAndJobWrite(t *testing.T) {
+	source, err := os.ReadFile("social_post_queue.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (h *SocialPostHandler) enqueueParsedPostDeliveriesWithQuotaBlocks")
+	end := strings.Index(text[start:], "func (h *SocialPostHandler) queueImmediatePost")
+	if start < 0 || end < 0 {
+		t.Fatal("enqueueParsedPostDeliveriesWithQuotaBlocks boundaries not found")
+	}
+	fn := text[start : start+end]
+	reserveAt := strings.Index(fn, "ReserveSocialPostPhysicalTargets")
+	resultAt := strings.Index(fn, "CreateSocialPostResult")
+	jobAt := strings.Index(fn, "CreatePostDeliveryJob")
+	if reserveAt < 0 || resultAt < 0 || jobAt < 0 || reserveAt > resultAt || reserveAt > jobAt {
+		t.Fatalf("physical reservation/result/job order = %d/%d/%d", reserveAt, resultAt, jobAt)
+	}
+
+	for _, wrapper := range []string{"queueImmediatePost", "enqueueExistingPostDeliveries"} {
+		wrapperAt := strings.Index(text, "func (h *SocialPostHandler) "+wrapper+"(")
+		if wrapperAt < 0 {
+			t.Fatalf("%s not found", wrapper)
+		}
+		body := text[wrapperAt:]
+		if next := strings.Index(body[len("func "):], "\nfunc "); next >= 0 {
+			body = body[:len("func ")+next]
+		}
+		if !strings.Contains(body, ".WithTransaction(") {
+			t.Fatalf("%s must always create one reservation/results/jobs transaction", wrapper)
+		}
 	}
 }
 

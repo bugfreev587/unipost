@@ -88,6 +88,7 @@ var normalizedErrorCodeMap = map[string]string{
 	"BAD_REQUEST":                        "bad_request",
 	"CONFLICT":                           "conflict",
 	"DEFAULT_PROFILE_PROTECTED":          "default_profile_protected",
+	"DUPLICATE_SOCIAL_CONNECTION":        "duplicate_social_connection",
 	"DELIVERY_FAILED":                    "delivery_failed",
 	"FACEBOOK_DISABLED":                  "facebook_disabled",
 	"FORBIDDEN":                          "forbidden",
@@ -144,6 +145,38 @@ var normalizedErrorCodeMap = map[string]string{
 	"UPSTREAM_RATE_LIMITED":           "upstream_rate_limited",
 	"VALIDATION_ERROR":                "validation_error",
 	"WRONG_PLATFORM":                  "wrong_platform",
+}
+
+const duplicateSocialConnectionMessage = "The same physical social connection is selected through multiple profiles. Choose one account binding."
+
+func firstDuplicateSocialConnectionConflict(posts []platform.PlatformPostInput, accounts map[string]platform.ValidateAccount) (platform.DuplicateSocialConnectionConflict, bool) {
+	conflicts := platform.FindDuplicateSocialConnectionConflicts(posts, accounts)
+	if len(conflicts) == 0 {
+		return platform.DuplicateSocialConnectionConflict{}, false
+	}
+	return conflicts[0], true
+}
+
+func writeDuplicateSocialConnectionError(w http.ResponseWriter, conflict platform.DuplicateSocialConnectionConflict) {
+	isRetriable := false
+	hint := "Choose one Profile binding for this social connection and retry."
+	if !conflict.PayloadsMatch {
+		hint = "Choose one Profile binding, or create separate Post requests for the different payloads."
+	}
+	writeJSON(w, http.StatusUnprocessableEntity, ErrorResponse{
+		Error: ErrorBody{
+			Code:           "DUPLICATE_SOCIAL_CONNECTION",
+			NormalizedCode: normalizeErrorCode("DUPLICATE_SOCIAL_CONNECTION"),
+			Message:        duplicateSocialConnectionMessage,
+			Hint:           hint,
+			NextAction:     "fix_request",
+			IsRetriable:    &isRetriable,
+			DocsURL:        postValidateDocsURL,
+			Issues:         conflict.Issues,
+			Details:        conflict.PublicDetails(),
+		},
+		RequestID: requestIDFromResponse(w),
+	})
 }
 
 func normalizeErrorCode(code string) string {

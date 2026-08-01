@@ -1,12 +1,51 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
+
+func TestWriteDuplicateSocialConnectionErrorUsesDedicated422Contract(t *testing.T) {
+	posts := []platform.PlatformPostInput{
+		{AccountID: "sa_twitter_dev", Caption: "v1.4 is live"},
+		{AccountID: "sa_twitter_staging", Caption: "v1.4 is live"},
+	}
+	accounts := map[string]platform.ValidateAccount{
+		"sa_twitter_dev":     {Platform: "twitter", ConnectionID: "conn_1", ProfileID: "pr_dev"},
+		"sa_twitter_staging": {Platform: "twitter", ConnectionID: "conn_1", ProfileID: "pr_staging"},
+	}
+	conflict, ok := firstDuplicateSocialConnectionConflict(posts, accounts)
+	if !ok {
+		t.Fatal("expected duplicate physical connection conflict")
+	}
+
+	rr := httptest.NewRecorder()
+	writeDuplicateSocialConnectionError(rr, conflict)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rr.Code)
+	}
+	var got ErrorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Error.Code != "DUPLICATE_SOCIAL_CONNECTION" || got.Error.NormalizedCode != "duplicate_social_connection" {
+		t.Fatalf("error code = %#v", got.Error)
+	}
+	if len(got.Error.Issues) != 2 {
+		t.Fatalf("issues = %#v, want two", got.Error.Issues)
+	}
+	if got.Error.Details["platform"] != "twitter" {
+		t.Fatalf("details = %#v", got.Error.Details)
+	}
+	if _, leaked := got.Error.Details["connection_id"]; leaked {
+		t.Fatalf("details leaked connection_id: %#v", got.Error.Details)
+	}
+}
 
 func TestParsedRequestResolveLegacyPlatformOptions(t *testing.T) {
 	body := publishRequestBody{

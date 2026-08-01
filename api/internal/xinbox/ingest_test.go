@@ -26,7 +26,7 @@ func (s *fakeIngestStore) AccountForApp(_ context.Context, appClientID, accountI
 	return account, nil
 }
 
-func (s *fakeIngestStore) AccountsForExternalUser(_ context.Context, appClientID, externalUserID string) ([]InboxAccount, error) {
+func (s *fakeIngestStore) AccountsForProviderUser(_ context.Context, appClientID, externalUserID string) ([]InboxAccount, error) {
 	return s.external[appClientID+":"+externalUserID], nil
 }
 

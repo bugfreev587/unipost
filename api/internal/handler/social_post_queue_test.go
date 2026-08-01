@@ -65,6 +65,133 @@ func TestSchedulerDelegatesClaimAndEnqueueToOneHandlerTransaction(t *testing.T) 
 	}
 }
 
+func TestScheduledEnqueueRevalidatesPhysicalConnectionUniqueness(t *testing.T) {
+	source, err := os.ReadFile("social_post_queue.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (h *SocialPostHandler) enqueueClaimedScheduledPost")
+	end := strings.Index(text[start:], "func scheduledExecutionAdditionalQuotaUnits")
+	if start < 0 || end < 0 {
+		t.Fatal("enqueueClaimedScheduledPost boundaries not found")
+	}
+	fn := text[start : start+end]
+	for _, want := range []string{
+		"ConnectionID: acc.ConnectionID.String",
+		"ProfileID:    acc.ProfileID",
+		"firstDuplicateSocialConnectionConflict(parsed, accountMap)",
+	} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("scheduled duplicate preflight missing %q", want)
+		}
+	}
+	duplicateAt := strings.Index(fn, "firstDuplicateSocialConnectionConflict(parsed, accountMap)")
+	policyAt := strings.Index(fn, "evaluatePublishingRestrictions")
+	if duplicateAt < 0 || policyAt < 0 || duplicateAt > policyAt {
+		t.Fatalf("duplicate/policy order = %d/%d, want duplicate preflight first", duplicateAt, policyAt)
+	}
+}
+
+func TestScheduledDuplicatePhysicalConnectionCommitsTerminalFailure(t *testing.T) {
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{
+		{AccountID: "account-dev", Caption: "development"},
+		{AccountID: "account-staging", Caption: "staging"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtx := &duplicateScheduledConnectionDB{accounts: map[string]db.SocialAccount{
+		"account-dev": {
+			ID: "account-dev", ProfileID: "profile-dev", Platform: "twitter", Status: "active",
+			ConnectionID: pgtype.Text{String: "connection-shared", Valid: true}, BindingVersion: 1, BindingStatus: "active",
+		},
+		"account-staging": {
+			ID: "account-staging", ProfileID: "profile-staging", Platform: "twitter", Status: "active",
+			ConnectionID: pgtype.Text{String: "connection-shared", Valid: true}, BindingVersion: 1, BindingStatus: "active",
+		},
+	}}
+	h := &SocialPostHandler{queries: db.New(dbtx)}
+	post := db.SocialPost{ID: "post-duplicate", WorkspaceID: "workspace-a", Status: "publishing", Metadata: metadata}
+
+	outcome, err := h.enqueueClaimedScheduledPost(withoutPostMediaRetentionSync(context.Background()), post)
+
+	if err != nil {
+		t.Fatalf("enqueueClaimedScheduledPost error = %v, want committed terminal outcome", err)
+	}
+	if outcome.terminalErr == nil || !strings.Contains(outcome.terminalErr.Error(), "DUPLICATE_SOCIAL_CONNECTION") {
+		t.Fatalf("terminal error = %v, want duplicate connection code", outcome.terminalErr)
+	}
+	if dbtx.postStatus != "failed" || dbtx.resultCount != 2 || dbtx.failureCount != 2 || dbtx.deliveryJobCount != 0 {
+		t.Fatalf("terminal state = status:%q results:%d failures:%d jobs:%d", dbtx.postStatus, dbtx.resultCount, dbtx.failureCount, dbtx.deliveryJobCount)
+	}
+	if !strings.Contains(dbtx.errorSummary, "DUPLICATE_SOCIAL_CONNECTION") {
+		t.Fatalf("error summary = %q, want duplicate connection code", dbtx.errorSummary)
+	}
+}
+
+type duplicateScheduledConnectionDB struct {
+	accounts         map[string]db.SocialAccount
+	postStatus       string
+	resultCount      int
+	failureCount     int
+	deliveryJobCount int
+	errorSummary     string
+}
+
+func (f *duplicateScheduledConnectionDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(query, "-- name: UpdateSocialPostStatus"):
+		f.postStatus = args[1].(string)
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"):
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	case strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"):
+		f.errorSummary = args[1].(string)
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	default:
+		return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
+	}
+}
+
+func (f *duplicateScheduledConnectionDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *duplicateScheduledConnectionDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetResolvedSocialAccountByIDAndWorkspace"):
+		account, ok := f.accounts[args[0].(string)]
+		if !ok {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		return scanRow{values: inboxTenantIsolationResolvedSocialAccountValues(account)}
+	case strings.Contains(query, "-- name: CreateSocialPostResult"):
+		f.resultCount++
+		result := db.SocialPostResult{
+			ID: fmt.Sprintf("result-%d", f.resultCount), PostID: args[0].(string),
+			SocialAccountID: args[1].(string), Caption: args[2].(string), Status: args[3].(string),
+			ErrorMessage: args[5].(pgtype.Text),
+		}
+		return socialPostResultScanRow(result)
+	case strings.Contains(query, "-- name: CreatePostFailure"):
+		f.failureCount++
+		failure := db.CreatePostFailureParams{
+			PostID: args[0].(string), SocialPostResultID: args[1].(pgtype.Text), WorkspaceID: args[2].(string),
+			SocialAccountID: args[3].(pgtype.Text), Platform: args[4].(string), FailureStage: args[5].(string),
+			ErrorCode: args[6].(string), PlatformErrorCode: args[7].(pgtype.Text), Message: args[8].(string),
+			RawError: args[9].(pgtype.Text), IsRetriable: args[10].(bool), ErrorSource: args[11].(pgtype.Text),
+			ErrorTemporality: args[12].(pgtype.Text), ProviderError: args[13].([]byte),
+		}
+		return policySnapshotPostFailureRow(failure)
+	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
+		f.deliveryJobCount++
+		return scanRow{err: errors.New("duplicate scheduled target must not create delivery job")}
+	default:
+		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
+	}
+}
+
 func TestDraftClaimAndRestrictedEnqueueShareOneTransaction(t *testing.T) {
 	source, err := os.ReadFile("social_posts_drafts.go")
 	if err != nil {
@@ -381,12 +508,14 @@ func TestProcessPostDeliveryJobMarksPlatformStartedImmediatelyBeforeDispatch(t *
 	resultGuard := strings.Index(fn, `if providerTerminalOrAccepted(res, job.Platform)`)
 	platformInput := strings.Index(fn, "platformPostInputAtIndex")
 	policyRecheck := strings.Index(fn, "evaluateDeliveryPublishingRestriction")
+	bindingSnapshot := strings.Index(fn, "ValidateDeliveryBindingSnapshot")
 	markStarted := strings.Index(fn, "MarkPostDeliveryJobPlatformStarted")
 	dispatch := strings.Index(fn, "h.publishOneContext(")
 	for name, idx := range map[string]int{
 		"result duplicate guard":     resultGuard,
 		"platform input preparation": platformInput,
 		"publishing policy recheck":  policyRecheck,
+		"binding snapshot guard":     bindingSnapshot,
 		"platform started marker":    markStarted,
 		"publishOneContext dispatch": dispatch,
 	} {
@@ -402,6 +531,9 @@ func TestProcessPostDeliveryJobMarksPlatformStartedImmediatelyBeforeDispatch(t *
 	}
 	if policyRecheck < platformInput || policyRecheck > markStarted {
 		t.Fatal("publishing policy must be rechecked after input preparation and before platform_started_at")
+	}
+	if bindingSnapshot < platformInput || bindingSnapshot > markStarted {
+		t.Fatal("binding snapshot must be checked after input preparation and before platform_started_at")
 	}
 	if markStarted > dispatch {
 		t.Fatal("platform_started_at must be written before publishOneContext dispatch")
@@ -513,6 +645,12 @@ func TestSocialAccountDisconnectedForPublishTreatsReconnectRequiredAsDisconnecte
 	}
 	if socialAccountDisconnectedForPublish(db.SocialAccount{Status: "active"}, true) {
 		t.Fatal("active connected account should be available for publish")
+	}
+	if !socialAccountDisconnectedForPublish(db.SocialAccount{Status: "active", BindingStatus: "unbound"}, true) {
+		t.Fatal("unbound Profile binding should be unavailable for publish")
+	}
+	if !socialAccountUnavailableForDelivery(db.SocialAccount{Status: "active", BindingStatus: "unbound"}, true) {
+		t.Fatal("unbound Profile binding should be unavailable for retry delivery")
 	}
 	if socialAccountDisconnectedForPublish(db.SocialAccount{Status: "reconnect_required"}, false) {
 		t.Fatal("missing account should stay missing so validation can report account ownership")
@@ -771,6 +909,8 @@ func postDeliveryJobValues(job db.PostDeliveryJob) []any {
 		job.LeaseOwner,
 		job.FirstClaimedAt,
 		job.PlatformStartedAt,
+		job.ConnectionID,
+		job.BindingVersion,
 	}
 }
 
@@ -2104,11 +2244,11 @@ func (f *unavailableAccountDeliveryDB) QueryRow(_ context.Context, query string,
 		return socialPostScanRow(f.post)
 	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
 		return socialPostResultScanRow(f.result)
-	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+	case strings.Contains(query, "-- name: GetResolvedSocialAccountByIDAndWorkspace"):
 		if f.accountErr != nil {
 			return scanRow{err: f.accountErr}
 		}
-		return policySnapshotSocialAccountRow(f.account)
+		return scanRow{values: inboxTenantIsolationResolvedSocialAccountValues(f.account)}
 	case strings.Contains(query, "-- name: MarkPostDeliveryJobPlatformStarted"):
 		f.platformStartedCalls++
 		started := f.job
@@ -2145,19 +2285,21 @@ func (f *unavailableAccountDeliveryDB) QueryRow(_ context.Context, query string,
 			SocialPostResultID: args[1].(string),
 			WorkspaceID:        args[2].(string),
 			SocialAccountID:    args[3].(string),
-			Platform:           args[4].(string),
-			PostInputIndex:     args[5].(int32),
-			Kind:               args[6].(string),
-			State:              args[7].(string),
-			Attempts:           args[8].(int32),
-			MaxAttempts:        args[9].(int32),
-			FailureStage:       args[10].(pgtype.Text),
-			ErrorCode:          args[11].(pgtype.Text),
-			PlatformErrorCode:  args[12].(pgtype.Text),
-			LastError:          args[13].(pgtype.Text),
-			NextRunAt:          args[14].(pgtype.Timestamptz),
-			LastAttemptAt:      args[15].(pgtype.Timestamptz),
-			FinishedAt:         args[16].(pgtype.Timestamptz),
+			ConnectionID:       args[4].(pgtype.Text),
+			BindingVersion:     args[5].(pgtype.Int8),
+			Platform:           args[6].(string),
+			PostInputIndex:     args[7].(int32),
+			Kind:               args[8].(string),
+			State:              args[9].(string),
+			Attempts:           args[10].(int32),
+			MaxAttempts:        args[11].(int32),
+			FailureStage:       args[12].(pgtype.Text),
+			ErrorCode:          args[13].(pgtype.Text),
+			PlatformErrorCode:  args[14].(pgtype.Text),
+			LastError:          args[15].(pgtype.Text),
+			NextRunAt:          args[16].(pgtype.Timestamptz),
+			LastAttemptAt:      args[17].(pgtype.Timestamptz),
+			FinishedAt:         args[18].(pgtype.Timestamptz),
 			CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		}
 		f.retryJobs = append(f.retryJobs, retryJob)
@@ -2547,15 +2689,10 @@ func (f *persistedTokenDeliveryDB) QueryRow(_ context.Context, query string, arg
 		return socialPostScanRow(f.post)
 	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
 		return socialPostResultScanRow(f.result)
-	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
-		return scanRow{values: []any{
-			f.account.ID, f.account.ProfileID, f.account.Platform, f.account.AccessToken,
-			f.account.RefreshToken, f.account.TokenExpiresAt, f.account.ExternalAccountID,
-			f.account.AccountName, f.account.AccountAvatarUrl, f.account.ConnectedAt,
-			f.account.DisconnectedAt, f.account.Metadata, f.account.Scope, f.account.Status,
-			f.account.ConnectionType, f.account.ConnectSessionID, f.account.ExternalUserID,
-			f.account.ExternalUserEmail, f.account.LastRefreshedAt, f.account.XAppMode,
-		}}
+	case strings.Contains(query, "-- name: GetResolvedSocialAccountByIDAndWorkspace"):
+		return scanRow{values: inboxTenantIsolationResolvedSocialAccountValues(f.account)}
+	case strings.Contains(query, "-- name: ValidateDeliveryBindingSnapshot"):
+		return scanRow{values: []any{true}}
 	case strings.Contains(query, "-- name: GetWorkspace"):
 		return scanRow{err: pgx.ErrNoRows}
 	case strings.Contains(query, "-- name: CountPublishedTodayByAccount"):

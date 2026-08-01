@@ -61,7 +61,21 @@ func (w *TokenRefreshWorker) refreshExpiring(ctx context.Context) {
 
 	slog.Info("token refresh: found expiring tokens", "count", len(accounts))
 
-	for _, acc := range accounts {
+	for _, binding := range accounts {
+		profile, profileErr := w.queries.GetProfile(ctx, binding.ProfileID)
+		if profileErr != nil {
+			slog.Error("token refresh: failed to resolve account profile", "account_id", binding.ID, "error", profileErr)
+			continue
+		}
+		resolved, resolveErr := w.queries.GetResolvedSocialAccountByIDAndWorkspace(ctx, db.GetResolvedSocialAccountByIDAndWorkspaceParams{
+			ID:          binding.ID,
+			WorkspaceID: profile.WorkspaceID,
+		})
+		if resolveErr != nil {
+			slog.Error("token refresh: failed to resolve physical connection", "account_id", binding.ID, "error", resolveErr)
+			continue
+		}
+		acc := resolved.AsSocialAccount()
 		if !acc.RefreshToken.Valid {
 			slog.Warn("token refresh: no refresh token", "account_id", acc.ID)
 			continue

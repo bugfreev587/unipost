@@ -61,6 +61,33 @@ test("selects only the preview API whose Railway deployment matches the exact SH
   });
 });
 
+test("accepts Railway's hash-scoped pull request environment", () => {
+  const result = selectRailwayPreviewAPI({
+    id: "env-pr-299",
+    name: "pr-5ba7dd-299",
+    serviceInstances: {
+      edges: [{
+        node: {
+          serviceName: "preview-api",
+          latestDeployment: {
+            status: "SUCCESS",
+            meta: { commitHash: sha },
+          },
+          domains: {
+            serviceDomains: [{ domain: "preview-api-pr-5ba7dd-299.up.railway.app" }],
+          },
+        },
+      }],
+    },
+  }, sha);
+
+  assert.deepEqual(result, {
+    apiURL: "https://preview-api-pr-5ba7dd-299.up.railway.app",
+    railwayEnvironmentId: "env-pr-299",
+    railwayEnvironmentName: "pr-5ba7dd-299",
+  });
+});
+
 test("rejects a Railway environment attached to another SHA", () => {
   assert.throws(
     () => selectRailwayEnvironment([

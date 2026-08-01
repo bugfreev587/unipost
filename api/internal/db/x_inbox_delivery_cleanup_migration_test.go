@@ -128,6 +128,24 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	if !hasWorkspaceTrigger {
 		t.Fatal("cleanup migration must install a BEFORE DELETE trigger on workspaces")
 	}
+	var accountDeleteTriggerCount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM pg_trigger
+		WHERE tgrelid = 'social_accounts'::regclass
+		  AND tgname IN (
+		    'social_accounts_x_inbox_delivery_cleanup',
+		    'zz_social_accounts_x_inbox_cleanup_route'
+		  )
+		  AND NOT tgisinternal
+		  AND (tgtype & 2) <> 0
+		  AND (tgtype & 8) <> 0
+	`).Scan(&accountDeleteTriggerCount); err != nil {
+		t.Fatal(err)
+	}
+	if accountDeleteTriggerCount != 2 {
+		t.Fatalf("social account BEFORE DELETE cleanup trigger count = %d, want 2", accountDeleteTriggerCount)
+	}
 	for _, column := range []string{
 		"cleanup_key",
 		"source_app_identity",

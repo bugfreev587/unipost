@@ -22,6 +22,14 @@ export function getAccountDisplayName(account: SocialAccount): string {
 }
 
 export function getAccountIdentityKey(account: SocialAccount): string {
+  const siblings = (account.sibling_account_ids || [])
+    .map(clean)
+    .filter(Boolean)
+    .sort();
+  if (siblings.length > 0) {
+    return `${account.platform}::siblings::${siblings.join(",")}`;
+  }
+
   const externalID = clean(account.external_account_id);
   if (externalID) return `${account.platform}::external::${externalID.toLowerCase()}`;
 

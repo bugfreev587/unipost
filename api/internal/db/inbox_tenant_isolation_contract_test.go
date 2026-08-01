@@ -54,7 +54,7 @@ func inboxTenantIsolationQuery(t *testing.T, source, name string) string {
 	return compactInboxTenantIsolationSQL(inboxTenantIsolationRawQuery(t, source, name))
 }
 
-const inboxManagedScopeOrTerm = "sqlc.arg('workspace_scope')::boolean or ( sa.connection_type = 'managed' and sa.external_user_id = sqlc.arg('external_user_id')::text )"
+const inboxManagedScopeOrTerm = "sqlc.arg('workspace_scope')::boolean or ( coalesce(sc.connection_type, sa.connection_type) = 'managed' and coalesce(sc.external_user_id, sa.external_user_id) = sqlc.arg('external_user_id')::text )"
 const inboxManagedScopePredicate = "and ( " + inboxManagedScopeOrTerm + " )"
 
 func inboxManagedScopePredicateViolation(query, workspaceExpr string) string {
@@ -114,6 +114,91 @@ func TestInboxScopedNotificationOwnerProjectionContract(t *testing.T) {
 				t.Fatalf("generated %s must expose ExternalUserID as pgtype.Text", structName)
 			}
 		})
+	}
+}
+
+func TestInboxConnectionManagedScopeContract(t *testing.T) {
+	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
+	managedScope := "coalesce(sc.connection_type, sa.connection_type) = 'managed' and coalesce(sc.external_user_id, sa.external_user_id) = sqlc.arg('external_user_id')::text"
+
+	for _, name := range []string{
+		"ListInboxItemsByWorkspace",
+		"GetInboxItem",
+		"MarkInboxItemRead",
+		"MarkAllInboxItemsRead",
+		"UpdateInboxThreadState",
+		"CountUnreadByWorkspace",
+		"FindInboxAccountsByWorkspace",
+		"CountInboxAccountsInScope",
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := inboxTenantIsolationQuery(t, source, name)
+			connectionJoin := "left join social_connections sc on sc.id = sa.connection_id"
+			if name == "ListInboxItemsByWorkspace" || name == "GetInboxItem" || name == "CountUnreadByWorkspace" {
+				connectionJoin = "left join social_connections sc on sc.id = coalesce(i.connection_id, sa.connection_id)"
+			}
+			if !strings.Contains(query, connectionJoin) {
+				t.Fatalf("%s must resolve managed ownership through the physical connection: %s", name, query)
+			}
+			if !strings.Contains(query, managedScope) {
+				t.Fatalf("%s missing connection-level managed scope %q: %s", name, managedScope, query)
+			}
+		})
+	}
+}
+
+func TestInboxConnectionDiscoveryDeduplicatesSiblingBindings(t *testing.T) {
+	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
+	for _, name := range []string{
+		"FindAllActiveInstagramAccountsByWebhookUserID",
+		"FindAllSocialAccountsByPlatformAndExternalID",
+		"ListAllInboxAccounts",
+		"FindInboxAccountsByWorkspace",
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := inboxTenantIsolationQuery(t, source, name)
+			if !strings.Contains(query, "distinct on (coalesce(sa.connection_id, sa.id))") {
+				t.Fatalf("%s must return one routing row per physical connection: %s", name, query)
+			}
+			if !strings.Contains(query, "left join social_connections sc on sc.id = sa.connection_id") {
+				t.Fatalf("%s must resolve shared connection state: %s", name, query)
+			}
+		})
+	}
+}
+
+func TestInboxPhysicalConnectionDeduplicationContract(t *testing.T) {
+	migration := compactInboxTenantIsolationSQL(readInboxTenantIsolationContractFile(t, "migrations/140_inbox_connection_deduplication.sql"))
+	for _, want := range []string{
+		"add column connection_id text",
+		"inbox_items_connection_source_external_unique_idx",
+		"where connection_id is not null",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("inbox connection dedupe migration missing %q: %s", want, migration)
+		}
+	}
+
+	cutover := compactInboxTenantIsolationSQL(readInboxTenantIsolationContractFile(t, "../socialconnectioncutover/sql/cutover.sql"))
+	for _, want := range []string{
+		"partition by account.connection_id, item.source, item.external_id",
+		"insert into inbox_item_supersessions",
+		"set connection_id = ranked.connection_id",
+	} {
+		if !strings.Contains(cutover, want) {
+			t.Fatalf("explicit cutover missing Inbox reconciliation %q: %s", want, cutover)
+		}
+	}
+
+	queries := inboxTenantIsolationQuery(t, readInboxTenantIsolationContractFile(t, "queries/inbox.sql"), "UpsertInboxItem")
+	for _, want := range []string{
+		"connection_id",
+		"select connection_id from social_accounts where id = $1",
+		"on conflict do nothing",
+	} {
+		if !strings.Contains(queries, want) {
+			t.Fatalf("inbox upsert missing physical dedupe behavior %q: %s", want, queries)
+		}
 	}
 }
 
@@ -265,16 +350,16 @@ func TestInboxTenantIsolationAuthenticatedQueriesDeriveWorkspace(t *testing.T) {
 				if violation := inboxManagedScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
 					t.Errorf("%s %s: %s", tt.name, violation, query)
 				}
-				if strings.Contains(query, "coalesce(") {
-					t.Errorf("%s must not infer workspace scope from a nullable or empty managed-user id: %s", tt.name, query)
-				}
 			}
 		})
 	}
 
 	for _, name := range []string{"ListInboxItemsByWorkspace", "CountUnreadByWorkspace"} {
 		query := inboxTenantIsolationQuery(t, source, name)
-		for _, want := range []string{"sa.status = 'active'", "sa.disconnected_at is null"} {
+		for _, want := range []string{
+			"case when sc.id is not null then sc.status else sa.status end = 'active'",
+			"case when sc.id is not null then sc.disconnected_at else sa.disconnected_at end is null",
+		} {
 			if !strings.Contains(query, want) {
 				t.Errorf("%s must retain existing active-account filter %q", name, want)
 			}
@@ -333,21 +418,19 @@ func TestInboxManagedUserAccountEnumeration(t *testing.T) {
 		t.Fatalf("valid account enumeration query rejected: %s: %s", violation, query)
 	}
 	for _, want := range []string{
-		"select distinct sa.id, sa.profile_id, sa.platform, sa.access_token",
+		"select distinct on (coalesce(sa.connection_id, sa.id)) sa.id, sa.profile_id, sa.platform, sa.access_token",
+		"left join social_connections sc on sc.id = sa.connection_id",
 		"p.workspace_id = sqlc.arg('workspace_id')",
-		"sa.status = 'active'",
+		"case when sc.id is not null then sc.status else sa.status end = 'active'",
 		"sa.disconnected_at is null",
+		"sa.binding_status = 'active'",
 		"sa.platform in ('instagram', 'threads', 'facebook', 'twitter')",
-		"order by sa.connected_at desc, sa.id",
+		"order by coalesce(sa.connection_id, sa.id), sa.connected_at desc, sa.id",
 	} {
 		if !strings.Contains(query, want) {
 			t.Errorf("FindInboxAccountsByWorkspace missing %q in %s", want, query)
 		}
 	}
-	if strings.Contains(query, "coalesce(") {
-		t.Fatal("account enumeration must not infer workspace scope from a nullable or empty managed-user id")
-	}
-
 	orTerm := inboxManagedScopeOrTerm
 	mutations := []struct {
 		name  string
@@ -410,7 +493,7 @@ func TestCountInboxAccountsInScopeQueryContract(t *testing.T) {
 	if violation := countScopeViolation(query); violation != "" {
 		t.Fatalf("CountInboxAccountsInScope scope placement is unsafe: %s: %s", violation, query)
 	}
-	for _, forbidden := range []string{"sa.status", "sa.disconnected_at", "coalesce("} {
+	for _, forbidden := range []string{"sa.status", "sa.disconnected_at"} {
 		if strings.Contains(query, forbidden) {
 			t.Errorf("CountInboxAccountsInScope must reconcile historical operation ownership without %q: %s", forbidden, query)
 		}
@@ -446,9 +529,10 @@ func TestCountInboxAccountsInScopeQueryContract(t *testing.T) {
 		"select count(*)::integer",
 		"from social_accounts sa",
 		"join profiles p on p.id = sa.profile_id",
+		"left join social_connections sc on sc.id = sa.connection_id",
 		"where p.workspace_id = $1",
 		"and sa.id = any($2::text[])",
-		"and ( $3::boolean or ( sa.connection_type = 'managed' and sa.external_user_id = $4::text ) )",
+		"and ( $3::boolean or ( coalesce(sc.connection_type, sa.connection_type) = 'managed' and coalesce(sc.external_user_id, sa.external_user_id) = $4::text ) )",
 	} {
 		if !strings.Contains(generatedQuery, want) {
 			t.Errorf("generated CountInboxAccountsInScope missing %q in %s", want, generatedQuery)
@@ -520,10 +604,6 @@ func TestInboxManagedUserMutations(t *testing.T) {
 			if violation := inboxManagedScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
 				t.Fatalf("%s: %s", violation, query)
 			}
-			if strings.Contains(query, "coalesce(") {
-				t.Fatalf("mutation must not infer workspace scope from a nullable or empty managed-user id: %s", query)
-			}
-
 			mutations := []struct {
 				name  string
 				query string
@@ -654,14 +734,15 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 		t.Fatal("FindAllActiveInstagramAccountsByWebhookUserID must retain its :many annotation")
 	}
 	for _, want := range []string{
-		"select sa.id, sa.external_account_id",
-		"cast(coalesce(sa.metadata->>'instagram_webhook_user_id', '') as text) as instagram_webhook_user_id",
+		"select distinct on (coalesce(sa.connection_id, sa.id)) sa.id, sa.external_account_id",
+		"cast(coalesce(coalesce(sc.metadata, sa.metadata)->>'instagram_webhook_user_id', '') as text) as instagram_webhook_user_id",
 		"p.workspace_id",
 		"sa.platform = 'instagram'",
-		"sa.metadata->>'instagram_webhook_user_id' = @instagram_webhook_user_id::text",
+		"coalesce(sc.metadata, sa.metadata)->>'instagram_webhook_user_id' = @instagram_webhook_user_id::text",
 		"sa.disconnected_at is null",
-		"sa.status = 'active'",
-		"order by sa.connected_at desc, sa.id",
+		"sa.binding_status = 'active'",
+		"case when sc.id is not null then sc.status else sa.status end = 'active'",
+		"order by coalesce(sa.connection_id, sa.id), sa.connected_at desc, sa.id",
 	} {
 		if !strings.Contains(instagram, want) {
 			t.Errorf("Instagram webhook routing query missing %q in %s", want, instagram)
@@ -674,9 +755,10 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 	}
 	for _, want := range []string{
 		"sa.platform = $1",
-		"sa.external_account_id = $2",
+		"coalesce(sc.provider_identity, sa.external_account_id) = sqlc.arg('external_account_id')::text",
 		"sa.disconnected_at is null",
-		"sa.status = 'active'",
+		"sa.binding_status = 'active'",
+		"case when sc.id is not null then sc.status else sa.status end = 'active'",
 	} {
 		if !strings.Contains(exact, want) {
 			t.Errorf("exact platform routing query missing %q in %s", want, exact)
@@ -684,7 +766,7 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 	}
 
 	accounts := inboxTenantIsolationQuery(t, source, "ListAllInboxAccounts")
-	if !strings.Contains(accounts, "cast(coalesce(sa.metadata->>'instagram_webhook_user_id', '') as text) as instagram_webhook_user_id") {
+	if !strings.Contains(accounts, "cast(coalesce(coalesce(sc.metadata, sa.metadata)->>'instagram_webhook_user_id', '') as text) as instagram_webhook_user_id") {
 		t.Fatal("ListAllInboxAccounts must expose instagram_webhook_user_id")
 	}
 }
@@ -696,12 +778,14 @@ func TestInboxTenantIsolationCanPersistInstagramWebhookIdentity(t *testing.T) {
 		t.Fatal("SetInstagramWebhookUserID must retain its :execrows annotation")
 	}
 	for _, want := range []string{
+		"update social_connections sc",
+		"sc.id = binding.connection_id",
 		"update social_accounts",
 		"set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('instagram_webhook_user_id', @instagram_webhook_user_id::text)",
-		"where id = @id",
-		"platform = 'instagram'",
-		"status = 'active'",
-		"disconnected_at is null",
+		"where target.id = @id",
+		"target.platform = 'instagram'",
+		"target.status = 'active'",
+		"target.disconnected_at is null",
 	} {
 		if !strings.Contains(query, want) {
 			t.Errorf("SetInstagramWebhookUserID missing %q in %s", want, query)
@@ -784,7 +868,20 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		t.Fatalf("seed profiles: %v", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO social_accounts (
+		CREATE TEMP TABLE inbox_isolation_account_fixtures (
+		  id TEXT PRIMARY KEY,
+		  profile_id TEXT NOT NULL,
+		  platform TEXT NOT NULL,
+		  access_token TEXT NOT NULL,
+		  external_account_id TEXT,
+		  metadata JSONB NOT NULL,
+		  connection_type TEXT NOT NULL,
+		  external_user_id TEXT,
+		  status TEXT NOT NULL,
+		  disconnected_at TIMESTAMPTZ
+		) ON COMMIT DROP;
+
+		INSERT INTO inbox_isolation_account_fixtures (
 		  id, profile_id, platform, access_token, external_account_id, metadata,
 		  connection_type, external_user_id, status, disconnected_at
 		)
@@ -864,7 +961,56 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		    'inbox-isolation-account-2', 'inbox-isolation-profile-2', 'instagram',
 		    'token-2', 'external-2', '{"instagram_webhook_user_id":"webhook-user-2"}'::jsonb,
 		    'managed', 'managed-other', 'active', NULL
-		  )
+		  );
+
+		INSERT INTO social_connections (
+		  id, workspace_id, platform, provider_identity, access_token, metadata,
+		  status, connection_type, external_user_id, disconnected_at
+		)
+		SELECT
+		  'inbox-isolation-connection-' || fixture.id,
+		  profile.workspace_id,
+		  fixture.platform,
+		  CASE
+		    WHEN fixture.platform = 'instagram'
+		      THEN fixture.metadata->>'instagram_webhook_user_id'
+		    ELSE fixture.external_account_id
+		  END,
+		  fixture.access_token,
+		  fixture.metadata,
+		  fixture.status,
+		  fixture.connection_type,
+		  fixture.external_user_id,
+		  fixture.disconnected_at
+		FROM inbox_isolation_account_fixtures fixture
+		JOIN profiles profile ON profile.id = fixture.profile_id
+		WHERE fixture.id <> 'inbox-isolation-account-byo';
+
+		INSERT INTO social_accounts (
+		  id, profile_id, platform, access_token, external_account_id, metadata,
+		  connection_type, external_user_id, status, disconnected_at, connection_id
+		)
+		SELECT
+		  fixture.id, fixture.profile_id, fixture.platform, fixture.access_token,
+		  fixture.external_account_id, fixture.metadata, fixture.connection_type,
+		  fixture.external_user_id, fixture.status, fixture.disconnected_at,
+		  'inbox-isolation-connection-' || fixture.id
+		FROM inbox_isolation_account_fixtures fixture
+		WHERE fixture.id <> 'inbox-isolation-account-byo';
+
+		-- Preserve the deliberately anomalous legacy BYO row as a quarantined,
+		-- connection-less migration fixture. New application writes cannot create it.
+		SET LOCAL session_replication_role = replica;
+		INSERT INTO social_accounts (
+		  id, profile_id, platform, access_token, external_account_id, metadata,
+		  connection_type, external_user_id, status, disconnected_at, connection_id
+		)
+		SELECT
+		  id, profile_id, platform, access_token, external_account_id, metadata,
+		  connection_type, external_user_id, status, disconnected_at, NULL
+		FROM inbox_isolation_account_fixtures
+		WHERE id = 'inbox-isolation-account-byo';
+		SET LOCAL session_replication_role = origin;
 	`); err != nil {
 		t.Fatalf("seed social accounts: %v", err)
 	}

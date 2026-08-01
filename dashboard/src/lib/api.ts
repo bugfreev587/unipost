@@ -777,6 +777,9 @@ export interface SocialAccount {
   external_user_id?: string;
   external_user_email?: string;
   scope?: string[];
+  shared_connection?: boolean;
+  bound_profile_ids?: string[];
+  sibling_account_ids?: string[];
 }
 
 export async function listSocialAccounts(
@@ -795,7 +798,7 @@ export async function listSocialAccounts(
 export async function connectSocialAccount(
   token: string,
   profileId: string,
-  data: { platform: string; credentials: Record<string, string> }
+  data: { platform: string; credentials: Record<string, string>; reconnect_account_id?: string }
 ): Promise<ApiResponse<SocialAccount>> {
   return request(`/v1/profiles/${profileId}/accounts/connect`, token, {
     method: "POST",
@@ -871,6 +874,30 @@ export async function disconnectSocialAccount(
     token,
     { method: "DELETE" }
   );
+}
+
+export async function bindSocialAccount(
+  token: string,
+  accountId: string,
+  profileId: string,
+  externalUserId?: string
+): Promise<ApiResponse<SocialAccount>> {
+  return request(`/v1/accounts/${accountId}/bindings`, token, {
+    method: "POST",
+    body: JSON.stringify({
+      profile_id: profileId,
+      ...(externalUserId ? { external_user_id: externalUserId } : {}),
+    }),
+  });
+}
+
+export async function unbindSocialAccount(
+  token: string,
+  accountId: string
+): Promise<ApiResponse<{ unbound: boolean }>> {
+  return request(`/v1/accounts/${accountId}/binding`, token, {
+    method: "DELETE",
+  });
 }
 
 export async function dismissSocialAccount(
@@ -1325,9 +1352,11 @@ export async function getOAuthConnectURL(
   token: string,
   profileId: string,
   platform: string,
-  redirectUrl: string
+  redirectUrl: string,
+  reconnectAccountId?: string
 ): Promise<ApiResponse<{ auth_url: string }>> {
   const params = new URLSearchParams({ redirect_url: redirectUrl });
+  if (reconnectAccountId) params.set("reconnect_account_id", reconnectAccountId);
   return request(
     `/v1/profiles/${profileId}/oauth/connect/${platform}?${params}`,
     token

@@ -14,12 +14,12 @@ const postgresTestsByPackage = {
     "TestMigrationGatePostgresFreshDisposablePreviewBypassesBackup",
     "TestMigrationGatePostgresDisposablePreviewWithExistingTableStillRequiresBackup",
     "TestMigrationGatePostgresMismatchedPreviewIdentityStillRequiresBackup",
-    "TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127",
+    "TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues141",
     "TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged",
     "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
     "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
     "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
-    "TestRequireCurrentSchemaRejects124AndAccepts136",
+    "TestRequireCurrentSchemaRejects124AndAccepts141",
     "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
     "TestMigration133UpgradeAndGuardedDown",
     "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
@@ -339,8 +339,8 @@ test("publishing restriction CI guard rejects semantic workflow mutations", asyn
       "test_selector='(?:",
     ),
     "stale schema selector": (source) => source.replaceAll(
-      "TestRequireCurrentSchemaRejects124AndAccepts136",
-      "TestRequireCurrentSchemaRejects124AndAccepts135",
+      "TestRequireCurrentSchemaRejects124AndAccepts141",
+      "TestRequireCurrentSchemaRejects124AndAccepts140",
     ),
     "missing request events database URL": (source) => source.replace(
       "      REQUEST_EVENTS_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable\n",
@@ -442,6 +442,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
     [...workflow.matchAll(/startsWith\(github\.event\.pull_request\.head\.ref, 'codex\/pr270-'\)/g)].length,
     2,
     "the PR 270 hardening branch must be accepted for both preview and cleanup",
+  );
+  assert.equal(
+    [...workflow.matchAll(/github\.event\.pull_request\.head\.ref == 'codex\/social-account-profile-bindings'/g)].length,
+    2,
+    "the social account profile bindings branch must be accepted for both preview and cleanup",
   );
   assert.match(workflow, /vercel@50\.26\.1/);
   assert.match(workflow, /--prebuilt[\s\S]*--archive=tgz/);

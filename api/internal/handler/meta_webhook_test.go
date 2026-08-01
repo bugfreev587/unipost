@@ -413,6 +413,7 @@ func (f *metaWebhookRoutingDB) QueryRow(_ context.Context, query string, args ..
 		params.ThreadStatus,
 		params.AssignedTo,
 		params.LinkedPostID,
+		pgtype.Text{},
 	}}
 }
 

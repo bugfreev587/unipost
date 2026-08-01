@@ -106,6 +106,52 @@ func testMigrationGateConfig() MigrationGateConfig {
 	}
 }
 
+func TestDisposablePreviewIdentityAcceptsSupportedRailwayEnvironmentNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		environmentName string
+		serviceDomain   string
+		want            bool
+	}{
+		{
+			name:            "legacy PR environment",
+			environmentName: "unipost-pr-301",
+			serviceDomain:   "preview-api-unipost-pr-301.up.railway.app",
+			want:            true,
+		},
+		{
+			name:            "hash scoped PR environment",
+			environmentName: "pr-5ba7dd-299",
+			serviceDomain:   "preview-api-pr-5ba7dd-299.up.railway.app",
+			want:            true,
+		},
+		{
+			name:            "hash scoped domain mismatch",
+			environmentName: "pr-5ba7dd-299",
+			serviceDomain:   "preview-api-pr-ffffff-299.up.railway.app",
+			want:            false,
+		},
+		{
+			name:            "persistent environment",
+			environmentName: "development",
+			serviceDomain:   "dev-api.unipost.dev",
+			want:            false,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isDisposablePreviewIdentity(test.environmentName, test.serviceDomain); got != test.want {
+				t.Fatalf("isDisposablePreviewIdentity(%q, %q) = %t, want %t", test.environmentName, test.serviceDomain, got, test.want)
+			}
+		})
+	}
+}
+
 func TestMigrationGateRejectsMiswiredDatabaseBeforeBackupListOrMigrations(t *testing.T) {
 	config := testMigrationGateConfig()
 	client := &recordingBackupClient{
@@ -544,9 +590,17 @@ func TestIrreversibleMigrationSafetyManifestMatchesRegistry(t *testing.T) {
 		Version     int64  `json:"version"`
 		Description string `json:"description"`
 	}
+	type operationEntry struct {
+		Key                    string `json:"key"`
+		Description            string `json:"description"`
+		AffectedRowsClassifier string `json:"affected_rows_classifier"`
+		BackupAction           string `json:"backup_action"`
+		RollbackAction         string `json:"rollback_action"`
+	}
 	type safetyManifest struct {
-		BaselineVersion            int64           `json:"baseline_version"`
-		IrreversibleDataMigrations []manifestEntry `json:"irreversible_data_migrations"`
+		BaselineVersion            int64            `json:"baseline_version"`
+		IrreversibleDataMigrations []manifestEntry  `json:"irreversible_data_migrations"`
+		IrreversibleOperations     []operationEntry `json:"irreversible_operations"`
 	}
 
 	body, err := os.ReadFile("migrations/irreversible_data_migrations.json")
@@ -579,6 +633,23 @@ func TestIrreversibleMigrationSafetyManifestMatchesRegistry(t *testing.T) {
 	for version := range registry {
 		if _, ok := marked[version]; !ok {
 			t.Fatalf("runtime registry migration %d is missing from irreversible manifest", version)
+		}
+	}
+	operationRegistry := make(map[string]irreversibleOperation, len(irreversibleOperations))
+	for _, operation := range irreversibleOperations {
+		operationRegistry[operation.Key] = operation
+	}
+	if len(manifest.IrreversibleOperations) != len(operationRegistry) {
+		t.Fatalf("irreversible operation manifest count = %d, registry count = %d", len(manifest.IrreversibleOperations), len(operationRegistry))
+	}
+	for _, entry := range manifest.IrreversibleOperations {
+		operation, ok := operationRegistry[entry.Key]
+		if !ok {
+			t.Fatalf("manifest operation %q is missing from runtime registry", entry.Key)
+		}
+		if entry.Description != operation.Description || entry.AffectedRowsClassifier != operation.AffectedRowsClassifier ||
+			entry.BackupAction != operation.BackupAction || entry.RollbackAction != operation.RollbackAction {
+			t.Fatalf("manifest operation %q does not match runtime registry", entry.Key)
 		}
 	}
 
@@ -644,7 +715,7 @@ func TestCIRequiresMigrationGatePostgresIntegration(t *testing.T) {
 	for _, testName := range []string{
 		"TestMigrationGatePostgres",
 		"TestMigration133UpgradeAndGuardedDown",
-		"TestRequireCurrentSchemaRejects124AndAccepts136",
+		"TestRequireCurrentSchemaRejects124AndAccepts141",
 		"GOOSE_MIGRATION_TEST_DATABASE_URL=\"$REQUEST_EVENTS_TEST_DATABASE_URL\" go test ./internal/db -run '^TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose$' -count=1",
 		"go test -tags=integration ./internal/requestevents -count=1",
 		"go test -tags=integration ./internal/requesteventpartitions -count=1",
@@ -660,15 +731,15 @@ func TestCIRequiresMigrationGatePostgresIntegration(t *testing.T) {
 	if !strings.Contains(workflow, "REQUEST_EVENTS_TEST_DATABASE_URL") {
 		t.Fatal("observability PostgreSQL CI gate must use the isolated database URL")
 	}
-	if strings.Contains(workflow, "TestRequireCurrentSchemaRejects124AndAccepts135") {
-		t.Fatal("required PostgreSQL CI selector still names the pre-migration-136 schema test")
+	if strings.Contains(workflow, "TestRequireCurrentSchemaRejects124AndAccepts140") {
+		t.Fatal("required PostgreSQL CI selector still names the pre-migration-141 schema test")
 	}
 
 	integrationTestBody, err := os.ReadFile("migration_gate_postgres_integration_test.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(integrationTestBody), "want version=135") {
-		t.Fatal("migration gate PostgreSQL diagnostics still name the pre-migration-136 schema version")
+	if strings.Contains(string(integrationTestBody), "want version=140") {
+		t.Fatal("migration gate PostgreSQL diagnostics still name the pre-migration-141 schema version")
 	}
 }

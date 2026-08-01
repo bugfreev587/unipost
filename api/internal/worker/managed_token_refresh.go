@@ -155,8 +155,21 @@ func (w *ManagedTokenRefreshWorker) RunOnce(ctx context.Context) {
 	}
 	slog.Info("managed token refresh: batch", "count", len(rows))
 
-	for _, acc := range rows {
-		w.refreshOne(ctx, acc)
+	for _, binding := range rows {
+		profile, profileErr := w.queries.GetProfile(ctx, binding.ProfileID)
+		if profileErr != nil {
+			slog.Error("managed token refresh: failed to resolve account profile", "account_id", binding.ID, "err", profileErr)
+			continue
+		}
+		resolved, resolveErr := w.queries.GetResolvedSocialAccountByIDAndWorkspace(ctx, db.GetResolvedSocialAccountByIDAndWorkspaceParams{
+			ID:          binding.ID,
+			WorkspaceID: profile.WorkspaceID,
+		})
+		if resolveErr != nil {
+			slog.Error("managed token refresh: failed to resolve physical connection", "account_id", binding.ID, "err", resolveErr)
+			continue
+		}
+		w.refreshOne(ctx, resolved.AsSocialAccount())
 	}
 }
 

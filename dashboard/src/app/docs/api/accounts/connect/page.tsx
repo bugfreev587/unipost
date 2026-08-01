@@ -173,7 +173,7 @@ export default function ConnectAccountPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Connect account with credentials"
-      description="Directly connects one social account by sending adapter-specific credentials such as an identifier and password. Use this for non-OAuth flows like Bluesky. When the workspace has multiple profiles, pass profile_id explicitly instead of relying on an implicit default."
+      description="Directly connects one social account by sending adapter-specific credentials such as an identifier and password. Use this for non-OAuth flows like Bluesky. When the workspace has multiple profiles, pass profile_id explicitly. If the verified provider account is already connected, use the Profile binding operation instead of reconnecting it."
       method="POST"
       path="/v1/accounts/connect"
       requestSections={[

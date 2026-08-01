@@ -37,7 +37,8 @@ type retryPolicyUnavailableError struct{ err error }
 type retrySocialAccountUnavailableError struct{ accountID string }
 
 func socialAccountUnavailableForDelivery(account db.SocialAccount, ok bool) bool {
-	if !ok || account.DisconnectedAt.Valid {
+	bindingStatus := strings.TrimSpace(account.BindingStatus)
+	if !ok || (bindingStatus != "" && bindingStatus != "active") || account.DisconnectedAt.Valid {
 		return true
 	}
 	status := strings.ToLower(strings.TrimSpace(account.Status))
