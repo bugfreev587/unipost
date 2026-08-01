@@ -1257,6 +1257,9 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// Observation only — the state machine is deliberately
+			// unchanged here (see logRestrictedFinalizeNoRow).
+			h.logRestrictedFinalizeNoRow(ctx, job, post, mediaIDs)
 			return nil
 		}
 		return err
@@ -1289,6 +1292,81 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	}
 	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
 	return nil
+}
+
+// logRestrictedFinalizeNoRow records why FinalizeRestrictedPostDeliveryJob
+// matched no row. At least four conditions collapse into "no row": the job
+// left running/retrying, the lease owner changed, last_attempt_at changed, or
+// the referenced media are no longer retainable.
+//
+// This runs after the transaction returned, so a concurrent worker may already
+// have finalized the job and moved the state we re-read. The classification is
+// therefore a best-effort trend signal only — it is not exact attribution, and
+// it must not drive a state transition. Deciding a user-visible terminal state
+// for media_unavailable is deliberately left to a follow-up change; the
+// finalize and stale-lease recovery state machines are untouched here.
+func (h *SocialPostHandler) classifyRestrictedFinalizeNoRow(
+	ctx context.Context,
+	job db.PostDeliveryJob,
+	post db.SocialPost,
+	mediaIDs []string,
+) (classification, detail, observedState string) {
+	classification = "indeterminate"
+
+	current, err := h.queries.GetPostDeliveryJobByIDAndWorkspace(ctx, db.GetPostDeliveryJobByIDAndWorkspaceParams{
+		ID:          job.ID,
+		WorkspaceID: job.WorkspaceID,
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return "job_missing", "", ""
+	case err != nil:
+		return classification, err.Error(), ""
+	}
+
+	observedState = current.State
+	switch {
+	case current.State != "running" && current.State != "retrying":
+		return "state_changed", "", observedState
+	case current.LeaseOwner != job.LeaseOwner:
+		return "lease_mismatch", "", observedState
+	case current.LastAttemptAt != job.LastAttemptAt:
+		return "attempt_mismatch", "", observedState
+	}
+
+	for _, mediaID := range mediaIDs {
+		reason, _, classifyErr := h.classifyUnretainableMedia(ctx, post.WorkspaceID, mediaID)
+		if classifyErr != nil {
+			continue
+		}
+		if reason != mediaUnretainableRaceResolved {
+			return "media_unavailable", reason, observedState
+		}
+	}
+	return classification, detail, observedState
+}
+
+func (h *SocialPostHandler) logRestrictedFinalizeNoRow(
+	ctx context.Context,
+	job db.PostDeliveryJob,
+	post db.SocialPost,
+	mediaIDs []string,
+) {
+	classification, detail, observedState := h.classifyRestrictedFinalizeNoRow(ctx, job, post, mediaIDs)
+
+	// Stable message + classification field: this is the aggregation signal
+	// that replaces a metrics counter (no metrics SDK in this service).
+	slog.Warn("restricted delivery finalize matched no row",
+		"job_id", job.ID,
+		"post_id", post.ID,
+		"workspace_id", post.WorkspaceID,
+		"classification", classification,
+		"detail", detail,
+		"observed_state", observedState,
+		"expected_state", job.State,
+		"lease_owner", job.LeaseOwner.String,
+		"last_attempt_at", job.LastAttemptAt.Time,
+		"best_effort", true)
 }
 
 func (h *SocialPostHandler) parentStatusEventFromQueries(ctx context.Context, queries *db.Queries, postID, status string) (*pendingParentPostStatusEvent, error) {
