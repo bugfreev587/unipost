@@ -5,16 +5,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
+	"github.com/xiaoboyu/unipost-api/internal/safefetch"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -33,10 +35,15 @@ var pinterestScopes = []string{
 	"user_accounts:read",
 }
 
+type PinterestMediaStager interface {
+	StageExternalMedia(context.Context, string, safefetch.Policy) (storage.ExternalMediaResult, error)
+}
+
 type PinterestAdapter struct {
-	client       *http.Client
-	mediaProxy   *storage.Client
-	stageFromURL func(context.Context, string) (string, error)
+	client      *http.Client
+	mediaStager PinterestMediaStager
+	boardCache  pinterestBoardCache
+	now         func() time.Time
 }
 
 type PinterestBoard struct {
@@ -53,21 +60,21 @@ func NewPinterestAdapter() *PinterestAdapter {
 	return &PinterestAdapter{client: debugrt.NewClient(60 * time.Second)}
 }
 
-// SetMediaProxy attaches an R2-backed media proxy. Pinterest's create-pin
-// endpoint fetches `image_url`/`video_url` server-side, and presigned source
-// URLs are brittle there: they may be validated or fetched from a different
-// network path than our immediate dispatch call. Staging ephemeral URLs onto
-// our public R2 domain gives Pinterest a stable fetch target.
+// SetMediaProxy attaches the verified external-media staging boundary.
+// Request-supplied URLs must pass the provider-neutral safe fetcher before
+// Pinterest receives a UniPost-controlled public URL.
 func (a *PinterestAdapter) SetMediaProxy(c *storage.Client) {
-	a.mediaProxy = c
-	if c == nil {
-		a.stageFromURL = nil
-		return
-	}
-	a.stageFromURL = c.UploadFromURL
+	a.mediaStager = c
 }
 
 func (a *PinterestAdapter) Platform() string { return "pinterest" }
+
+func PinterestEnvironment() string {
+	if pinterestUseSandbox() {
+		return "sandbox"
+	}
+	return "production"
+}
 
 func (a *PinterestAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 	clientID := os.Getenv("PINTEREST_APP_ID")
@@ -136,7 +143,7 @@ func (a *PinterestAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 		return nil, fmt.Errorf("pinterest token exchange returned empty access_token")
 	}
 
-	profile, err := a.fetchUserAccount(ctx, tokenResp.AccessToken)
+	profile, err := a.fetchUserAccount(ctx, tokenResp.AccessToken, "account_validation")
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +191,43 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 	if !pinterestBoardIDPattern.MatchString(boardID) {
 		return nil, fmt.Errorf("invalid pinterest platform_options.board_id: must be a numeric board ID")
 	}
+	preflightStartedAt := a.pinterestNow()
+	pinterestRecordDispatchEvent(ctx, DispatchEvent{
+		Name:             "pinterest_destination_preflight_started",
+		Status:           "started",
+		Environment:      PinterestEnvironment(),
+		BoardFingerprint: pinterestBoardFingerprint(boardID),
+		FailureStage:     "destination_preflight",
+	})
+	if metadata, ok := DispatchMetadataFromContext(ctx); ok &&
+		metadata.Environment != "" && metadata.Environment != PinterestEnvironment() {
+		err := newProviderFailure(
+			"The selected Pinterest board belongs to a different Pinterest environment. Choose another board and publish again.",
+			map[string]any{
+				"provider": "pinterest",
+				"reason":   "board_environment_mismatch",
+			},
+			FailureContract{
+				ErrorCode:   "target_not_found",
+				Stage:       "destination_preflight",
+				IsRetriable: false,
+			},
+		)
+		pinterestRecordDispatchFailure(ctx, "pinterest_destination_preflight_failed", boardID, a.pinterestNow().Sub(preflightStartedAt), err)
+		return nil, err
+	}
+	if err := a.preflightBoard(ctx, accessToken, boardID); err != nil {
+		pinterestRecordDispatchFailure(ctx, "pinterest_destination_preflight_failed", boardID, a.pinterestNow().Sub(preflightStartedAt), err)
+		return nil, err
+	}
+	pinterestRecordDispatchEvent(ctx, DispatchEvent{
+		Name:             "pinterest_destination_preflight_succeeded",
+		Status:           "succeeded",
+		Environment:      PinterestEnvironment(),
+		BoardFingerprint: pinterestBoardFingerprint(boardID),
+		FailureStage:     "destination_preflight",
+		Duration:         a.pinterestNow().Sub(preflightStartedAt),
+	})
 
 	title := strings.TrimSpace(optString(opts, "title"))
 	link := strings.TrimSpace(optString(opts, "link"))
@@ -193,13 +237,41 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 		kind = SniffMediaKind(item.URL)
 	}
 	sourceURL := item.URL
-	if a.stageFromURL != nil && looksEphemeralFetchURL(sourceURL) {
-		stagedURL, err := a.stageFromURL(ctx, sourceURL)
-		if err != nil {
-			return nil, fmt.Errorf("pinterest media stage: %w", err)
+	if item.Origin != MediaOriginManaged {
+		mediaStartedAt := a.pinterestNow()
+		var staged storage.ExternalMediaResult
+		var err error
+		if a.mediaStager == nil {
+			err = storage.ErrNotConfigured
+		} else {
+			staged, err = a.mediaStager.StageExternalMedia(ctx, sourceURL, pinterestExternalMediaPolicy(kind))
 		}
-		slog.Info("pinterest media: staged ephemeral source URL", "source_url", sourceURL, "staged_url", stagedURL)
-		sourceURL = stagedURL
+		if err != nil {
+			failure := pinterestMediaFailure(err)
+			pinterestRecordDispatchFailure(ctx, "pinterest_media_preflight_failed", boardID, a.pinterestNow().Sub(mediaStartedAt), failure)
+			return nil, failure
+		}
+		if strings.TrimSpace(staged.PublicURL) == "" {
+			failure := pinterestMediaFailure(storage.ErrExternalMediaUpload)
+			pinterestRecordDispatchFailure(ctx, "pinterest_media_preflight_failed", boardID, a.pinterestNow().Sub(mediaStartedAt), failure)
+			return nil, failure
+		}
+		sourceURL = staged.PublicURL
+		if strings.HasPrefix(strings.ToLower(staged.MediaType), "video/") {
+			kind = MediaKindVideo
+		} else {
+			kind = MediaKindImage
+		}
+		pinterestRecordDispatchEvent(ctx, DispatchEvent{
+			Name:             "pinterest_media_staged",
+			Status:           "succeeded",
+			Environment:      PinterestEnvironment(),
+			BoardFingerprint: pinterestBoardFingerprint(boardID),
+			FailureStage:     "media_preflight",
+			Duration:         a.pinterestNow().Sub(mediaStartedAt),
+			MediaType:        staged.MediaType,
+			MediaSizeBytes:   staged.SizeBytes,
+		})
 	}
 
 	reqBody := map[string]any{
@@ -233,13 +305,17 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("pinterest create pin: %w", err)
+		failure := pinterestTransportFailure("create pin", err, "dispatch")
+		pinterestRecordDispatchFailure(ctx, "pinterest_create_pin_failed", boardID, 0, failure)
+		return nil, failure
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("pinterest create pin (%d): %s", resp.StatusCode, string(body))
+		failure := pinterestProviderFailure("create pin", resp.StatusCode, body, "dispatch")
+		pinterestRecordDispatchFailure(ctx, "pinterest_create_pin_failed", boardID, 0, failure)
+		return nil, failure
 	}
 
 	var pin struct {
@@ -256,6 +332,183 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 		ExternalID: pin.ID,
 		URL:        pin.URL,
 	}, nil
+}
+
+type pinterestAPIErrorBody struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func pinterestProviderFailure(operation string, status int, body []byte, stage string) error {
+	var providerBody pinterestAPIErrorBody
+	_ = json.Unmarshal(body, &providerBody)
+
+	providerCode := ""
+	if providerBody.Code != 0 {
+		providerCode = strconv.Itoa(providerBody.Code)
+	}
+	reason := "unknown"
+	errorCode := "platform_error"
+	message := "Pinterest rejected the request. Contact support if the problem continues."
+	isTransient := false
+	isRetriable := false
+
+	operation = strings.ToLower(strings.TrimSpace(operation))
+	switch {
+	case status == http.StatusUnauthorized || providerBody.Code == 2:
+		reason = "token_invalid"
+		errorCode = "auth_token_invalid"
+		message = "Pinterest rejected this connection. Reconnect the account, then try again."
+	case status == http.StatusForbidden && (operation == "board collection" || operation == "create board" || operation == "user account"):
+		reason = "missing_permission"
+		errorCode = "missing_permission"
+		message = "Pinterest denied a required account permission. Reconnect the account and update its permissions."
+	case providerBody.Code == 29:
+		reason = "board_not_accessible"
+		errorCode = "target_not_found"
+		message = "The selected Pinterest board is unavailable for this connected account."
+		if operation == "create pin" {
+			stage = "destination_preflight"
+		}
+	case providerBody.Code == 40:
+		reason = "board_not_found"
+		errorCode = "target_not_found"
+		message = "The selected Pinterest board is unavailable for this connected account."
+		if operation == "create pin" {
+			stage = "destination_preflight"
+		}
+	case status == http.StatusTooManyRequests:
+		reason = "rate_limited"
+		errorCode = "rate_limit"
+		message = "Pinterest is rate limiting this request. Try again later."
+		isTransient = true
+		isRetriable = true
+	case status >= http.StatusInternalServerError:
+		reason = "provider_temporary_failure"
+		errorCode = "temporary_platform_error"
+		message = "Pinterest is temporarily unavailable. Try again later."
+		isTransient = true
+		isRetriable = true
+	}
+
+	return newProviderFailure(message, map[string]any{
+		"provider":     "pinterest",
+		"http_status":  status,
+		"code":         providerCode,
+		"reason":       reason,
+		"is_transient": isTransient,
+	}, FailureContract{
+		ErrorCode:   errorCode,
+		Stage:       strings.TrimSpace(stage),
+		IsRetriable: isRetriable,
+	})
+}
+
+func pinterestTransportFailure(_ string, _ error, stage string) error {
+	return newProviderFailure(
+		"Pinterest is temporarily unavailable. Try again later.",
+		map[string]any{
+			"provider":     "pinterest",
+			"reason":       "provider_temporary_failure",
+			"is_transient": true,
+		},
+		FailureContract{
+			ErrorCode:   "temporary_platform_error",
+			Stage:       strings.TrimSpace(stage),
+			IsRetriable: true,
+		},
+	)
+}
+
+func pinterestExternalMediaPolicy(_ MediaKind) safefetch.Policy {
+	capability := Capabilities["pinterest"].Media
+	imageTypes := pinterestMediaTypesForFormats(capability.Images.AllowedFormats)
+	videoTypes := pinterestMediaTypesForFormats(capability.Videos.AllowedFormats)
+	policy := safefetch.Policy{
+		MaxBytes:            max(capability.Images.MaxFileSizeBytes, capability.Videos.MaxFileSizeBytes),
+		MaxBytesByMediaType: make(map[string]int64, len(imageTypes)+len(videoTypes)),
+		AllowedMediaTypes:   append(imageTypes, videoTypes...),
+		MaxRedirects:        5,
+	}
+	for _, mediaType := range imageTypes {
+		policy.MaxBytesByMediaType[mediaType] = capability.Images.MaxFileSizeBytes
+	}
+	for _, mediaType := range videoTypes {
+		policy.MaxBytesByMediaType[mediaType] = capability.Videos.MaxFileSizeBytes
+	}
+	return policy
+}
+
+func pinterestMediaTypesForFormats(formats []string) []string {
+	result := make([]string, 0, len(formats))
+	seen := make(map[string]struct{}, len(formats))
+	for _, format := range formats {
+		var mediaType string
+		switch strings.ToLower(strings.TrimSpace(format)) {
+		case "jpg", "jpeg":
+			mediaType = "image/jpeg"
+		case "png":
+			mediaType = "image/png"
+		case "webp":
+			mediaType = "image/webp"
+		case "mp4":
+			mediaType = "video/mp4"
+		case "mov":
+			mediaType = "video/quicktime"
+		}
+		if mediaType == "" {
+			continue
+		}
+		if _, ok := seen[mediaType]; ok {
+			continue
+		}
+		seen[mediaType] = struct{}{}
+		result = append(result, mediaType)
+	}
+	return result
+}
+
+func pinterestMediaFailure(stageErr error) error {
+	errorCode := "temporary_platform_error"
+	reason := "media_stage_temporary"
+	message := "UniPost could not prepare this Pinterest media. Try again later."
+	retriable := true
+	customerInput := false
+
+	var fetchErr *safefetch.FetchError
+	if errors.As(stageErr, &fetchErr) {
+		switch fetchErr.Kind {
+		case safefetch.ErrorTooLarge:
+			errorCode = "media_error"
+			reason = "media_too_large"
+			retriable = false
+			customerInput = true
+		case safefetch.ErrorUnsupportedMedia:
+			errorCode = "media_error"
+			reason = "unsupported_media"
+			retriable = false
+			customerInput = true
+		case safefetch.ErrorSourceTemporary, safefetch.ErrorTimeout:
+		default:
+			errorCode = "media_error"
+			reason = "customer_media_unreachable"
+			retriable = false
+			customerInput = true
+		}
+	}
+	if !retriable {
+		message = "Pinterest could not use this media. Replace it with a publicly available supported image or video."
+	}
+	fields := map[string]any{
+		"provider":       "pinterest",
+		"reason":         reason,
+		"is_transient":   retriable,
+		"customer_input": customerInput,
+	}
+	if fetchErr != nil && fetchErr.HTTPStatus > 0 {
+		fields["http_status"] = fetchErr.HTTPStatus
+	}
+	return newProviderFailure(message, fields, FailureContract{ErrorCode: errorCode, Stage: "media_preflight", IsRetriable: retriable})
 }
 
 func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, externalID string) error {
@@ -278,25 +531,6 @@ func (a *PinterestAdapter) DeletePost(ctx context.Context, accessToken string, e
 	return nil
 }
 
-func looksEphemeralFetchURL(rawURL string) bool {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	switch strings.ToLower(u.Hostname()) {
-	case "tmpfiles.org":
-		return true
-	}
-	q := u.Query()
-	if q.Get("X-Amz-Algorithm") != "" || q.Get("X-Amz-Signature") != "" || q.Get("X-Amz-Credential") != "" {
-		return true
-	}
-	if q.Get("AWSAccessKeyId") != "" || q.Get("Signature") != "" || q.Get("Expires") != "" {
-		return true
-	}
-	return false
-}
-
 func (a *PinterestAdapter) CreateBoard(ctx context.Context, accessToken string, name string) (*PinterestBoard, error) {
 	reqBody := map[string]any{
 		"name": strings.TrimSpace(name),
@@ -312,13 +546,13 @@ func (a *PinterestAdapter) CreateBoard(ctx context.Context, accessToken string, 
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("pinterest create board: %w", err)
+		return nil, pinterestTransportFailure("create board", err, "destination_discovery")
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("pinterest create board (%d): %s", resp.StatusCode, string(body))
+		return nil, pinterestProviderFailure("create board", resp.StatusCode, body, "destination_discovery")
 	}
 
 	var board PinterestBoard
@@ -389,46 +623,34 @@ func (a *PinterestAdapter) RefreshToken(ctx context.Context, refreshToken string
 }
 
 func (a *PinterestAdapter) FetchBoards(ctx context.Context, accessToken string) ([]PinterestBoard, error) {
-	boards := []PinterestBoard{}
-	bookmark := ""
-
-	for {
-		q := url.Values{}
-		q.Set("page_size", "250")
-		if bookmark != "" {
-			q.Set("bookmark", bookmark)
-		}
-		req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBaseURL()+"/boards?"+q.Encode(), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-
-		resp, err := a.client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("pinterest list boards: %w", err)
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("pinterest list boards (%d): %s", resp.StatusCode, string(body))
-		}
-
-		var raw struct {
-			Items    []PinterestBoard `json:"items"`
-			Bookmark string           `json:"bookmark"`
-		}
-		if err := json.Unmarshal(body, &raw); err != nil {
-			return nil, fmt.Errorf("pinterest list boards decode: %w", err)
-		}
-		boards = append(boards, raw.Items...)
-		if raw.Bookmark == "" || len(raw.Items) == 0 {
-			break
-		}
-		bookmark = raw.Bookmark
+	account, err := a.fetchUserAccount(ctx, accessToken, "destination_discovery")
+	if err != nil {
+		return nil, err
 	}
-
+	resources, complete, _, err := a.walkAccessiblePinterestBoards(ctx, accessToken, "")
+	if err != nil {
+		return nil, err
+	}
+	if !complete {
+		return nil, pinterestBoardProofTemporaryFailure("collection_incomplete")
+	}
+	boards := make([]PinterestBoard, 0, len(resources))
+	accessibleIDs := make(map[string]struct{}, len(resources))
+	for _, board := range resources {
+		boards = append(boards, PinterestBoard{ID: board.ID, Name: board.Name})
+		accessibleIDs[board.ID] = struct{}{}
+	}
+	metadata, _ := DispatchMetadataFromContext(ctx)
+	a.storePinterestBoardCache(pinterestBoardCacheKey{
+		AccountID:   strings.TrimSpace(metadata.SocialAccountID),
+		Environment: PinterestEnvironment(),
+	}, pinterestBoardCacheEntry{
+		TokenFingerprint: pinterestTokenFingerprint(accessToken),
+		Username:         strings.TrimSpace(account.Username),
+		AccessibleIDs:    accessibleIDs,
+		Complete:         true,
+		ExpiresAt:        a.pinterestNow().Add(pinterestBoardCacheTTL),
+	})
 	return boards, nil
 }
 
@@ -496,7 +718,7 @@ type pinterestUserAccount struct {
 	ProfileImage string `json:"profile_image"`
 }
 
-func (a *PinterestAdapter) fetchUserAccount(ctx context.Context, accessToken string) (*pinterestUserAccount, error) {
+func (a *PinterestAdapter) fetchUserAccount(ctx context.Context, accessToken, stage string) (*pinterestUserAccount, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", pinterestAPIBaseURL()+"/user_account", nil)
 	if err != nil {
 		return nil, err
@@ -505,21 +727,21 @@ func (a *PinterestAdapter) fetchUserAccount(ctx context.Context, accessToken str
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("pinterest user_account: %w", err)
+		return nil, pinterestTransportFailure("user account", err, stage)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("pinterest user_account (%d): %s", resp.StatusCode, string(body))
+		return nil, pinterestProviderFailure("user account", resp.StatusCode, body, stage)
 	}
 
 	var raw pinterestUserAccount
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("pinterest user_account decode: %w", err)
+		return nil, pinterestTransportFailure("user account", err, stage)
 	}
 	if raw.ID == "" {
-		return nil, fmt.Errorf("pinterest user_account returned empty id")
+		return nil, pinterestTransportFailure("user account", fmt.Errorf("empty account id"), stage)
 	}
 	return &raw, nil
 }

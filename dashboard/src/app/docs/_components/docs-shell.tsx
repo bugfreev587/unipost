@@ -426,8 +426,9 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     },
     {
       title: "X Guides",
-      description: "Plan managed-X usage and follow the phased X Inbox rollout.",
+      description: "Read connected-account data, plan managed-X usage, and follow the phased X rollout.",
       items: [
+        { label: "Profile and post history", href: "/docs/guides/x/profile-and-post-history" },
         { label: "X Credits", href: "/docs/guides/x/credits" },
       ],
     },
@@ -1945,6 +1946,7 @@ html.dark .docs-enum-tag.is-caution{background:rgba(249,115,22,.16);color:#fdba7
   box-shadow:none;
   padding:10px 0 10px;
   max-width:820px;
+  overflow-x:clip;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-eyebrow{
   padding:0;

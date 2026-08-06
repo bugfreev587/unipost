@@ -249,6 +249,7 @@ export default function AccountCapabilitiesPage() {
         RESPONSE_SNIPPETS[1],
       ];
   const guideLinks = filterDocsNavigation([
+    { label: "Read X profiles and post history", href: "/docs/guides/x/profile-and-post-history" },
     { label: "Reconnect X Inbox permissions", href: "/docs/guides/x/reconnect-permissions" },
     { label: "Receive X comments", href: "/docs/guides/x/comments" },
     { label: "Receive X direct messages", href: "/docs/guides/x/direct-messages" },

@@ -151,6 +151,7 @@ func (h *SocialPostHandler) processBulkOne(
 		}, 0
 	}
 	parsed.resolveLegacyPlatformOptions(accountMap)
+	stampPinterestDispatchEnvironments(parsed.Posts, accountMap)
 
 	// Bulk doesn't support drafts or scheduled posts.
 	if parsed.Status == "draft" {

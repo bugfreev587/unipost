@@ -51,16 +51,44 @@ def replace(path: Path, pattern: str, repl: str) -> None:
     path.write_text(new_text)
 
 
+def replace_all(path: Path, pattern: str, repl: str, expected_count: int) -> None:
+    text = path.read_text()
+    new_text, count = re.subn(pattern, repl, text, flags=re.MULTILINE)
+    if count != expected_count:
+        raise SystemExit(
+            f"failed to update {path}: expected {expected_count} matches, found {count}"
+        )
+    path.write_text(new_text)
+
+
 # --- JavaScript ---
 package_json = root / "sdk-js/package.json"
 package = json.loads(package_json.read_text())
 package["version"] = version
 package_json.write_text(json.dumps(package, indent=2) + "\n")
 
+package_lock_json = root / "sdk-js/package-lock.json"
+package_lock = json.loads(package_lock_json.read_text())
+package_lock["version"] = version
+package_lock["packages"][""]["version"] = version
+package_lock_json.write_text(json.dumps(package_lock, indent=2) + "\n")
+
 replace(
     root / "sdk-js/src/http.ts",
     r'^const SDK_VERSION = "[^"]+";$',
     f'const SDK_VERSION = "{version}";',
+)
+
+replace(
+    root / "sdk-js/tests/release-workflows.test.ts",
+    r'expect\(packageJson\.version\)\.toBe\("[^"]+"\);',
+    f'expect(packageJson.version).toBe("{version}");',
+)
+
+replace(
+    root / "sdk-js/tests/users.test.ts",
+    r'"@unipost/sdk/[0-9]+\.[0-9]+\.[0-9]+"',
+    f'"@unipost/sdk/{version}"',
 )
 
 # --- Python ---
@@ -88,6 +116,25 @@ replace(
     f'SDK_VERSION = "{version}"',
 )
 
+replace(
+    root / "sdk-python/README.md",
+    r'^## Latest release: v[^\s]+$',
+    f'## Latest release: v{version}',
+)
+
+replace(
+    root / "sdk-python/tests/test_release.py",
+    r'assert \'version = "[^"]+"\' in pyproject',
+    f'assert \'version = "{version}"\' in pyproject',
+)
+
+replace_all(
+    root / "sdk-python/tests/test_release.py",
+    r'assert (unipost\.__version__|http\.SDK_VERSION|async_client\.SDK_VERSION) == "[^"]+"',
+    lambda match: f'assert {match.group(1)} == "{version}"',
+    3,
+)
+
 # --- Go ---
 replace(
     root / "sdk-go/unipost/client.go",
@@ -95,11 +142,65 @@ replace(
     f'\tsdkVersion     = "{version}"',
 )
 
+replace(
+    root / "sdk-go/README.md",
+    r'^## Latest release: v[^\s]+$',
+    f'## Latest release: v{version}',
+)
+
+replace(
+    root / "sdk-go/README.md",
+    r'go get github\.com/unipost-dev/sdk-go@v[^\s]+',
+    f'go get github.com/unipost-dev/sdk-go@v{version}',
+)
+
+replace(
+    root / "sdk-go/unipost/release_test.go",
+    r'if sdkVersion != "[0-9]+\.[0-9]+\.[0-9]+"',
+    f'if sdkVersion != "{version}"',
+)
+
+replace(
+    root / "sdk-go/unipost/release_test.go",
+    r'sdkVersion = %q, want [0-9]+\.[0-9]+\.[0-9]+',
+    f'sdkVersion = %q, want {version}',
+)
+
+replace(
+    root / "sdk-go/unipost/release_test.go",
+    r'if userAgent != "unipost-go/[0-9]+\.[0-9]+\.[0-9]+"',
+    f'if userAgent != "unipost-go/{version}"',
+)
+
+replace(
+    root / "sdk-go/unipost/release_test.go",
+    r'userAgent = %q, want unipost-go/[0-9]+\.[0-9]+\.[0-9]+',
+    f'userAgent = %q, want unipost-go/{version}',
+)
+
+replace(
+    root / "sdk-go/unipost/release_test.go",
+    r'Latest release: v[0-9]+\.[0-9]+\.[0-9]+',
+    f'Latest release: v{version}',
+)
+
+replace(
+    root / "sdk-go/unipost/release_test.go",
+    r'go get github\.com/unipost-dev/sdk-go@v[0-9]+\.[0-9]+\.[0-9]+',
+    f'go get github.com/unipost-dev/sdk-go@v{version}',
+)
+
 # --- Java ---
 replace(
     root / "sdk-java/build.gradle.kts",
     r'^version = "[^"]+"$',
     f'version = "{version}"',
+)
+
+replace(
+    root / "sdk-java/README.md",
+    r'^## Latest release: v[^\s]+$',
+    f'## Latest release: v{version}',
 )
 
 replace(
@@ -130,6 +231,19 @@ replace(
     root / "sdk-java/pom.xml",
     r'<version>[^<]+</version>',
     f'<version>{version}</version>',
+)
+
+replace_all(
+    root / "sdk-java/src/test/java/dev/unipost/InboxTest.java",
+    r'"unipost-java/[0-9]+\.[0-9]+\.[0-9]+"',
+    f'"unipost-java/{version}"',
+    2,
+)
+
+replace(
+    root / "sdk-java/src/test/java/dev/unipost/InboxTest.java",
+    r'assertEquals\("[0-9]+\.[0-9]+\.[0-9]+", UniPost\.SDK_VERSION\);',
+    f'assertEquals("{version}", UniPost.SDK_VERSION);',
 )
 PY
 
