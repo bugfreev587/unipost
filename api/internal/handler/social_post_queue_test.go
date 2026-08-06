@@ -2031,6 +2031,11 @@ type unavailableAccountDeliveryDB struct {
 	recordedFailure      db.CreatePostFailureParams
 	retryJobs            []db.PostDeliveryJob
 	reconnectMarkedIDs   []string
+	// reconnectAttemptStamps records the attempt_started_at guard value passed
+	// to each mark call; accountLastConnectedAt simulates a reconnect landing
+	// at that time so the fake can reproduce the SQL guard.
+	reconnectAttemptStamps []pgtype.Timestamptz
+	accountLastConnectedAt pgtype.Timestamptz
 }
 
 func (f *unavailableAccountDeliveryDB) Begin(context.Context) (pgx.Tx, error) {
@@ -2069,6 +2074,18 @@ func (f *unavailableAccountDeliveryDB) Exec(_ context.Context, query string, arg
 		return pgconn.CommandTag{}, nil
 	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"):
 		f.failureDetailsCode = args[1].(pgtype.Text).String
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	// More specific name first: strings.Contains matches the unguarded query
+	// name as a prefix of the guarded one.
+	case strings.Contains(query, "-- name: MarkSocialAccountReconnectRequiredForAttempt"):
+		attemptStartedAt := args[1].(pgtype.Timestamptz)
+		f.reconnectAttemptStamps = append(f.reconnectAttemptStamps, attemptStartedAt)
+		// Mirror the SQL guard: a reconnect after this attempt started
+		// supersedes the failure and the UPDATE matches no rows.
+		if f.accountLastConnectedAt.Valid && f.accountLastConnectedAt.Time.After(attemptStartedAt.Time) {
+			return pgconn.NewCommandTag("UPDATE 0"), nil
+		}
+		f.reconnectMarkedIDs = append(f.reconnectMarkedIDs, args[0].(string))
 		return pgconn.NewCommandTag("UPDATE 1"), nil
 	case strings.Contains(query, "-- name: MarkSocialAccountReconnectRequired"):
 		f.reconnectMarkedIDs = append(f.reconnectMarkedIDs, args[0].(string))
@@ -2461,6 +2478,86 @@ func TestDispatchFailureMarksAccountReconnectRequired(t *testing.T) {
 			}
 			if len(dbtx.reconnectMarkedIDs) != 0 {
 				t.Fatalf("reconnect marks = %v, want none for %s", dbtx.reconnectMarkedIDs, tt.failure.errorCode)
+			}
+		})
+	}
+}
+
+// A delivery job dispatches with the token it loaded when the job was claimed.
+// If the customer reconnects while that request is still in flight, the repair
+// must win: the stale auth failure that comes back afterwards must not flip the
+// freshly reconnected account back to reconnect_required and block it again.
+func TestDispatchFailureDoesNotUndoConcurrentReconnect(t *testing.T) {
+	attemptStartedAt := time.Now().Add(-2 * time.Minute)
+
+	tests := []struct {
+		name              string
+		lastConnectedAt   pgtype.Timestamptz
+		wantMarked        bool
+		wantMarkAttempted bool
+	}{
+		{
+			name:              "reconnect during dispatch supersedes the failure",
+			lastConnectedAt:   pgtype.Timestamptz{Time: attemptStartedAt.Add(time.Minute), Valid: true},
+			wantMarked:        false,
+			wantMarkAttempted: true,
+		},
+		{
+			name:              "reconnect before the attempt does not shield a real failure",
+			lastConnectedAt:   pgtype.Timestamptz{Time: attemptStartedAt.Add(-time.Hour), Valid: true},
+			wantMarked:        true,
+			wantMarkAttempted: true,
+		},
+		{
+			name:              "account never reconnected still marks",
+			lastConnectedAt:   pgtype.Timestamptz{},
+			wantMarked:        true,
+			wantMarkAttempted: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := baseDeliveryJob()
+			job.Platform = "pinterest"
+			job.SocialAccountID = "acct_race"
+			job.LeaseOwner = pgtype.Text{String: "worker_race", Valid: true}
+			job.LastAttemptAt = pgtype.Timestamptz{Time: attemptStartedAt, Valid: true}
+			post := db.SocialPost{ID: job.PostID, WorkspaceID: job.WorkspaceID, Status: "publishing"}
+			result := db.SocialPostResult{
+				ID: job.SocialPostResultID, PostID: job.PostID, SocialAccountID: job.SocialAccountID,
+				Status: "processing", Caption: "reconnect race",
+			}
+			dbtx := &unavailableAccountDeliveryDB{
+				job: job, post: post, result: result,
+				accountLastConnectedAt: tt.lastConnectedAt,
+			}
+			h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, nil)
+
+			staleFailure := typedFailureStageTestError{
+				message:     "Pinterest rejected this connection. Reconnect the account, then try again.",
+				stage:       "dispatch",
+				errorCode:   "auth_token_invalid",
+				isRetriable: false,
+				provider:    map[string]any{"provider": "pinterest", "http_status": 401, "code": "3", "reason": "token_invalid"},
+			}
+			if err := h.handleJobDispatchFailure(
+				withoutPostMediaRetentionSync(context.Background()),
+				post, result, job,
+				publishOneOutcome{platform: "pinterest", err: staleFailure},
+			); err != nil {
+				t.Fatalf("handleJobDispatchFailure: %v", err)
+			}
+
+			if tt.wantMarkAttempted && len(dbtx.reconnectAttemptStamps) != 1 {
+				t.Fatalf("guarded mark calls = %d, want 1", len(dbtx.reconnectAttemptStamps))
+			}
+			if got := dbtx.reconnectAttemptStamps[0].Time; !got.Equal(attemptStartedAt) {
+				t.Errorf("attempt_started_at guard = %s, want the job's last_attempt_at %s", got, attemptStartedAt)
+			}
+			marked := len(dbtx.reconnectMarkedIDs) > 0
+			if marked != tt.wantMarked {
+				t.Fatalf("account marked = %v, want %v (last_connected_at=%v)", marked, tt.wantMarked, tt.lastConnectedAt)
 			}
 		})
 	}
