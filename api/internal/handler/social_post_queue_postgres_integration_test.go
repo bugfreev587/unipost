@@ -219,7 +219,8 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			external_user_id TEXT,
 			external_user_email TEXT,
 			last_refreshed_at TIMESTAMPTZ,
-			x_app_mode TEXT
+			x_app_mode TEXT,
+			last_connected_at TIMESTAMPTZ
 		);
 		CREATE TABLE platform_publishing_restrictions (
 			platform TEXT PRIMARY KEY,
@@ -2070,6 +2071,239 @@ func TestScheduledRestrictionRetentionFailureRollsBackClaimAndRemainsClaimable(t
 	}
 	if status != "failed" || results != 1 || jobs != 0 || failures != 1 || usages != 2 {
 		t.Fatalf("successful retry state = status:%s results:%d jobs:%d failures:%d usages:%d", status, results, jobs, failures, usages)
+	}
+}
+
+// The incident this fix exists for: a restricted scheduled post whose media
+// was hard-deleted rolled the claim back forever, because retrying can never
+// resurrect the object. The claim must now commit, and the next scheduler pass
+// must not see the post again.
+func TestScheduledRestrictionRetentionSkipsHardDeletedMediaAndCommits(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "account_scheduled_gone",
+		Caption:   "scheduled with a hard-deleted media",
+		MediaIDs:  []string{"media_scheduled_live", "media_scheduled_gone"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_accounts (id, platform, status)
+		VALUES ('account_scheduled_gone', 'tiktok', 'active')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, scheduled_at, metadata, workspace_id, profile_ids)
+		VALUES ('post_scheduled_gone', 'scheduled', NOW(), $1, 'workspace_1', ARRAY['profile_1'])
+	`, metadata); err != nil {
+		t.Fatal(err)
+	}
+	// Only the live media exists — media_scheduled_gone was hard-deleted,
+	// exactly as HardDeleteMedia leaves it (usages cascade away with it).
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		VALUES ('media_scheduled_live', 'workspace_1', 'uploaded')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &SocialPostHandler{
+		queries: db.New(pool),
+		publishingRestrictions: &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
+			"tiktok": {Restricted: true, Platform: "tiktok", CycleID: "cycle_scheduled_gone"},
+		}},
+	}
+	if err := h.ClaimAndEnqueueScheduledPost(ctx, "post_scheduled_gone"); err != nil {
+		t.Fatalf("claim with hard-deleted media = %v, want commit", err)
+	}
+
+	var status string
+	var results, failures, usages int
+	var retainedMedia pgtype.Text
+	if err := pool.QueryRow(ctx, `
+		SELECT p.status,
+		       (SELECT COUNT(*)::int FROM social_post_results WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM post_failures WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM media_post_usages WHERE post_id = p.id),
+		       (SELECT MAX(media_id) FROM media_post_usages WHERE post_id = p.id)
+		FROM social_posts p WHERE p.id = $1
+	`, "post_scheduled_gone").Scan(&status, &results, &failures, &usages, &retainedMedia); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || results != 1 || failures != 1 {
+		t.Fatalf("committed state = status:%s results:%d failures:%d, want failed/1/1", status, results, failures)
+	}
+	// The surviving media still gets its ledger row — one unretainable media
+	// must not cost the rest of the post its retention.
+	if usages != 1 || retainedMedia.String != "media_scheduled_live" {
+		t.Fatalf("usages = %d retained = %q, want 1 / media_scheduled_live", usages, retainedMedia.String)
+	}
+
+	// The whole point: the next scheduler pass must not find this post again.
+	if err := h.ClaimAndEnqueueScheduledPost(ctx, "post_scheduled_gone"); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("second claim = %v, want pgx.ErrNoRows (post already left scheduled)", err)
+	}
+}
+
+// A cross-tenant media reference is not a benign lifecycle terminal state.
+// It must keep failing closed rather than silently letting the post proceed.
+func TestScheduledRestrictionRetentionFailsClosedOnCrossWorkspaceMedia(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "account_scheduled_tenant",
+		Caption:   "scheduled with a foreign media",
+		MediaIDs:  []string{"media_foreign_tenant"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_accounts (id, platform, status)
+		VALUES ('account_scheduled_tenant', 'tiktok', 'active')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, scheduled_at, metadata, workspace_id, profile_ids)
+		VALUES ('post_scheduled_tenant', 'scheduled', NOW(), $1, 'workspace_1', ARRAY['profile_1'])
+	`, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		VALUES ('media_foreign_tenant', 'workspace_other', 'uploaded')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &SocialPostHandler{
+		queries: db.New(pool),
+		publishingRestrictions: &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
+			"tiktok": {Restricted: true, Platform: "tiktok", CycleID: "cycle_scheduled_tenant"},
+		}},
+	}
+	err = h.ClaimAndEnqueueScheduledPost(ctx, "post_scheduled_tenant")
+	if err == nil || !strings.Contains(err.Error(), "workspace_mismatch") {
+		t.Fatalf("cross-workspace claim error = %v, want fail-closed workspace_mismatch", err)
+	}
+
+	var status string
+	var usages int
+	if err := pool.QueryRow(ctx, `
+		SELECT p.status, (SELECT COUNT(*)::int FROM media_post_usages WHERE post_id = p.id)
+		FROM social_posts p WHERE p.id = $1
+	`, "post_scheduled_tenant").Scan(&status, &usages); err != nil {
+		t.Fatal(err)
+	}
+	if status != "scheduled" || usages != 0 {
+		t.Fatalf("rolled-back state = status:%s usages:%d, want scheduled/0", status, usages)
+	}
+}
+
+// 'attached' is a live, publishable state everywhere else in the codebase.
+// The retention ledger must record it rather than treat it as unavailable.
+func TestFinalizeRestrictedPostDeliveryJobAcceptsAttachedMedia(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	mediaID := "media_guard_attached"
+	params := insertRestrictedFinalizeMediaGuardFixture(t, ctx, pool, "attached", nil)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		SELECT $1, workspace_id, 'attached'
+		FROM post_delivery_jobs WHERE id = $2
+	`, mediaID, params.ID); err != nil {
+		t.Fatal(err)
+	}
+	params.MediaIds = []string{mediaID}
+
+	job, err := db.New(pool).FinalizeRestrictedPostDeliveryJob(ctx, params)
+	if err != nil {
+		t.Fatalf("finalize with attached media: %v", err)
+	}
+	if job.State != "dead" {
+		t.Fatalf("job state = %q, want dead", job.State)
+	}
+	var usages int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM media_post_usages
+		WHERE post_id = (SELECT post_id FROM post_delivery_jobs WHERE id = $1)
+		  AND retention_reason = 'publishing_restriction'
+	`, params.ID).Scan(&usages); err != nil {
+		t.Fatal(err)
+	}
+	if usages != 1 {
+		t.Fatalf("attached media usages = %d, want 1", usages)
+	}
+}
+
+// The same alignment on the retention ledger itself: an attached media must
+// produce a usage row instead of a bogus "re-upload required" outcome.
+func TestScheduledRestrictionRetentionRetainsAttachedMedia(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "account_scheduled_attached",
+		Caption:   "scheduled with attached media",
+		MediaIDs:  []string{"media_scheduled_attached"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_accounts (id, platform, status)
+		VALUES ('account_scheduled_attached', 'tiktok', 'active')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, scheduled_at, metadata, workspace_id, profile_ids)
+		VALUES ('post_scheduled_attached', 'scheduled', NOW(), $1, 'workspace_1', ARRAY['profile_1'])
+	`, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		VALUES ('media_scheduled_attached', 'workspace_1', 'attached')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &SocialPostHandler{
+		queries: db.New(pool),
+		publishingRestrictions: &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
+			"tiktok": {Restricted: true, Platform: "tiktok", CycleID: "cycle_scheduled_attached"},
+		}},
+	}
+	if err := h.ClaimAndEnqueueScheduledPost(ctx, "post_scheduled_attached"); err != nil {
+		t.Fatalf("claim with attached media = %v, want commit", err)
+	}
+
+	var usages int
+	var reason pgtype.Text
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int, MAX(retention_reason)
+		FROM media_post_usages WHERE post_id = 'post_scheduled_attached'
+	`).Scan(&usages, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if usages != 1 || reason.String != "publishing_restriction" {
+		t.Fatalf("attached media usages = %d reason = %q, want 1 / publishing_restriction", usages, reason.String)
 	}
 }
 

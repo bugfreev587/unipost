@@ -239,6 +239,25 @@ func (q *Queries) GetMediaByIDAndWorkspace(ctx context.Context, arg GetMediaByID
 	return i, err
 }
 
+const getMediaRetentionState = `-- name: GetMediaRetentionState :one
+SELECT workspace_id, status FROM media WHERE id = $1
+`
+
+type GetMediaRetentionStateRow struct {
+	WorkspaceID string `json:"workspace_id"`
+	Status      string `json:"status"`
+}
+
+// Diagnoses a zero-row UpsertMediaPostUsage. Workspace-agnostic on purpose:
+// the caller compares workspace_id itself so a cross-tenant reference is
+// distinguishable from a missing row.
+func (q *Queries) GetMediaRetentionState(ctx context.Context, id string) (GetMediaRetentionStateRow, error) {
+	row := q.db.QueryRow(ctx, getMediaRetentionState, id)
+	var i GetMediaRetentionStateRow
+	err := row.Scan(&i.WorkspaceID, &i.Status)
+	return i, err
+}
+
 const hardDeleteMedia = `-- name: HardDeleteMedia :exec
 WITH restriction_retention AS MATERIALIZED (
   SELECT usage.post_id, MAX(usage.cleanup_after_at)::timestamptz AS retained_until

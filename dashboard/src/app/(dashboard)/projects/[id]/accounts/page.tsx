@@ -14,6 +14,7 @@ import {
   type SocialAccount, type Profile, type XInboxCapabilities,
 } from "@/lib/api";
 import { evaluateXInboxEligibility } from "@/lib/x-inbox-eligibility";
+import { accountIdentityLabels, TIKTOK_IDENTITY_RECONNECT_GUIDANCE } from "@/lib/account-identity";
 import { isFacebookEnabledForMe } from "@/components/dashboard/shell";
 import { FacebookPagePicker } from "@/components/accounts/facebook-page-picker";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
@@ -554,10 +555,27 @@ export default function AccountsPage() {
                           <AccountDestinationIcon platform={a.platform} />
                         </div>
                         <div>
-                          <div style={{ fontWeight: 500 }}>{a.account_name || a.id}</div>
-                          <div className="dt-micro" style={{ color: "var(--dmuted2)", marginTop: 2, textTransform: "none", letterSpacing: 0 }}>
-                            {accountSourceLabel(a.platform)}
-                          </div>
+                          {(() => {
+                            const identity = accountIdentityLabels(a);
+                            return (
+                              <>
+                                <div style={{ fontWeight: 500 }}>
+                                  {identity.primary}
+                                  {identity.handle ? (
+                                    <span style={{ color: "var(--dmuted2)", fontWeight: 400, marginLeft: 6 }}>{identity.handle}</span>
+                                  ) : null}
+                                </div>
+                                <div className="dt-micro" style={{ color: "var(--dmuted2)", marginTop: 2, textTransform: "none", letterSpacing: 0 }}>
+                                  {accountSourceLabel(a.platform)}
+                                </div>
+                                {identity.identityRefreshRequired ? (
+                                  <div data-identity-refresh-guidance style={{ color: "var(--warning)", fontSize: 12, marginTop: 2 }}>
+                                    {TIKTOK_IDENTITY_RECONNECT_GUIDANCE}
+                                  </div>
+                                ) : null}
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                     )}

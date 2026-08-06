@@ -39,6 +39,98 @@ func shouldLogMediaPostUsageUpsertError(err error) bool {
 	return err != nil && !errors.Is(err, pgx.ErrNoRows)
 }
 
+// Why UpsertMediaPostUsage matched no row. Only a permanently unretainable
+// media may be skipped; a transient state, a tenancy mismatch, or a failed
+// diagnosis all stay fail-closed.
+const (
+	mediaUnretainableMissing           = "missing"
+	mediaUnretainableDeleted           = "deleted"
+	mediaUnretainablePending           = "pending"
+	mediaUnretainableWorkspaceMismatch = "workspace_mismatch"
+	mediaUnretainableRaceResolved      = "race_resolved"
+	mediaUnretainableUnknownStatus     = "unknown_status"
+)
+
+// classifyUnretainableMedia explains a zero-row UpsertMediaPostUsage and
+// reports whether the media may be skipped.
+//
+// Skippable means the retention obligation is already unfulfillable: the row
+// is gone, or it is marked deleted and headed for purge. Rolling the caller's
+// transaction back cannot resurrect either, so failing closed would only park
+// the post in `scheduled` and replay the same unrecoverable condition on every
+// scheduler pass.
+//
+// Everything else stays fail-closed:
+//   - pending: the publish path hydrates pending rows to `uploaded` and
+//     publishes them (see resolveMediaIDsToURLs), so skipping would drop a
+//     retention obligation for media that does get delivered.
+//   - workspace_mismatch: a cross-tenant media reference is a data-integrity
+//     defect. Skipping would let the post proceed to publish it.
+//   - race_resolved: the media is live again (cleanup lost, or a pending row
+//     hydrated) between the upsert and this diagnosis. Genuinely transient —
+//     the next scheduler pass succeeds, so the retry is bounded.
+//   - unknown_status: an unmodelled state; refuse to guess.
+//
+// The diagnosis is a read of the latest committed state, so it can disagree
+// with what the upsert saw. That is why a disagreement (race_resolved) is
+// classified rather than assumed away.
+func (h *SocialPostHandler) classifyUnretainableMedia(ctx context.Context, workspaceID, mediaID string) (reason string, skippable bool, err error) {
+	row, getErr := h.queries.GetMediaRetentionState(ctx, mediaID)
+	if errors.Is(getErr, pgx.ErrNoRows) {
+		return mediaUnretainableMissing, true, nil
+	}
+	if getErr != nil {
+		// Never let a failed diagnosis masquerade as a benign zero row.
+		return "", false, getErr
+	}
+	if row.WorkspaceID != workspaceID {
+		return mediaUnretainableWorkspaceMismatch, false, nil
+	}
+	switch row.Status {
+	case "deleted":
+		return mediaUnretainableDeleted, true, nil
+	case "pending":
+		return mediaUnretainablePending, false, nil
+	case "uploaded", "attached":
+		return mediaUnretainableRaceResolved, false, nil
+	default:
+		return mediaUnretainableUnknownStatus, false, nil
+	}
+}
+
+// handleStrictUsageUpsertError decides a strict-path upsert failure for one
+// media. A nil return means "skip this media and carry on"; a non-nil return
+// must roll the caller's transaction back.
+func (h *SocialPostHandler) handleStrictUsageUpsertError(
+	ctx context.Context,
+	post db.SocialPost,
+	postStatus string,
+	mediaID string,
+	upsertErr error,
+) error {
+	if !errors.Is(upsertErr, pgx.ErrNoRows) {
+		return fmt.Errorf("media retention: upsert usage for post %s media %s: %w", post.ID, mediaID, upsertErr)
+	}
+	reason, skippable, classifyErr := h.classifyUnretainableMedia(ctx, post.WorkspaceID, mediaID)
+	if classifyErr != nil {
+		return fmt.Errorf("media retention: classify unretainable media for post %s media %s: %w",
+			post.ID, mediaID, classifyErr)
+	}
+	if !skippable {
+		return fmt.Errorf("media retention: upsert usage for post %s media %s: not retainable (%s): %w",
+			post.ID, mediaID, reason, upsertErr)
+	}
+	// Stable message + classification field: this is the aggregation signal
+	// that replaces a metrics counter (no metrics SDK in this service).
+	slog.Warn("media retention: strict media skipped",
+		"post_id", post.ID,
+		"workspace_id", post.WorkspaceID,
+		"media_id", mediaID,
+		"post_status", postStatus,
+		"classification", reason)
+	return nil
+}
+
 func mediaIDsForRetention(post db.SocialPost) []string {
 	ids, _ := decodeMediaIDsForRetention(post)
 	return ids
@@ -242,7 +334,13 @@ func (h *SocialPostHandler) syncPostMediaRetentionAtMode(
 			RetentionReason: retentionReason,
 		}); err != nil {
 			if strict {
-				return fmt.Errorf("media retention: upsert usage for post %s media %s: %w", post.ID, mediaID, err)
+				// Each media is decided independently: skipping one
+				// unretainable object must not block the rest of the
+				// post's ledger, nor the targets that can still publish.
+				if strictErr := h.handleStrictUsageUpsertError(ctx, post, postStatus, mediaID, err); strictErr != nil {
+					return strictErr
+				}
+				continue
 			}
 			if shouldLogMediaPostUsageUpsertError(err) {
 				slog.Warn("media retention: usage upsert failed",

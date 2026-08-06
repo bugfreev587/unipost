@@ -644,7 +644,7 @@ func TestCIRequiresMigrationGatePostgresIntegration(t *testing.T) {
 	for _, testName := range []string{
 		"TestMigrationGatePostgres",
 		"TestMigration133UpgradeAndGuardedDown",
-		"TestRequireCurrentSchemaRejects124AndAccepts136",
+		"TestRequireCurrentSchemaRejects124AndAccepts137",
 		"GOOSE_MIGRATION_TEST_DATABASE_URL=\"$REQUEST_EVENTS_TEST_DATABASE_URL\" go test ./internal/db -run '^TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose$' -count=1",
 		"go test -tags=integration ./internal/requestevents -count=1",
 		"go test -tags=integration ./internal/requesteventpartitions -count=1",
@@ -661,7 +661,7 @@ func TestCIRequiresMigrationGatePostgresIntegration(t *testing.T) {
 		t.Fatal("observability PostgreSQL CI gate must use the isolated database URL")
 	}
 	if strings.Contains(workflow, "TestRequireCurrentSchemaRejects124AndAccepts135") {
-		t.Fatal("required PostgreSQL CI selector still names the pre-migration-136 schema test")
+		t.Fatal("required PostgreSQL CI selector still names the pre-migration-137 schema test")
 	}
 
 	integrationTestBody, err := os.ReadFile("migration_gate_postgres_integration_test.go")
@@ -669,6 +669,6 @@ func TestCIRequiresMigrationGatePostgresIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(integrationTestBody), "want version=135") {
-		t.Fatal("migration gate PostgreSQL diagnostics still name the pre-migration-136 schema version")
+		t.Fatal("migration gate PostgreSQL diagnostics still name the pre-migration-137 schema version")
 	}
 }

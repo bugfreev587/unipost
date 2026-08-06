@@ -188,10 +188,13 @@ const RESPONSE_SNIPPETS = [
       "id": "sa_instagram_123",
       "platform": "instagram",
       "account_name": "studio.alex",
-      "account_avatar_url": "https://...",
+      "username": "studio.alex",
+      "display_name": "Studio Alex",
+      "identity_refresh_required": false,
       "status": "active",
       "connection_type": "byo",
       "connected_at": "2026-04-02T10:00:00Z",
+      "last_connected_at": "2026-07-31T20:42:26Z",
       "external_user_id": null
     }
   ],

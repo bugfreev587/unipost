@@ -1932,7 +1932,8 @@ func setupScheduledQuotaSnapshotIntegrationSchema(t *testing.T, pool *pgxpool.Po
 			external_user_id TEXT,
 			external_user_email TEXT,
 			last_refreshed_at TIMESTAMPTZ,
-			x_app_mode TEXT
+			x_app_mode TEXT,
+			last_connected_at TIMESTAMPTZ
 		);
 		CREATE TABLE social_posts (
 			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
