@@ -2030,6 +2030,7 @@ type unavailableAccountDeliveryDB struct {
 	recordedFailureCode  string
 	recordedFailure      db.CreatePostFailureParams
 	retryJobs            []db.PostDeliveryJob
+	reconnectMarkedIDs   []string
 }
 
 func (f *unavailableAccountDeliveryDB) Begin(context.Context) (pgx.Tx, error) {
@@ -2070,6 +2071,7 @@ func (f *unavailableAccountDeliveryDB) Exec(_ context.Context, query string, arg
 		f.failureDetailsCode = args[1].(pgtype.Text).String
 		return pgconn.NewCommandTag("UPDATE 1"), nil
 	case strings.Contains(query, "-- name: MarkSocialAccountReconnectRequired"):
+		f.reconnectMarkedIDs = append(f.reconnectMarkedIDs, args[0].(string))
 		return pgconn.NewCommandTag("UPDATE 1"), nil
 	case strings.Contains(query, "-- name: UpdateSocialPostStatus"),
 		strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"),
@@ -2331,6 +2333,134 @@ func TestPinterestDestinationFailureRetryDisposition(t *testing.T) {
 				if strings.Contains(diagnostics, forbidden) {
 					t.Fatalf("failure diagnostics contain %q: %s", forbidden, diagnostics)
 				}
+			}
+		})
+	}
+}
+
+// A provider that rejects an unexpired token at dispatch is invisible to the
+// token refresh worker, which only marks accounts whose refresh fails. Without
+// this marking the account stays status='active' while every delivery keeps
+// failing, so the customer sees next_action=reconnect_account on the result but
+// never gets a reconnect prompt on the account. Platform-agnostic: the dispatch
+// failure path is shared by every adapter.
+func TestDispatchFailureMarksAccountReconnectRequired(t *testing.T) {
+	tests := []struct {
+		name       string
+		platform   string
+		failure    typedFailureStageTestError
+		wantMarked bool
+	}{
+		{
+			name:     "pinterest token rejected at dispatch",
+			platform: "pinterest",
+			failure: typedFailureStageTestError{
+				message:     "Pinterest rejected this connection. Reconnect the account, then try again.",
+				stage:       "dispatch",
+				errorCode:   "auth_token_invalid",
+				isRetriable: false,
+				provider:    map[string]any{"provider": "pinterest", "http_status": 401, "code": "3", "reason": "token_invalid"},
+			},
+			wantMarked: true,
+		},
+		{
+			name:     "instagram reconnect required at dispatch",
+			platform: "instagram",
+			failure: typedFailureStageTestError{
+				message:     "Instagram requires this account to be reconnected.",
+				stage:       "dispatch",
+				errorCode:   "account_reconnect_required",
+				isRetriable: false,
+				provider:    map[string]any{"provider": "meta", "http_status": 401, "code": "190"},
+			},
+			wantMarked: true,
+		},
+		{
+			name:     "tiktok token invalid at dispatch",
+			platform: "tiktok",
+			failure: typedFailureStageTestError{
+				message:     "TikTok rejected the stored credentials.",
+				stage:       "dispatch",
+				errorCode:   "auth_token_invalid",
+				isRetriable: false,
+				provider:    map[string]any{"provider": "tiktok", "http_status": 401},
+			},
+			wantMarked: true,
+		},
+		{
+			name:     "destination failure leaves the account alone",
+			platform: "pinterest",
+			failure: typedFailureStageTestError{
+				message:     "The selected Pinterest board is unavailable for this connected account.",
+				stage:       "destination_preflight",
+				errorCode:   "target_not_found",
+				isRetriable: false,
+				provider:    map[string]any{"provider": "pinterest", "http_status": 404, "code": "40", "reason": "board_not_found"},
+			},
+			wantMarked: false,
+		},
+		{
+			name:     "media failure leaves the account alone",
+			platform: "pinterest",
+			failure: typedFailureStageTestError{
+				message:     "Pinterest could not use this media.",
+				stage:       "media_preflight",
+				errorCode:   "media_error",
+				isRetriable: false,
+				provider:    map[string]any{"provider": "pinterest", "reason": "customer_media_unreachable"},
+			},
+			wantMarked: false,
+		},
+		{
+			name:     "transient failure leaves the account alone",
+			platform: "pinterest",
+			failure: typedFailureStageTestError{
+				message:     "Pinterest is temporarily unavailable. Try again later.",
+				stage:       "dispatch",
+				errorCode:   "temporary_platform_error",
+				isRetriable: true,
+				provider:    map[string]any{"provider": "pinterest", "http_status": 503},
+			},
+			wantMarked: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := baseDeliveryJob()
+			job.Platform = tt.platform
+			job.SocialAccountID = "acct_reconnect"
+			job.LeaseOwner = pgtype.Text{String: "worker_reconnect", Valid: true}
+			job.LastAttemptAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			post := db.SocialPost{ID: job.PostID, WorkspaceID: job.WorkspaceID, Status: "publishing"}
+			result := db.SocialPostResult{
+				ID: job.SocialPostResultID, PostID: job.PostID, SocialAccountID: job.SocialAccountID,
+				Status: "processing", Caption: "reconnect marking",
+			}
+			dbtx := &unavailableAccountDeliveryDB{job: job, post: post, result: result}
+			h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, nil)
+
+			if err := h.handleJobDispatchFailure(
+				withoutPostMediaRetentionSync(context.Background()),
+				post,
+				result,
+				job,
+				publishOneOutcome{platform: tt.platform, err: tt.failure},
+			); err != nil {
+				t.Fatalf("handleJobDispatchFailure: %v", err)
+			}
+
+			if tt.wantMarked {
+				if len(dbtx.reconnectMarkedIDs) != 1 {
+					t.Fatalf("reconnect marks = %v, want exactly one for %s", dbtx.reconnectMarkedIDs, tt.failure.errorCode)
+				}
+				if dbtx.reconnectMarkedIDs[0] != job.SocialAccountID {
+					t.Errorf("marked account = %q, want %q", dbtx.reconnectMarkedIDs[0], job.SocialAccountID)
+				}
+				return
+			}
+			if len(dbtx.reconnectMarkedIDs) != 0 {
+				t.Fatalf("reconnect marks = %v, want none for %s", dbtx.reconnectMarkedIDs, tt.failure.errorCode)
 			}
 		})
 	}

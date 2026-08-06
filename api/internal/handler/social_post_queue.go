@@ -1841,6 +1841,36 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 		return nil
 	}
 	h.recordPostFailureDebug(res.ID, post.WorkspaceID, sanitizedDebugCurl)
+	// A token the provider rejects at dispatch is invisible to the token
+	// refresh worker: that worker only marks accounts whose *refresh* fails,
+	// so a still-unexpired but no-longer-authorised token (scope removed,
+	// permission revoked, app-level restriction) leaves the account sitting
+	// at status='active' while every delivery keeps failing the same way.
+	// The customer sees next_action=reconnect_account on the result but gets
+	// no reconnect prompt on the account itself. Mark it here so the account
+	// state matches the contract the result already reports.
+	//
+	// Deliberately after the transaction: MarkSocialAccountReconnectRequired
+	// touches social_accounts, and we don't want that row lock inside the
+	// delivery finalization transaction. failureApplied above guarantees this
+	// owner actually recorded the failure, so a lost lease can't mark here.
+	if postFailureShouldMarkReconnectRequired(failure) {
+		if rows, err := h.queries.MarkSocialAccountReconnectRequired(ctx, failure.SocialAccountID.String); err != nil {
+			slog.Warn("failed to mark social account reconnect required after dispatch failure",
+				"post_id", post.ID,
+				"job_id", job.ID,
+				"account_id", failure.SocialAccountID.String,
+				"platform", failure.Platform,
+				"error", err)
+		} else if rows > 0 {
+			slog.Info("marked social account reconnect required after dispatch failure",
+				"post_id", post.ID,
+				"job_id", job.ID,
+				"account_id", failure.SocialAccountID.String,
+				"platform", failure.Platform,
+				"error_code", failure.ErrorCode)
+		}
+	}
 	logLevel := integrationlogs.LevelWarn
 	if !failure.IsRetriable || (job.Kind == "retry" && job.Attempts >= job.MaxAttempts) {
 		logLevel = integrationlogs.LevelError
