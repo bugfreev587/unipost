@@ -109,6 +109,14 @@ func (p *parsedRequest) resolveLegacyPlatformOptions(accounts map[string]platfor
 	}
 }
 
+func stampPinterestDispatchEnvironments(posts []platform.PlatformPostInput, accounts map[string]platform.ValidateAccount) {
+	for i := range posts {
+		if accounts[posts[i].AccountID].Platform == "pinterest" {
+			posts[i].DispatchEnvironment = platform.PinterestEnvironment()
+		}
+	}
+}
+
 func clonePlatformOptions(in map[string]any) map[string]any {
 	if len(in) == 0 {
 		return nil

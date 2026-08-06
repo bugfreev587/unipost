@@ -19,6 +19,7 @@ test("X profile and authored-post references document their public contracts", a
   assert.match(profile, /external_user_id/);
   assert.match(profile, /Idempotency-Key/);
   assert.match(profile, /users\.read/);
+  assert.match(profile, /offline\.access/);
   assert.match(profile, /INSUFFICIENT_X_CREDITS/);
   assert.match(profile, /accounting_enabled/);
   assert.match(profile, /X_CREDITS_CATALOG_VERSION/);
@@ -37,6 +38,28 @@ test("X profile and authored-post references document their public contracts", a
   assert.match(posts, /position is not exposed/i);
   assert.match(posts, /INSUFFICIENT_X_CREDITS/);
   assert.match(posts, /X_CREDITS_CATALOG_VERSION/);
+  assert.match(posts, /tweet\.read/);
+  assert.match(posts, /offline\.access/);
+
+  for (const [page, methods] of [
+    [profile, [/accounts\.getProfile/, /accounts\.get_profile/, /Accounts\.Profile/, /accounts\(\)\.profile/]],
+    [posts, [/accounts\.listPosts/, /accounts\.list_posts/, /Accounts\.ListPosts/, /accounts\(\)\.listPosts/]],
+  ]) {
+    for (const method of methods) assert.match(page, method);
+    assert.match(page, /request_id/);
+    assert.match(page, /meta\.credits/);
+    assert.match(page, /is_retriable/);
+    assert.match(page, /Retry-After/);
+    assert.match(page, /IDEMPOTENCY_CONFLICT/);
+    assert.match(page, /READ_IN_PROGRESS/);
+    assert.match(page, /READ_SETTLEMENT_PENDING/);
+    assert.match(page, /ACCOUNT_REAUTHORIZATION_REQUIRED/);
+    assert.match(page, /RATE_LIMITED/);
+    assert.match(page, /X_UPSTREAM_ERROR/);
+    assert.match(page, /usePublicDocsFeatureFlags/);
+    assert.match(page, /x_credits_billing_v1/);
+  }
+  assert.match(posts, /INVALID_CURSOR/);
 });
 
 test("capabilities and Credits docs expose billing policy without post content", async () => {

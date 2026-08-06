@@ -885,6 +885,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	parsed.resolveLegacyPlatformOptions(accountMap)
+	stampPinterestDispatchEnvironments(parsed.Posts, accountMap)
 
 	var metaJSON []byte
 	if existing.Status == "scheduled" || existing.Status == "quota_hold" {

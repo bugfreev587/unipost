@@ -182,9 +182,21 @@ func main() {
 	}
 
 	testAccountID := os.Getenv("TEST_ACCOUNT_ID")
+	baseURL := os.Getenv("BASE_URL")
+	testXAccountID := os.Getenv("TEST_X_ACCOUNT_ID")
+	testExternalUserID := os.Getenv("TEST_EXTERNAL_USER_ID")
+	requireXAccountReadAcceptance := os.Getenv("REQUIRE_X_ACCOUNT_READ_ACCEPTANCE") == "true"
 	testPublishNow := os.Getenv("TEST_PUBLISH_NOW") == "true"
+	if requireXAccountReadAcceptance && (testXAccountID == "" || testExternalUserID == "") {
+		fmt.Println("❌ Required X account-read acceptance fixture is missing: set TEST_X_ACCOUNT_ID and TEST_EXTERNAL_USER_ID")
+		os.Exit(1)
+	}
 	ctx := context.Background()
-	client := unipost.NewClient(unipost.WithAPIKey(apiKey))
+	clientOptions := []unipost.Option{unipost.WithAPIKey(apiKey)}
+	if baseURL != "" {
+		clientOptions = append(clientOptions, unipost.WithBaseURL(baseURL))
+	}
+	client := unipost.NewClient(clientOptions...)
 
 	var workspace *unipost.Workspace
 	var firstProfile *unipost.Profile
@@ -384,6 +396,121 @@ func main() {
 			}
 			return nil
 		})
+	}
+
+	section("3b. X account reads and Credits")
+	if testXAccountID != "" && testExternalUserID != "" {
+		runKey := os.Getenv("GITHUB_RUN_ID")
+		if runKey == "" {
+			runKey = fmt.Sprintf("%d", time.Now().UnixNano())
+		}
+		var xProfile *unipost.XAccountProfileResponse
+		var xPosts *unipost.XAccountPostsResponse
+
+		test("Accounts.Profile() + exact replay", func() error {
+			params := &unipost.XAccountProfileParams{
+				ExternalUserID: testExternalUserID,
+				IdempotencyKey: "sdk-go-profile-" + runKey,
+			}
+			first, err := client.Accounts.Profile(ctx, testXAccountID, params)
+			if err != nil {
+				return err
+			}
+			replay, err := client.Accounts.Profile(ctx, testXAccountID, params)
+			if err != nil {
+				return err
+			}
+			if first.RequestID == "" || first.Meta.Credits.OperationID == "" {
+				return fmt.Errorf("expected profile request_id and Credits receipt")
+			}
+			if replay.Meta.Replayed == nil || !*replay.Meta.Replayed {
+				return fmt.Errorf("expected exact profile replay")
+			}
+			if replay.Meta.Credits.OperationID != first.Meta.Credits.OperationID {
+				return fmt.Errorf("expected replay to preserve the profile operation")
+			}
+			xProfile = first
+			return nil
+		})
+
+		test("Accounts.ListPosts() + cursor contract + exact replay", func() error {
+			params := &unipost.XAccountPostsParams{
+				ExternalUserID: testExternalUserID,
+				IdempotencyKey: "sdk-go-posts-" + runKey + "-page-1",
+				Limit:          5,
+			}
+			first, err := client.Accounts.ListPosts(ctx, testXAccountID, params)
+			if err != nil {
+				return err
+			}
+			replay, err := client.Accounts.ListPosts(ctx, testXAccountID, params)
+			if err != nil {
+				return err
+			}
+			if first.RequestID == "" || first.Meta.Credits.OperationID == "" {
+				return fmt.Errorf("expected posts request_id and Credits receipt")
+			}
+			if replay.Meta.Replayed == nil || !*replay.Meta.Replayed {
+				return fmt.Errorf("expected exact posts replay")
+			}
+			if first.Meta.HasMore && first.Meta.NextCursor == "" {
+				return fmt.Errorf("expected next_cursor when has_more is true")
+			}
+			xPosts = first
+			return nil
+		})
+
+		if xPosts != nil && xPosts.Meta.NextCursor != "" {
+			test("Accounts.ListPosts() continuation page", func() error {
+				page, err := client.Accounts.ListPosts(ctx, testXAccountID, &unipost.XAccountPostsParams{
+					ExternalUserID: testExternalUserID,
+					IdempotencyKey: "sdk-go-posts-" + runKey + "-page-2",
+					Limit:          5,
+					Cursor:         xPosts.Meta.NextCursor,
+				})
+				if err != nil {
+					return err
+				}
+				if page.RequestID == "" {
+					return fmt.Errorf("expected continuation request_id")
+				}
+				return nil
+			})
+		} else {
+			skip("Accounts.ListPosts() continuation page", "First page has no next_cursor")
+		}
+
+		test("Billing.GetXCredits() and Billing.ListXCreditEvents()", func() error {
+			allowance, err := client.Billing.GetXCredits(ctx)
+			if err != nil {
+				var apiErr *unipost.APIError
+				if errors.As(err, &apiErr) &&
+					(apiErr.Code == "FEATURE_NOT_AVAILABLE" || apiErr.Code == "feature_not_available") {
+					if xProfile == nil || xProfile.Meta.Credits.AccountingEnabled {
+						return fmt.Errorf("feature-off profile receipt must bypass accounting")
+					}
+					return nil
+				}
+				return err
+			}
+			events, err := client.Billing.ListXCreditEvents(ctx, &unipost.ListXCreditEventsParams{
+				AccountID:      testXAccountID,
+				ExternalUserID: testExternalUserID,
+				Limit:          10,
+			})
+			if err != nil {
+				return err
+			}
+			if allowance.RequestID == "" || events.RequestID == "" {
+				return fmt.Errorf("expected allowance and event request_id")
+			}
+			return nil
+		})
+	} else {
+		skip("Accounts.Profile() + exact replay", "No X account-read fixture configured")
+		skip("Accounts.ListPosts() + cursor contract + exact replay", "No X account-read fixture configured")
+		skip("Accounts.ListPosts() continuation page", "No X account-read fixture configured")
+		skip("Billing.GetXCredits() and Billing.ListXCreditEvents()", "No X account-read fixture configured")
 	}
 
 	tiktokID := ""

@@ -129,6 +129,46 @@ func TestMediaCleanupWorkerRecordsDeletedObjectTotals(t *testing.T) {
 	}
 }
 
+func TestMediaCleanupWorkerDeletesDuePublishingPullObjects(t *testing.T) {
+	queries := &mediaCleanupFakeQueries{pullRows: []db.PublishingPullObject{{
+		ObjectKey:   "pull/content.jpg",
+		ContentType: "image/jpeg",
+		SizeBytes:   4200,
+	}}}
+	store := &mediaCleanupFakeStorage{}
+	worker := &MediaCleanupWorker{queries: queries, storage: store}
+
+	worker.sweepDue(context.Background())
+
+	if queries.claimPullCalls != 1 || queries.hardDeletePullCalls != 1 {
+		t.Fatalf("claim/hard-delete pull calls = %d/%d, want 1/1", queries.claimPullCalls, queries.hardDeletePullCalls)
+	}
+	if len(store.deletedKeys) != 1 || store.deletedKeys[0] != "pull/content.jpg" {
+		t.Fatalf("deleted keys = %v", store.deletedKeys)
+	}
+	if len(queries.completeRuns) != 1 || queries.completeRuns[0].DeletedObjects != 1 || queries.completeRuns[0].DeletedBytes != 4200 {
+		t.Fatalf("cleanup run = %#v, want publishing pull object totals", queries.completeRuns)
+	}
+}
+
+func TestMediaCleanupWorkerReleasesPublishingPullClaimWhenDeleteFails(t *testing.T) {
+	queries := &mediaCleanupFakeQueries{pullRows: []db.PublishingPullObject{{
+		ObjectKey: "pull/content.jpg",
+		SizeBytes: 4200,
+	}}}
+	store := &mediaCleanupFakeStorage{err: errors.New("R2 unavailable")}
+	worker := &MediaCleanupWorker{queries: queries, storage: store}
+
+	worker.sweepDue(context.Background())
+
+	if queries.releasePullCalls != 1 || queries.hardDeletePullCalls != 0 {
+		t.Fatalf("release/hard-delete pull calls = %d/%d, want 1/0", queries.releasePullCalls, queries.hardDeletePullCalls)
+	}
+	if len(queries.completeRuns) != 1 || queries.completeRuns[0].FailedObjects != 1 || queries.completeRuns[0].FailedBytes != 4200 {
+		t.Fatalf("cleanup run = %#v, want failed publishing pull object", queries.completeRuns)
+	}
+}
+
 func TestMediaCleanupWorkerRecordsFailedObjectWithoutDeletingRow(t *testing.T) {
 	queries := &mediaCleanupFakeQueries{rows: []db.Media{{
 		ID:         "media_1",
@@ -197,11 +237,15 @@ func TestMediaCleanupWorkerRecoversStaleRunningRowsBeforeSweep(t *testing.T) {
 
 type mediaCleanupFakeQueries struct {
 	rows                  []db.Media
+	pullRows              []db.PublishingPullObject
 	abandonedRows         []db.Media
 	listCalls             int
 	listAbandonedCalls    int
 	releaseAbandonedCalls int
 	hardDeleteCalls       int
+	claimPullCalls        int
+	releasePullCalls      int
+	hardDeletePullCalls   int
 	staleCalls            int
 	staleCutoffs          []pgtype.Timestamptz
 	createErr             error
@@ -248,12 +292,29 @@ func (q *mediaCleanupFakeQueries) HardDeleteMedia(context.Context, string) error
 	return nil
 }
 
+func (q *mediaCleanupFakeQueries) ClaimPublishingPullObjectsDue(context.Context, int32) ([]db.PublishingPullObject, error) {
+	q.claimPullCalls++
+	return q.pullRows, nil
+}
+
+func (q *mediaCleanupFakeQueries) ReleasePublishingPullObjectClaim(context.Context, string) error {
+	q.releasePullCalls++
+	return nil
+}
+
+func (q *mediaCleanupFakeQueries) HardDeletePublishingPullObject(context.Context, string) error {
+	q.hardDeletePullCalls++
+	return nil
+}
+
 type mediaCleanupFakeStorage struct {
 	err         error
 	deleteCalls int
+	deletedKeys []string
 }
 
-func (s *mediaCleanupFakeStorage) Delete(context.Context, string) error {
+func (s *mediaCleanupFakeStorage) Delete(_ context.Context, key string) error {
 	s.deleteCalls++
+	s.deletedKeys = append(s.deletedKeys, key)
 	return s.err
 }

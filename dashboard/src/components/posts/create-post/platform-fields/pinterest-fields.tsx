@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { PinterestBoard, SocialPostValidationIssue } from "@/lib/api";
 import { createPinterestBoard, listPinterestBoards } from "@/lib/api";
+import {
+  pinterestBoardEnvironment,
+  reconcilePinterestBoardSelection,
+  type PinterestBoardSnapshot,
+} from "@/lib/pinterest-boards";
 import type { PlatformOverride } from "../use-create-post-form";
 
 interface PinterestFieldsProps {
@@ -13,6 +18,7 @@ interface PinterestFieldsProps {
   fields: NonNullable<PlatformOverride["pinterest"]>;
   issues?: SocialPostValidationIssue[];
   onChange: (fields: Partial<NonNullable<PlatformOverride["pinterest"]>>) => void;
+  onSnapshotChange: (snapshot: PinterestBoardSnapshot | null) => void;
 }
 
 export function PinterestFields({
@@ -22,6 +28,7 @@ export function PinterestFields({
   fields,
   issues = [],
   onChange,
+  onSnapshotChange,
 }: PinterestFieldsProps) {
   const [boards, setBoards] = useState<PinterestBoard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,53 +37,68 @@ export function PinterestFields({
   const [creatingBoard, setCreatingBoard] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [sandboxMode, setSandboxMode] = useState(false);
+  const previousSnapshotRef = useRef<PinterestBoardSnapshot | null>(null);
+  const selectedBoardIdRef = useRef(fields.boardId || "");
+  const onChangeRef = useRef(onChange);
+  const onSnapshotChangeRef = useRef(onSnapshotChange);
+  const requestGenerationRef = useRef(0);
 
-  async function loadBoards() {
+  selectedBoardIdRef.current = fields.boardId || "";
+  onChangeRef.current = onChange;
+  onSnapshotChangeRef.current = onSnapshotChange;
+
+  const loadBoards = useCallback(async (preferredBoardId?: string): Promise<PinterestBoardSnapshot | null> => {
+    const requestGeneration = ++requestGenerationRef.current;
     setLoading(true);
     setError(null);
     try {
       const token = await getToken();
       if (!token) {
-        setError("Sign in again to load Pinterest boards.");
-        return;
+        if (requestGeneration === requestGenerationRef.current) {
+          setError("Sign in again to load Pinterest boards.");
+        }
+        return null;
       }
       const res = await listPinterestBoards(token, profileId, accountId);
-      setBoards(res.data.boards || []);
-      setSandboxMode(!!res.data.sandbox_mode);
+      if (requestGeneration !== requestGenerationRef.current) return null;
+      const nextBoards = res.data.boards || [];
+      const snapshot: PinterestBoardSnapshot = {
+        accountId,
+        environment: pinterestBoardEnvironment(!!res.data.sandbox_mode),
+        fetchedAt: Date.now(),
+        boardIds: nextBoards.map((board) => board.id),
+      };
+      const candidate = preferredBoardId || selectedBoardIdRef.current;
+      const reconciled = reconcilePinterestBoardSelection(candidate, previousSnapshotRef.current, snapshot);
+      previousSnapshotRef.current = snapshot;
+      setBoards(nextBoards);
+      setSandboxMode(snapshot.environment === "sandbox");
+      onSnapshotChangeRef.current(snapshot);
+      if (reconciled !== selectedBoardIdRef.current) {
+        selectedBoardIdRef.current = reconciled;
+        onChangeRef.current({ boardId: reconciled });
+      }
+      return snapshot;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load Pinterest boards.");
+      if (requestGeneration === requestGenerationRef.current) {
+        setError(err instanceof Error ? err.message : "Failed to load Pinterest boards.");
+      }
+      return null;
     } finally {
-      setLoading(false);
+      if (requestGeneration === requestGenerationRef.current) {
+        setLoading(false);
+      }
     }
-  }
+  }, [accountId, getToken, profileId]);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const token = await getToken();
-        if (!token) {
-          if (!cancelled) setError("Sign in again to load Pinterest boards.");
-          return;
-        }
-        const res = await listPinterestBoards(token, profileId, accountId);
-        if (cancelled) return;
-        setBoards(res.data.boards || []);
-        setSandboxMode(!!res.data.sandbox_mode);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load Pinterest boards.");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    previousSnapshotRef.current = null;
+    onSnapshotChangeRef.current(null);
+    void loadBoards();
     return () => {
-      cancelled = true;
+      requestGenerationRef.current += 1;
     };
-  }, [accountId, profileId, getToken]);
+  }, [accountId, loadBoards, profileId]);
 
   async function handleCreateBoard() {
     const name = newBoardName.trim();
@@ -95,11 +117,11 @@ export function PinterestFields({
       }
       const res = await createPinterestBoard(token, profileId, accountId, name);
       const board = res.data.board;
-      setBoards((prev) => {
-        const withoutDup = prev.filter((item) => item.id !== board.id);
-        return [...withoutDup, board];
-      });
-      onChange({ boardId: board.id });
+      const snapshot = await loadBoards(board.id);
+      if (!snapshot?.boardIds.includes(board.id)) {
+        setCreateError("The board was created, but Pinterest has not returned it yet. Refresh the board list and select it before publishing.");
+        return;
+      }
       setNewBoardName("");
       setError(null);
     } catch (err) {
@@ -159,9 +181,7 @@ export function PinterestFields({
           {boardIssue?.message
             || error
             || (!loading && boards.length === 0
-              ? (sandboxMode
-                ? "Sandbox mode is enabled. Pinterest boards created on pinterest.com may not appear here; create the board below inside UniPost so it exists in the same API environment."
-                : <>This account has no Pinterest boards yet. <a href="https://www.pinterest.com/board/create/" target="_blank" rel="noreferrer" className="underline">Create one on Pinterest</a>, then reopen this drawer.</>)
+              ? "This Pinterest account has no available boards. Create a board before publishing a Pin."
               : "Every Pinterest Pin must be saved to a board.")}
         </p>
       </div>

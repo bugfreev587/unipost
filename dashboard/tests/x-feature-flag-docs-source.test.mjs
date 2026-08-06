@@ -23,11 +23,27 @@ test("public documentation feature flags fail closed and map every dedicated rou
   assert.match(sharedFlags, /\/docs\/api\/x-credits/);
   assert.match(sharedFlags, /filterDocsNavigation/);
   assert.match(sharedFlags, /filterDocsSearchChunks/);
+  assert.doesNotMatch(sharedFlags, /\/docs\/guides\/x\/profile-and-post-history/);
 
   assert.match(serverFlags, /\/v1\/public\/features/);
   assert.match(serverFlags, /cache:\s*"no-store"/);
   assert.match(serverFlags, /CLOSED_PUBLIC_DOCS_FLAGS/);
   assert.match(serverFlags, /notFound\(\)/);
+});
+
+test("X profile and post-history guide remains public while Credits-only content is conditional", async () => {
+  const [guide, profile, posts] = await Promise.all([
+    source("src/app/docs/guides/x/profile-and-post-history/page.tsx"),
+    source("src/app/docs/api/accounts/profile/page.tsx"),
+    source("src/app/docs/api/accounts/posts/page.tsx"),
+  ]);
+
+  assert.doesNotMatch(guide, /requirePublicDocsFeature\(/);
+  for (const page of [guide, profile, posts]) {
+    assert.match(page, /x_credits_billing_v1/);
+    assert.match(page, /getPublicDocsFeatureFlags|usePublicDocsFeatureFlags/);
+  }
+  assert.match(guide, /publicFeatureFlags\.x_credits_billing_v1/);
 });
 
 test("dedicated X DM and Credits pages return a Next.js 404 while their public flag is off", async () => {

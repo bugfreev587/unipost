@@ -26,8 +26,8 @@ Legend:
 | `POST /v1/accounts/connect` | Yes | Yes | Yes | Yes | Yes, negative path |
 | `DELETE /v1/accounts/{id}` | Yes | Yes | Yes | Yes | No direct live delete |
 | `GET /v1/accounts/{id}/capabilities` | Yes | Yes | Yes | Yes | Yes |
-| `GET /v1/accounts/{id}/profile` | No | No | No | No | No; new raw OpenAPI route |
-| `GET /v1/accounts/{id}/posts` | No | No | No | No | No; new raw OpenAPI route |
+| `GET /v1/accounts/{id}/profile` | `accounts.getProfile` (0.7.0) | `accounts.get_profile` (0.7.0) | `Accounts.Profile` (0.7.0) | `accounts().profile` (0.7.0) | Conditional; exact replay required with X fixture |
+| `GET /v1/accounts/{id}/posts` | `accounts.listPosts` (0.7.0) | `accounts.list_posts` (0.7.0) | `Accounts.ListPosts` (0.7.0) | `accounts().listPosts` (0.7.0) | Conditional; minimum page, exact replay, and cursor continuation |
 | `GET /v1/accounts/{id}/health` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/accounts/{id}/metrics` | Yes | Yes | Yes | Yes | No direct live fixture |
 | `GET /v1/accounts/{id}/tiktok/creator-info` | Yes | Yes | Yes | Yes | Conditional |
@@ -81,8 +81,8 @@ Legend:
 | `POST /v1/webhooks/{id}/rotate` | Yes | Yes | Yes | Yes | Yes |
 | `POST /v1/oauth/connect` | Yes | Yes | Yes | Yes | Yes, accepts current backend behavior |
 | `GET /v1/usage` | Yes | Yes | Yes | Yes | Yes |
-| `GET /v1/billing/x-credits` | No | No | No | No | No; feature-gated |
-| `GET /v1/billing/x-credits/events` | No | No | No | No | No; feature-gated |
+| `GET /v1/billing/x-credits` | `billing.getXCredits` (0.7.0) | `billing.get_x_credits` (0.7.0) | `Billing.GetXCredits` (0.7.0) | `billing().getXCredits` (0.7.0) | Conditional; success when enabled, `FEATURE_NOT_AVAILABLE` when disabled |
+| `GET /v1/billing/x-credits/events` | `billing.listXCreditEvents` (0.7.0) | `billing.list_x_credit_events` (0.7.0) | `Billing.ListXCreditEvents` (0.7.0) | `billing().listXCreditEvents` (0.7.0) | Conditional; feature-gated |
 
 ## SDK-only helpers
 
@@ -107,8 +107,8 @@ These routes exist in the backend but are not yet covered by the hourly publishe
 | `GET /v1/accounts/{id}/tiktok/profile` | No | Should be conditional on a connected TikTok fixture. |
 | `GET /v1/accounts/{id}/tiktok/videos` | No | Should be conditional on a connected TikTok fixture. |
 | `GET /v1/accounts/{id}/facebook/page-analytics` | No | Dashboard aggregate endpoint; should be conditional on a connected Facebook Page fixture and admin allowlist access. |
-| `GET /v1/accounts/{id}/pinterest/boards` | No | Should be conditional on a connected Pinterest fixture. |
-| `POST /v1/accounts/{id}/pinterest/boards` | No | Requires safe sandbox/fixture rules before live regression. |
+| `GET /v1/accounts/{id}/pinterest/boards` and profile-scoped equivalent | Dashboard regression | Authenticated Dashboard regression covers board loading, empty state, account/environment changes, refresh, and stale-selection rejection with intercepted provider responses. A live provider fixture remains conditional. |
+| `POST /v1/accounts/{id}/pinterest/boards` and profile-scoped equivalent | Dashboard regression | Authenticated Dashboard regression covers Create Board refresh-and-select with intercepted provider responses. Live mutation still requires an explicit safe Sandbox fixture. |
 | `GET /v1/accounts/{id}/facebook/webhook-status` | No | Dashboard operational endpoint. |
 | `POST /v1/accounts/{id}/facebook/resubscribe-webhooks` | No | Mutating repair path; should not run hourly without an explicit fixture. |
 | `GET /v1/posts/summaries` | Direct smoke | Covered by `scripts/smoke-test.sh`. |
@@ -124,6 +124,7 @@ These routes exist in the backend but are not yet covered by the hourly publishe
 ## Notes
 
 - `facebook/page-insights`, `platform-credentials`, `retryResult`, `deliveryJobs.retry`, `deliveryJobs.cancel`, and live publish are environment-sensitive. Validation covers them conditionally or via safe negative-path checks so the scripts remain runnable in normal workspaces.
+- Pinterest post creation keeps the existing SDK request shape: clients pass `platform_posts[].platform_options.board_id`; the Production/Sandbox marker is server-owned internal metadata. See [Pinterest publishing: boards, preflight, and actionable failures](pinterest-publishing-api.md).
 - Inbox deployed acceptance requires UniPost-owned, non-customer fixtures in one workspace: two managed-user IDs, one existing Inbox item per managed user, a server-side creator-bound API key whose creator is still an owner/admin, and an explicit target API URL. Fixture B must already be read and its thread-state mutation repeats its current value. The cross-scope reply sends an empty JSON object (`{}`), so any isolation regression reaches `400` validation before any provider call.
 - WebSocket isolation acceptance additionally requires `INBOX_ACCEPT_EVENT_DATABASE_URL` and the explicit opt-in `INBOX_ACCEPT_ALLOW_PG_NOTIFY=1`. The script requires `psql`, sends only ephemeral `pg_notify` events on `inbox_events`, performs no database table reads or writes, never calls provider APIs, and must not be run with customer accounts. A retried A readiness probe proves both subscriptions are registered; then one psql transaction sends the B probe followed by an A barrier, making the negative managed-user assertion causal rather than time-window based.
 - HTTP, WebSocket upgrade/event/readiness, and psql operations have finite defaults. Operators may tighten them with `INBOX_ACCEPT_HTTP_TIMEOUT_MS`, `INBOX_ACCEPT_WS_UPGRADE_TIMEOUT_MS`, `INBOX_ACCEPT_WS_EVENT_TIMEOUT_MS`, `INBOX_ACCEPT_WS_READY_TIMEOUT_MS`, `INBOX_ACCEPT_PSQL_TIMEOUT_MS`, and `INBOX_ACCEPT_PSQL_KILL_GRACE_MS`; invalid or out-of-range values fail closed.

@@ -47,6 +47,34 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "tiktok-identity-accuracy",
+    date: "2026-07-31",
+    displayDate: "July 31, 2026",
+    title: "Improved TikTok account identity accuracy",
+    summary: "TikTok account identity now stores and exposes the true username for accurate account identification.",
+    category: "api",
+    impact: "improved",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit bf234b9", href: "https://github.com/bugfreev587/unipost/commit/bf234b9c39f0abf0b161359172ff6af4ffef429a" },
+  ],
+  },
+  {
+    id: "media-retention-fix",
+    date: "2026-07-31",
+    displayDate: "July 31, 2026",
+    title: "Fixed media retention classification performance",
+    summary: "Media retention strict classification now correctly handles zero rows without unnecessary iteration.",
+    category: "reliability",
+    impact: "fixed",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit e637c93", href: "https://github.com/bugfreev587/unipost/commit/e637c93d2b671d4757a32b479eb303c3097cf075" },
+  ],
+  },
+  {
     id: "managed-trials-billing",
     date: "2026-07-25",
     displayDate: "July 25, 2026",

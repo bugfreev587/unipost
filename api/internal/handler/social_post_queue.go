@@ -1077,6 +1077,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	oc := h.publishOneContext(
 		ctx,
 		post.WorkspaceID,
+		post.ID,
 		xUsageKeyForResult(res.ID),
 		pp,
 		dbAccounts,
@@ -1085,6 +1086,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		quota.NewPerPlatformDailyTracker(ctx, h.queries, dailyTargetsFor([]platform.PlatformPostInput{pp}, accountMap)),
 		h.disallowedPlatformsForDispatch(ctx, post.WorkspaceID, []platform.PlatformPostInput{pp}, accountMap),
 	)
+	h.logPlatformDispatchEvents(ctx, post, res, job, oc.dispatchEvents)
 	if oc.err != nil {
 		return h.handleJobDispatchFailure(ctx, post, res, job, oc)
 	}
@@ -1190,6 +1192,59 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		},
 	}))
 	return nil
+}
+
+func (h *SocialPostHandler) logPlatformDispatchEvents(ctx context.Context, post db.SocialPost, res db.SocialPostResult, job db.PostDeliveryJob, events []platform.DispatchEvent) {
+	for _, event := range events {
+		switch event.Name {
+		case integrationlogs.ActionPinterestDestinationPreflightStarted,
+			integrationlogs.ActionPinterestDestinationPreflightSucceeded,
+			integrationlogs.ActionPinterestDestinationPreflightFailed,
+			integrationlogs.ActionPinterestCreatePinFailed,
+			integrationlogs.ActionPinterestMediaPreflightFailed,
+			integrationlogs.ActionPinterestMediaStaged:
+		default:
+			continue
+		}
+		level := integrationlogs.LevelInfo
+		status := integrationlogs.StatusSuccess
+		if event.Status == "failed" {
+			level = integrationlogs.LevelWarn
+			status = integrationlogs.StatusError
+		}
+		durationMS := int(event.Duration / time.Millisecond)
+		var remoteStatus *int
+		if event.HTTPStatus > 0 {
+			value := event.HTTPStatus
+			remoteStatus = &value
+		}
+		h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
+			WorkspaceID:      post.WorkspaceID,
+			Level:            level,
+			Status:           status,
+			Action:           event.Name,
+			Message:          event.Name,
+			PostID:           post.ID,
+			SocialAccountID:  res.SocialAccountID,
+			Platform:         job.Platform,
+			RemoteStatusCode: remoteStatus,
+			DurationMS:       &durationMS,
+			ErrorCode:        event.ErrorCode,
+			Metadata: map[string]any{
+				"job_id":                job.ID,
+				"result_id":             res.ID,
+				"board_fingerprint":     event.BoardFingerprint,
+				"pinterest_environment": event.Environment,
+				"provider_code":         event.ProviderCode,
+				"normalized_reason":     event.Reason,
+				"failure_stage":         event.FailureStage,
+				"retriable":             event.Retriable,
+				"media_type":            event.MediaType,
+				"media_size_bytes":      event.MediaSizeBytes,
+				"customer_input":        event.CustomerInput,
+			},
+		}))
+	}
 }
 
 func (h *SocialPostHandler) evaluateDeliveryPublishingRestriction(
@@ -1622,7 +1677,7 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post db.SocialPost, res db.SocialPostResult, job db.PostDeliveryJob, oc publishOneOutcome) error {
 	errMsg := sanitizeDeliveryErrorText(oc.err.Error())
 	sanitizedDebugCurl := sanitizeDeliveryErrorText(oc.debugCurl)
-	failureStage := inferDispatchFailureStage(errMsg)
+	failureStage := inferDispatchFailureStage(oc.err)
 
 	// Classify before touching the result row. If this attempt is
 	// retriable and another attempt is coming, keep the row in
@@ -1818,8 +1873,17 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	return nil
 }
 
-func inferDispatchFailureStage(errMsg string) string {
-	msg := strings.ToLower(strings.TrimSpace(errMsg))
+func inferDispatchFailureStage(err error) string {
+	if err == nil {
+		return "dispatch"
+	}
+	var carrier interface{ FailureStage() string }
+	if errors.As(err, &carrier) {
+		if stage := strings.TrimSpace(carrier.FailureStage()); stage != "" {
+			return stage
+		}
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case strings.Contains(msg, "fetch_source_read"):
 		return "fetch_source_read"

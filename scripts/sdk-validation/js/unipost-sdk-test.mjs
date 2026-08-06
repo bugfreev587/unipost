@@ -4,7 +4,11 @@ const sdkImportTarget = process.env.UNIPOST_JS_SDK_IMPORT || '/Users/xiaoboyu/un
 const { UniPost, UniPostError, verifyWebhookSignature } = await import(sdkImportTarget);
 
 const API_KEY = process.env.UNIPOST_API_KEY || 'YOUR_API_KEY_HERE';
+const BASE_URL = process.env.BASE_URL || 'https://api.unipost.dev';
 const TEST_ACCOUNT_ID_ENV = process.env.TEST_ACCOUNT_ID || '';
+const TEST_X_ACCOUNT_ID = process.env.TEST_X_ACCOUNT_ID || '';
+const TEST_EXTERNAL_USER_ID = process.env.TEST_EXTERNAL_USER_ID || '';
+const REQUIRE_X_ACCOUNT_READ_ACCEPTANCE = process.env.REQUIRE_X_ACCOUNT_READ_ACCEPTANCE === 'true';
 const TEST_PUBLISH_NOW = process.env.TEST_PUBLISH_NOW === 'true';
 const TEST_PLATFORM_CREDENTIALS_PLATFORM = (process.env.TEST_PLATFORM_CREDENTIALS_PLATFORM || '').trim().toLowerCase();
 const SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS = [
@@ -189,8 +193,16 @@ async function main() {
     console.error('❌ Please set UNIPOST_API_KEY environment variable');
     process.exit(1);
   }
+  if (
+    REQUIRE_X_ACCOUNT_READ_ACCEPTANCE
+    && (!TEST_X_ACCOUNT_ID || !TEST_EXTERNAL_USER_ID)
+  ) {
+    throw new Error(
+      'Required X account-read acceptance fixture is missing: set TEST_X_ACCOUNT_ID and TEST_EXTERNAL_USER_ID',
+    );
+  }
 
-  const client = new UniPost({ apiKey: API_KEY });
+  const client = new UniPost({ apiKey: API_KEY, baseUrl: BASE_URL });
   let testAccountId = TEST_ACCOUNT_ID_ENV;
 
   let workspace;
@@ -322,6 +334,92 @@ async function main() {
     skip('accounts.get()/health()/capabilities()', 'No accounts available');
     skip('accounts.health()', 'No accounts available');
     skip('accounts.capabilities()', 'No accounts available');
+  }
+
+  section('3b. X account reads and Credits');
+  if (TEST_X_ACCOUNT_ID && TEST_EXTERNAL_USER_ID) {
+    const runKey = process.env.GITHUB_RUN_ID || crypto.randomUUID();
+    const profileKey = `sdk-js-profile-${runKey}`;
+    const postsKey = `sdk-js-posts-${runKey}-page-1`;
+
+    const profile = await test('accounts.getProfile() + exact replay', async () => {
+      const request = {
+        externalUserId: TEST_EXTERNAL_USER_ID,
+        idempotencyKey: profileKey,
+      };
+      const first = await client.accounts.getProfile(TEST_X_ACCOUNT_ID, request);
+      const replay = await client.accounts.getProfile(TEST_X_ACCOUNT_ID, request);
+      assert(first?.request_id, 'Expected profile request_id');
+      assert(first?.meta?.credits?.operation_id, 'Expected profile Credits receipt');
+      assert(replay?.meta?.replayed === true, 'Expected exact profile replay');
+      assert(
+        replay.meta.credits.operation_id === first.meta.credits.operation_id,
+        'Expected replay to preserve the profile operation',
+      );
+      return first;
+    });
+
+    const posts = await test('accounts.listPosts() + cursor contract + exact replay', async () => {
+      const request = {
+        externalUserId: TEST_EXTERNAL_USER_ID,
+        idempotencyKey: postsKey,
+        limit: 5,
+      };
+      const first = await client.accounts.listPosts(TEST_X_ACCOUNT_ID, request);
+      const replay = await client.accounts.listPosts(TEST_X_ACCOUNT_ID, request);
+      assert(first?.request_id, 'Expected posts request_id');
+      assert(Array.isArray(first?.data), 'Expected posts data array');
+      assert(first?.meta?.credits?.operation_id, 'Expected posts Credits receipt');
+      assert(replay?.meta?.replayed === true, 'Expected exact posts replay');
+      if (first.meta.has_more) {
+        assert(first.meta.next_cursor, 'Expected next_cursor when has_more is true');
+      }
+      return first;
+    });
+
+    if (posts?.meta?.next_cursor) {
+      await test('accounts.listPosts() continuation page', async () => {
+        const page = await client.accounts.listPosts(TEST_X_ACCOUNT_ID, {
+          externalUserId: TEST_EXTERNAL_USER_ID,
+          idempotencyKey: `sdk-js-posts-${runKey}-page-2`,
+          limit: 5,
+          cursor: posts.meta.next_cursor,
+        });
+        assert(page?.request_id, 'Expected continuation request_id');
+        return page;
+      });
+    } else {
+      skip('accounts.listPosts() continuation page', 'First page has no next_cursor');
+    }
+
+    await test('billing.getXCredits() and billing.listXCreditEvents()', async () => {
+      try {
+        const allowance = await client.billing.getXCredits();
+        const events = await client.billing.listXCreditEvents({
+          accountId: TEST_X_ACCOUNT_ID,
+          externalUserId: TEST_EXTERNAL_USER_ID,
+          limit: 10,
+        });
+        assert(allowance?.request_id, 'Expected allowance request_id');
+        assert(Number.isInteger(allowance?.data?.monthly_remaining), 'Expected monthly_remaining');
+        assert(events?.request_id, 'Expected events request_id');
+        assert(Array.isArray(events?.data), 'Expected Credits event data');
+      } catch (error) {
+        if (error instanceof UniPostError && error.code === 'FEATURE_NOT_AVAILABLE') {
+          assert(
+            profile?.meta?.credits?.accounting_enabled === false,
+            'Feature-off profile receipt must bypass accounting',
+          );
+          return;
+        }
+        throw error;
+      }
+    });
+  } else {
+    skip('accounts.getProfile() + exact replay', 'No X account-read fixture configured');
+    skip('accounts.listPosts() + cursor contract + exact replay', 'No X account-read fixture configured');
+    skip('accounts.listPosts() continuation page', 'No X account-read fixture configured');
+    skip('billing.getXCredits() and billing.listXCreditEvents()', 'No X account-read fixture configured');
   }
 
   if (tikTokAccount) {

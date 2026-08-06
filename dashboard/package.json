@@ -14,7 +14,7 @@
     "test:dashboard-synthetic-auth": "node --test tests/dashboard-synthetic-auth.test.mjs",
     "test:hosted-connect": "node --test tests/hosted-connect-errors.test.mjs tests/hosted-connect-logs.test.mjs",
     "test:youtube-compliance": "node --test src/lib/youtube-source.test.ts tests/youtube-compliance-ui-source.test.mjs tests/youtube-source-components-source.test.mjs tests/youtube-published-result-source.test.mjs tests/youtube-analytics-dashboard-source.test.mjs",
-    "test:publishing-restrictions": "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts",
+    "test:publishing-restrictions": "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/posts-calendar-create-hydration-source.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts",
     "acceptance:team-plan": "node scripts/team-plan-acceptance.mjs",
     "test:regression:dashboard": "playwright test --config=playwright.regression.config.ts",
     "test:regression:dashboard:local": "DASHBOARD_WEB_SERVER=1 NEXT_PUBLIC_APP_HOST=dev-app.localhost:3000 DASHBOARD_BASE_URL=http://dev-app.localhost:3000 npm run test:regression:dashboard",

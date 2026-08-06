@@ -42,6 +42,9 @@ type mediaCleanupQueries interface {
 	ClaimAbandonedMedia(context.Context) ([]db.Media, error)
 	ReleaseAbandonedMediaClaim(context.Context, string) error
 	HardDeleteMedia(context.Context, string) error
+	ClaimPublishingPullObjectsDue(context.Context, int32) ([]db.PublishingPullObject, error)
+	ReleasePublishingPullObjectClaim(context.Context, string) error
+	HardDeletePublishingPullObject(context.Context, string) error
 }
 
 type mediaCleanupStorage interface {
@@ -205,10 +208,59 @@ func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
 			break
 		}
 	}
+	if status != mediaCleanupRunFailed {
+		w.sweepPublishingPullObjects(ctx, &stats)
+	}
 	if stats.failedObjects > 0 && status == mediaCleanupRunCompleted {
 		status = mediaCleanupRunCompletedWithErrors
 	}
 	w.completeRun(ctx, run.ID, status, stats)
+}
+
+func (w *MediaCleanupWorker) sweepPublishingPullObjects(ctx context.Context, stats *mediaCleanupRunStats) {
+	for {
+		rows, err := w.queries.ClaimPublishingPullObjectsDue(ctx, mediaCleanupBatchSize)
+		if err != nil {
+			slog.Error("media cleanup: failed to claim publishing pull objects", "error", err)
+			stats.addError("claim publishing pull objects failed", err)
+			return
+		}
+		if len(rows) == 0 {
+			return
+		}
+		stats.scanned += int32(len(rows))
+
+		deletedCount := 0
+		for _, row := range rows {
+			if err := w.storage.Delete(ctx, row.ObjectKey); err != nil {
+				stats.recordObjectFailure(row.SizeBytes, "r2 publishing pull object delete failed", err)
+				slog.Warn("media cleanup: publishing pull object delete failed",
+					"object_key", row.ObjectKey,
+					"size_bytes", row.SizeBytes,
+					"error", err)
+				if releaseErr := w.queries.ReleasePublishingPullObjectClaim(ctx, row.ObjectKey); releaseErr != nil {
+					stats.addError("release publishing pull object claim failed", releaseErr)
+					slog.Warn("media cleanup: publishing pull object claim release failed",
+						"object_key", row.ObjectKey,
+						"error", releaseErr)
+				}
+				continue
+			}
+			if err := w.queries.HardDeletePublishingPullObject(ctx, row.ObjectKey); err != nil {
+				stats.recordObjectFailure(row.SizeBytes, "publishing pull object database delete failed", err)
+				slog.Warn("media cleanup: publishing pull object database delete failed",
+					"object_key", row.ObjectKey,
+					"error", err)
+				continue
+			}
+			stats.deletedObjects++
+			stats.deletedBytes += row.SizeBytes
+			deletedCount++
+		}
+		if len(rows) < mediaCleanupBatchSize || deletedCount == 0 {
+			return
+		}
+	}
 }
 
 func (w *MediaCleanupWorker) completeRun(ctx context.Context, runID, status string, stats mediaCleanupRunStats) {
@@ -237,8 +289,12 @@ type mediaCleanupRunStats struct {
 }
 
 func (s *mediaCleanupRunStats) recordFailure(row db.Media, label string, err error) {
+	s.recordObjectFailure(row.SizeBytes, label, err)
+}
+
+func (s *mediaCleanupRunStats) recordObjectFailure(sizeBytes int64, label string, err error) {
 	s.failedObjects++
-	s.failedBytes += row.SizeBytes
+	s.failedBytes += sizeBytes
 	s.addError(label, err)
 }
 
