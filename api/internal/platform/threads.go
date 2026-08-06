@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 )
 
 const minThreadsLongLivedTokenLifetime = 24 * time.Hour
@@ -113,10 +114,17 @@ func (d threadsContainerDiagnostics) format() string {
 // waitForContainer polls a Threads container until it is publishable, fails,
 // or the budget runs out. Only FINISHED — or the bounded grace above —
 // authorizes threads_publish.
-func (a *ThreadsAdapter) waitForContainer(ctx context.Context, accessToken, containerID string, origin MediaOrigin) (threadsContainerOutcome, error) {
+func (a *ThreadsAdapter) waitForContainer(ctx context.Context, accessToken, containerID string, origin MediaOrigin) (outcome threadsContainerOutcome, err error) {
 	start := time.Now()
 	diag := threadsContainerDiagnostics{containerID: containerID, mediaOrigin: origin}
 	unknownStatusStreak := 0
+
+	// One summary event per wait, never one per poll: a five-minute wait at a
+	// five-second interval is up to sixty polls, which would overflow the
+	// sixteen-event dispatch buffer and silently drop the terminal event.
+	defer func() {
+		recordThreadsContainerEvent(ctx, diag, outcome, err, time.Since(start), origin)
+	}()
 
 	for {
 		diag.pollCount++
@@ -213,6 +221,54 @@ func (a *ThreadsAdapter) containerErrorFailure(diag threadsContainerDiagnostics)
 		map[string]any{"provider": "meta", "reason": reason},
 		FailureContract{ErrorCode: "temporary_platform_error", Stage: "container_processing", IsRetriable: true},
 	)
+}
+
+// recordThreadsContainerEvent publishes the wait's outcome onto the dispatch
+// event recorder so the observed container status is queryable through the
+// existing integration-log surface instead of only appearing in process logs.
+// DispatchEvent has no field capable of holding a URL or a token, so this
+// surface cannot leak credentials by construction.
+func recordThreadsContainerEvent(
+	ctx context.Context,
+	diag threadsContainerDiagnostics,
+	outcome threadsContainerOutcome,
+	waitErr error,
+	elapsed time.Duration,
+	origin MediaOrigin,
+) {
+	metadata, ok := DispatchMetadataFromContext(ctx)
+	if !ok || metadata.Events == nil {
+		return
+	}
+	event := DispatchEvent{
+		Name:          integrationlogs.ActionThreadsContainerReady,
+		Status:        "succeeded",
+		Duration:      elapsed,
+		Reason:        diag.status,
+		CustomerInput: origin == MediaOriginExternal,
+	}
+	if diag.errorMessage != "" {
+		event.Reason = diag.status + ":" + diag.errorMessage
+	}
+	if waitErr != nil {
+		event.Name = integrationlogs.ActionThreadsContainerFailed
+		event.Status = "failed"
+		if carrier, isTyped := waitErr.(interface {
+			FailureContractFields() map[string]any
+		}); isTyped {
+			fields := carrier.FailureContractFields()
+			event.ErrorCode, _ = fields["error_code"].(string)
+			event.FailureStage, _ = fields["failure_stage"].(string)
+			event.Retriable, _ = fields["is_retriable"].(bool)
+		}
+		if event.Reason == "" {
+			event.Reason = "TIMEOUT"
+		}
+	} else if outcome.status != "" {
+		event.Reason = outcome.status
+	}
+	event.HTTPStatus = diag.lastHTTPStatus
+	metadata.Events.Record(event)
 }
 
 type threadsContainerStatus struct {

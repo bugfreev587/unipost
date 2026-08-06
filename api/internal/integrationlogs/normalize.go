@@ -62,6 +62,13 @@ const (
 	ActionPinterestMediaPreflightFailed          = "pinterest_media_preflight_failed"
 	ActionPinterestMediaStaged                   = "pinterest_media_staged"
 
+	// Threads container readiness. One summary event per wait, plus a
+	// terminal event on failure — deliberately not one per poll, because a
+	// five-minute wait at a five-second interval would overflow the
+	// sixteen-event dispatch buffer and discard the event that matters.
+	ActionThreadsContainerReady  = "threads_container_ready"
+	ActionThreadsContainerFailed = "threads_container_failed"
+
 	ActionAPIRequestSucceeded        = "api.request.succeeded"
 	ActionAPIRequestFailed           = "api.request.failed"
 	ActionAPIRequestValidationFailed = "api.request.validation_failed"

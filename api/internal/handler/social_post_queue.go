@@ -1202,7 +1202,9 @@ func (h *SocialPostHandler) logPlatformDispatchEvents(ctx context.Context, post 
 			integrationlogs.ActionPinterestDestinationPreflightFailed,
 			integrationlogs.ActionPinterestCreatePinFailed,
 			integrationlogs.ActionPinterestMediaPreflightFailed,
-			integrationlogs.ActionPinterestMediaStaged:
+			integrationlogs.ActionPinterestMediaStaged,
+			integrationlogs.ActionThreadsContainerReady,
+			integrationlogs.ActionThreadsContainerFailed:
 		default:
 			continue
 		}

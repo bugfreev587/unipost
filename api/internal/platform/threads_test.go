@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 )
 
 func TestThreadsGetUserIDNon2XXIncludesStatusBody(t *testing.T) {
@@ -693,5 +695,96 @@ func assertThreadsContract(t *testing.T, err error, wantCode, wantStage string, 
 	}
 	if got, _ := fields["is_retriable"].(bool); got != wantRetriable {
 		t.Errorf("is_retriable = %v, want %v", got, wantRetriable)
+	}
+}
+
+// The observed container status has to be queryable through the integration
+// log surface, not only process logs — otherwise there is no way to answer
+// "what status does each container type actually report?" from production.
+func TestThreadsContainerRecordsOneDispatchEventPerWait(t *testing.T) {
+	tests := []struct {
+		name       string
+		statuses   []string
+		budget     time.Duration
+		wantName   string
+		wantStatus string
+		wantReason string
+	}{
+		{
+			name:       "ready wait records the observed status",
+			statuses:   []string{`{"status":"IN_PROGRESS"}`, `{"status":"FINISHED"}`},
+			budget:     time.Second,
+			wantName:   integrationlogs.ActionThreadsContainerReady,
+			wantStatus: "succeeded",
+			wantReason: "FINISHED",
+		},
+		{
+			name:       "container error records the provider reason",
+			statuses:   []string{`{"status":"ERROR","error_message":"INVALID_DURATION"}`},
+			budget:     time.Second,
+			wantName:   integrationlogs.ActionThreadsContainerFailed,
+			wantStatus: "failed",
+			wantReason: "ERROR:INVALID_DURATION",
+		},
+		{
+			name:       "unknown status records the grace outcome so it is alertable",
+			statuses:   []string{`{"id":"c"}`, `{"id":"c"}`, `{"id":"c"}`},
+			budget:     time.Second,
+			wantName:   integrationlogs.ActionThreadsContainerReady,
+			wantStatus: "succeeded",
+			wantReason: "UNKNOWN_ASSUMED_READY",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withFastThreadsPolling(t, tt.budget)
+			rec := NewDispatchEventRecorder()
+			ctx := WithDispatchMetadata(context.Background(), DispatchMetadata{Events: rec})
+			adapter := newThreadsAdapterScripted(&threadsScriptedTransport{statuses: tt.statuses})
+
+			_, _ = adapter.Post(ctx, "threads-secret-token", "c",
+				[]MediaItem{{URL: "https://e.com/v.mp4", Kind: MediaKindVideo, Origin: MediaOriginManaged}}, nil)
+
+			events := rec.Snapshot()
+			if len(events) != 1 {
+				t.Fatalf("dispatch events = %d, want exactly 1 summary per wait", len(events))
+			}
+			got := events[0]
+			if got.Name != tt.wantName {
+				t.Errorf("event name = %q, want %q", got.Name, tt.wantName)
+			}
+			if got.Status != tt.wantStatus {
+				t.Errorf("event status = %q, want %q", got.Status, tt.wantStatus)
+			}
+			if got.Reason != tt.wantReason {
+				t.Errorf("event reason = %q, want %q", got.Reason, tt.wantReason)
+			}
+			if got.CustomerInput {
+				t.Error("managed media marked as customer input")
+			}
+		})
+	}
+}
+
+// A wait that polls to the budget must still leave room for its terminal
+// event inside the sixteen-event dispatch buffer.
+func TestThreadsLongWaitStaysInsideDispatchEventCap(t *testing.T) {
+	withFastThreadsPolling(t, 60*time.Millisecond)
+	rec := NewDispatchEventRecorder()
+	ctx := WithDispatchMetadata(context.Background(), DispatchMetadata{Events: rec})
+	adapter := newThreadsAdapterScripted(&threadsScriptedTransport{statuses: []string{`{"status":"IN_PROGRESS"}`}})
+
+	_, err := adapter.Post(ctx, "threads-secret-token", "c",
+		[]MediaItem{{URL: "https://e.com/v.mp4", Kind: MediaKindVideo}}, nil)
+	if err == nil {
+		t.Fatal("expected a timeout")
+	}
+	events := rec.Snapshot()
+	if len(events) != 1 {
+		t.Fatalf("dispatch events = %d after many polls, want 1", len(events))
+	}
+	if events[0].Name != integrationlogs.ActionThreadsContainerFailed || !events[0].Retriable {
+		t.Errorf("terminal event = %s retriable=%v, want the retriable failure", events[0].Name, events[0].Retriable)
 	}
 }
