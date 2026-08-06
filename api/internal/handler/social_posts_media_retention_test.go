@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
@@ -310,11 +312,26 @@ func TestStrictPublishingRestrictionRetentionFailsAtEveryLedgerBoundary(t *testi
 			wantErr: databaseUnavailable,
 		},
 		{
+			// A genuine cleanup race leaves the media soft-deleted, which
+			// is permanently unretainable. Strict now skips it instead of
+			// rolling back forever on a condition retrying cannot fix.
 			name: "upsert cleanup race",
 			mutate: func(_ *db.SocialPost, dbtx *mediaRetentionTestDB) {
 				dbtx.upsertErr = pgx.ErrNoRows
+				dbtx.mediaRows = map[string]db.GetMediaRetentionStateRow{
+					"media_1": retentionMedia("media_1", "ws_1", "deleted"),
+					"media_2": retentionMedia("media_2", "ws_1", "deleted"),
+				}
 			},
-			wantErr: pgx.ErrNoRows,
+			wantErr: nil,
+		},
+		{
+			name: "diagnosis failure is not a benign zero row",
+			mutate: func(_ *db.SocialPost, dbtx *mediaRetentionTestDB) {
+				dbtx.upsertErr = pgx.ErrNoRows
+				dbtx.getMediaErr = databaseUnavailable
+			},
+			wantErr: databaseUnavailable,
 		},
 	}
 
@@ -330,6 +347,321 @@ func TestStrictPublishingRestrictionRetentionFailsAtEveryLedgerBoundary(t *testi
 			)
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("strict retention error=%v, want %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+// Only a permanently unretainable media may be skipped. Everything else —
+// a transient state, a tenancy mismatch, an unmodelled status — must keep the
+// strict path fail-closed so the caller's transaction rolls back.
+func TestStrictRetentionSkipsOnlyPermanentlyUnretainableMedia(t *testing.T) {
+	tests := []struct {
+		name     string
+		media    map[string]db.GetMediaRetentionStateRow
+		wantSkip bool
+	}{
+		{
+			name:     "missing row",
+			media:    map[string]db.GetMediaRetentionStateRow{},
+			wantSkip: true,
+		},
+		{
+			name: "soft deleted",
+			media: map[string]db.GetMediaRetentionStateRow{
+				"media_1": retentionMedia("media_1", "ws_1", "deleted"),
+				"media_2": retentionMedia("media_2", "ws_1", "deleted"),
+			},
+			wantSkip: true,
+		},
+		{
+			// The publish path hydrates pending rows to 'uploaded' and
+			// delivers them, so skipping would drop a real obligation.
+			name: "pending is transient",
+			media: map[string]db.GetMediaRetentionStateRow{
+				"media_1": retentionMedia("media_1", "ws_1", "pending"),
+				"media_2": retentionMedia("media_2", "ws_1", "pending"),
+			},
+			wantSkip: false,
+		},
+		{
+			// Skipping would let the post publish another tenant's media.
+			name: "workspace mismatch",
+			media: map[string]db.GetMediaRetentionStateRow{
+				"media_1": retentionMedia("media_1", "ws_other", "uploaded"),
+				"media_2": retentionMedia("media_2", "ws_other", "uploaded"),
+			},
+			wantSkip: false,
+		},
+		{
+			// Cleanup lost the race after all; the next pass succeeds.
+			name: "race resolved to uploaded",
+			media: map[string]db.GetMediaRetentionStateRow{
+				"media_1": retentionMedia("media_1", "ws_1", "uploaded"),
+				"media_2": retentionMedia("media_2", "ws_1", "uploaded"),
+			},
+			wantSkip: false,
+		},
+		{
+			name: "race resolved to attached",
+			media: map[string]db.GetMediaRetentionStateRow{
+				"media_1": retentionMedia("media_1", "ws_1", "attached"),
+				"media_2": retentionMedia("media_2", "ws_1", "attached"),
+			},
+			wantSkip: false,
+		},
+		{
+			name: "unmodelled status is never guessed",
+			media: map[string]db.GetMediaRetentionStateRow{
+				"media_1": retentionMedia("media_1", "ws_1", "quarantined"),
+				"media_2": retentionMedia("media_2", "ws_1", "quarantined"),
+			},
+			wantSkip: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			post := mediaRetentionPost(t, "failed")
+			dbtx := &mediaRetentionTestDB{upsertErr: pgx.ErrNoRows, mediaRows: test.media}
+			handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+			err := handler.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(
+				context.Background(), post, post.Status, time.Now(),
+			)
+			if test.wantSkip {
+				if err != nil {
+					t.Fatalf("strict retention error = %v, want skip", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("strict retention returned nil, want fail-closed")
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("fail-closed error = %v, want it to wrap pgx.ErrNoRows", err)
+			}
+		})
+	}
+}
+
+// One unretainable media must not block the rest of the post's ledger — that
+// is what keeps the still-publishable targets moving.
+func TestStrictRetentionSkipsOnlyTheUnretainableMediaInAPost(t *testing.T) {
+	post := mediaRetentionPost(t, "failed")
+	dbtx := &mediaRetentionTestDB{
+		upsertErrByMedia: map[string]error{"media_1": pgx.ErrNoRows},
+		mediaRows: map[string]db.GetMediaRetentionStateRow{
+			"media_2": retentionMedia("media_2", "ws_1", "uploaded"),
+		},
+	}
+	handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+	if err := handler.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(
+		context.Background(), post, post.Status, time.Now(),
+	); err != nil {
+		t.Fatalf("strict retention: %v", err)
+	}
+
+	if len(dbtx.upserts) != 1 || dbtx.upserts[0].MediaID != "media_2" {
+		t.Fatalf("upserts = %+v, want only media_2 retained", dbtx.upserts)
+	}
+	if dbtx.upsertCalls != 2 {
+		t.Fatalf("upsert calls = %d, want 2 (both media attempted)", dbtx.upsertCalls)
+	}
+}
+
+// A partially unretainable post must still fail closed when the surviving
+// media hits a genuine infrastructure error.
+func TestStrictRetentionFailsClosedWhenASurvivingMediaErrors(t *testing.T) {
+	databaseUnavailable := errors.New("database unavailable")
+	post := mediaRetentionPost(t, "failed")
+	dbtx := &mediaRetentionTestDB{
+		upsertErrByMedia: map[string]error{
+			"media_1": pgx.ErrNoRows,
+			"media_2": databaseUnavailable,
+		},
+		mediaRows: map[string]db.GetMediaRetentionStateRow{},
+	}
+	handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+	err := handler.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(
+		context.Background(), post, post.Status, time.Now(),
+	)
+	if !errors.Is(err, databaseUnavailable) {
+		t.Fatalf("strict retention error = %v, want %v", err, databaseUnavailable)
+	}
+}
+
+// The second strict call site. A skippable media must not propagate an error
+// out of failScheduledPostForQuota — returning one rolls the claim transaction
+// back and leaves the post `scheduled` for the next pass to replay.
+func TestFailScheduledPostForQuotaSkipsUnretainableMediaWithoutRollback(t *testing.T) {
+	post := mediaRetentionPost(t, "scheduled")
+	dbtx := &mediaRetentionTestDB{
+		upsertErrByMedia: map[string]error{"media_1": pgx.ErrNoRows},
+		mediaRows: map[string]db.GetMediaRetentionStateRow{
+			"media_2": retentionMedia("media_2", "ws_1", "uploaded"),
+		},
+	}
+	handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+	parsed := []platform.PlatformPostInput{{
+		AccountID: "acct_1",
+		Caption:   "one",
+		MediaIDs:  []string{"media_1", "media_2"},
+	}}
+	accountMap := map[string]platform.ValidateAccount{"acct_1": {Platform: "tiktok"}}
+	blockedTargets := map[string]publishingrestrictions.Decision{
+		"acct_1": {Restricted: true, Platform: "tiktok", CycleID: "cycle_1"},
+	}
+
+	err := handler.failScheduledPostForQuota(
+		context.Background(), post, parsed, accountMap, blockedTargets,
+		quota.QuotaStatus{Limit: 10, Usage: 10}, 1,
+	)
+	if err != nil {
+		t.Fatalf("failScheduledPostForQuota returned %v, want nil (skip, not rollback)", err)
+	}
+	if dbtx.updatedPostStatus != "failed" {
+		t.Fatalf("post status = %q, want failed", dbtx.updatedPostStatus)
+	}
+	if len(dbtx.upserts) != 1 || dbtx.upserts[0].MediaID != "media_2" {
+		t.Fatalf("upserts = %+v, want only media_2 retained", dbtx.upserts)
+	}
+}
+
+// The same call site must still fail closed for a non-skippable classification.
+func TestFailScheduledPostForQuotaRollsBackOnWorkspaceMismatch(t *testing.T) {
+	post := mediaRetentionPost(t, "scheduled")
+	dbtx := &mediaRetentionTestDB{
+		upsertErr: pgx.ErrNoRows,
+		mediaRows: map[string]db.GetMediaRetentionStateRow{
+			"media_1": retentionMedia("media_1", "ws_other", "uploaded"),
+			"media_2": retentionMedia("media_2", "ws_other", "uploaded"),
+		},
+	}
+	handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+	parsed := []platform.PlatformPostInput{{
+		AccountID: "acct_1",
+		Caption:   "one",
+		MediaIDs:  []string{"media_1", "media_2"},
+	}}
+	accountMap := map[string]platform.ValidateAccount{"acct_1": {Platform: "tiktok"}}
+	blockedTargets := map[string]publishingrestrictions.Decision{
+		"acct_1": {Restricted: true, Platform: "tiktok", CycleID: "cycle_1"},
+	}
+
+	err := handler.failScheduledPostForQuota(
+		context.Background(), post, parsed, accountMap, blockedTargets,
+		quota.QuotaStatus{Limit: 10, Usage: 10}, 1,
+	)
+	if err == nil {
+		t.Fatal("failScheduledPostForQuota returned nil, want fail-closed on tenancy mismatch")
+	}
+}
+
+// The delivery-side zero row folds at least four conditions together. The
+// classification is a best-effort trend signal — it must at minimum tell
+// lease/state races apart from genuinely unavailable media.
+func TestRestrictedFinalizeNoRowSeparatesLeaseRacesFromMediaUnavailable(t *testing.T) {
+	baseJob := db.PostDeliveryJob{
+		ID:            "job_1",
+		WorkspaceID:   "ws_1",
+		PostID:        "post_1",
+		State:         "running",
+		LeaseOwner:    pgtype.Text{String: "worker_a", Valid: true},
+		LastAttemptAt: pgtype.Timestamptz{Time: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+	}
+
+	tests := []struct {
+		name               string
+		observed           db.PostDeliveryJob
+		observedErr        error
+		media              map[string]db.GetMediaRetentionStateRow
+		wantClassification string
+		wantDetail         string
+	}{
+		{
+			name:               "job disappeared",
+			observedErr:        pgx.ErrNoRows,
+			wantClassification: "job_missing",
+		},
+		{
+			name: "another worker already finalized",
+			observed: func() db.PostDeliveryJob {
+				j := baseJob
+				j.State = "dead"
+				return j
+			}(),
+			wantClassification: "state_changed",
+		},
+		{
+			name: "lease stolen",
+			observed: func() db.PostDeliveryJob {
+				j := baseJob
+				j.LeaseOwner = pgtype.Text{String: "worker_b", Valid: true}
+				return j
+			}(),
+			wantClassification: "lease_mismatch",
+		},
+		{
+			name: "attempt moved on",
+			observed: func() db.PostDeliveryJob {
+				j := baseJob
+				j.LastAttemptAt = pgtype.Timestamptz{
+					Time: time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC), Valid: true,
+				}
+				return j
+			}(),
+			wantClassification: "attempt_mismatch",
+		},
+		{
+			name:               "media hard deleted",
+			observed:           baseJob,
+			media:              map[string]db.GetMediaRetentionStateRow{},
+			wantClassification: "media_unavailable",
+			wantDetail:         mediaUnretainableMissing,
+		},
+		{
+			name:     "media soft deleted",
+			observed: baseJob,
+			media: map[string]db.GetMediaRetentionStateRow{
+				"media_1": retentionMedia("media_1", "ws_1", "deleted"),
+			},
+			wantClassification: "media_unavailable",
+			wantDetail:         mediaUnretainableDeleted,
+		},
+		{
+			// 'attached' is live, so it must not read as unavailable.
+			name:     "attached media is live",
+			observed: baseJob,
+			media: map[string]db.GetMediaRetentionStateRow{
+				"media_1": retentionMedia("media_1", "ws_1", "attached"),
+			},
+			wantClassification: "indeterminate",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dbtx := &mediaRetentionTestDB{
+				deliveryJob:    test.observed,
+				deliveryJobErr: test.observedErr,
+				mediaRows:      test.media,
+			}
+			handler := &SocialPostHandler{queries: db.New(dbtx)}
+			post := db.SocialPost{ID: "post_1", WorkspaceID: "ws_1"}
+
+			classification, detail, _ := handler.classifyRestrictedFinalizeNoRow(
+				context.Background(), baseJob, post, []string{"media_1"},
+			)
+			if classification != test.wantClassification {
+				t.Fatalf("classification = %q, want %q", classification, test.wantClassification)
+			}
+			if test.wantDetail != "" && detail != test.wantDetail {
+				t.Fatalf("detail = %q, want %q", detail, test.wantDetail)
 			}
 		})
 	}
@@ -521,9 +853,21 @@ type mediaRetentionTestDB struct {
 	deleteAllErr             error
 	deleteExceptErr          error
 	upsertErr                error
+	upsertErrByMedia         map[string]error
 	upsertCalls              int
+	mediaRows                map[string]db.GetMediaRetentionStateRow
+	getMediaErr              error
+	getMediaCalls            int
+	updatedPostStatus        string
+	createdResults           int
+	deliveryJob              db.PostDeliveryJob
+	deliveryJobErr           error
 	publishingUsageUpdates   []db.UpdatePublishingPullObjectUsagesForPostParams
 	publishingUsageUpdateErr error
+}
+
+func retentionMedia(_, workspaceID, status string) db.GetMediaRetentionStateRow {
+	return db.GetMediaRetentionStateRow{WorkspaceID: workspaceID, Status: status}
 }
 
 func (f *mediaRetentionTestDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
@@ -540,6 +884,12 @@ func (f *mediaRetentionTestDB) Exec(_ context.Context, query string, args ...int
 		return pgconn.CommandTag{}, f.deleteExceptErr
 	case strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"):
 		return pgconn.CommandTag{}, f.deleteAllErr
+	case strings.Contains(query, "-- name: UpdateSocialPostStatus"):
+		f.updatedPostStatus = args[1].(string)
+		return pgconn.CommandTag{}, nil
+	case strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"),
+		strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"):
+		return pgconn.CommandTag{}, nil
 	default:
 		return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
 	}
@@ -557,8 +907,38 @@ func (f *mediaRetentionTestDB) QueryRow(_ context.Context, query string, args ..
 		return scheduledIdempotencySocialPostRow(f.cancelPost)
 	case strings.Contains(query, "-- name: GetPostPublishingRestrictionMediaRetention"):
 		return scheduledIdempotencyRow{values: []any{f.retentionDeadline}}
+	case strings.Contains(query, "-- name: GetPostDeliveryJobByIDAndWorkspace"):
+		if f.deliveryJobErr != nil {
+			return scheduledIdempotencyRow{err: f.deliveryJobErr}
+		}
+		return postDeliveryJobScanRow(f.deliveryJob)
+	case strings.Contains(query, "-- name: CreateSocialPostResult"):
+		f.createdResults++
+		return socialPostResultScanRow(db.SocialPostResult{
+			ID:              fmt.Sprintf("res_%d", f.createdResults),
+			PostID:          args[0].(string),
+			SocialAccountID: args[1].(string),
+			Status:          "failed",
+		})
+	case strings.Contains(query, "-- name: CreatePostFailure"):
+		// recordPostFailure logs and moves on; the ledger is what matters here.
+		return scheduledIdempotencyRow{err: errors.New("post failure scan not needed")}
+	case strings.Contains(query, "-- name: GetMediaRetentionState"):
+		f.getMediaCalls++
+		if f.getMediaErr != nil {
+			return scheduledIdempotencyRow{err: f.getMediaErr}
+		}
+		row, ok := f.mediaRows[args[0].(string)]
+		if !ok {
+			return scheduledIdempotencyRow{err: pgx.ErrNoRows}
+		}
+		return scheduledIdempotencyRow{values: []any{row.WorkspaceID, row.Status}}
 	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):
 		f.upsertCalls++
+		mediaID := args[0].(string)
+		if err, ok := f.upsertErrByMedia[mediaID]; ok {
+			return scheduledIdempotencyRow{err: err}
+		}
 		if f.upsertErr != nil {
 			return scheduledIdempotencyRow{err: f.upsertErr}
 		}

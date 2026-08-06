@@ -2465,6 +2465,7 @@ func (f *connectSessionTestDB) socialAccountRow(id, platform, externalAccountID,
 		pgtype.Text{},
 		now,
 		f.xAppMode,
+		now, // last_connected_at: a connect save stamps the authorized time
 	}}
 }
 
@@ -2482,7 +2483,15 @@ func (r scanRow) Scan(dest ...any) error {
 	}
 	for _, trailing := range dest[len(r.values):] {
 		target := reflect.ValueOf(trailing)
-		if target.Kind() != reflect.Ptr || target.IsNil() || target.Elem().Type() != reflect.TypeOf(pgtype.Text{}) {
+		if target.Kind() != reflect.Ptr || target.IsNil() {
+			return fmt.Errorf("unexpected trailing scan destination %T", trailing)
+		}
+		// Trailing destinations cover columns newer than a fake's value list:
+		// x_app_mode (pgtype.Text) and last_connected_at (pgtype.Timestamptz,
+		// migration 137). They scan as NULL/zero values.
+		switch target.Elem().Type() {
+		case reflect.TypeOf(pgtype.Text{}), reflect.TypeOf(pgtype.Timestamptz{}):
+		default:
 			return fmt.Errorf("unexpected trailing scan destination %T", trailing)
 		}
 	}

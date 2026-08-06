@@ -1174,6 +1174,7 @@ type SocialAccount struct {
 	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
 	LastRefreshedAt   pgtype.Timestamptz `json:"last_refreshed_at"`
 	XAppMode          pgtype.Text        `json:"x_app_mode"`
+	LastConnectedAt   pgtype.Timestamptz `json:"last_connected_at"`
 }
 
 type SocialPost struct {

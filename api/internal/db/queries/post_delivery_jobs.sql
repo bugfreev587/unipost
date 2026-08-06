@@ -84,7 +84,9 @@ WITH locked_account AS MATERIALIZED (
   FROM media parent
   WHERE parent.workspace_id = sqlc.arg(workspace_id)
     AND parent.id = ANY(sqlc.arg(media_ids)::text[])
-    AND parent.status = 'uploaded'
+    -- Must match UpsertMediaPostUsage: 'attached' is live and retainable.
+    -- Rejecting it here surfaced a bogus "re-upload required" to the user.
+    AND parent.status IN ('uploaded', 'attached')
     AND EXISTS (SELECT 1 FROM policy_admission)
   ORDER BY parent.id
   FOR UPDATE OF parent
@@ -514,7 +516,8 @@ WITH eligible_job AS MATERIALIZED (
   JOIN eligible_job ON eligible_job.workspace_id = parent.workspace_id
   WHERE eligible_job.result_status <> 'published'
     AND parent.id = ANY(sqlc.arg('media_ids')::text[])
-    AND parent.status = 'uploaded'
+    -- Must match UpsertMediaPostUsage: 'attached' is live and retainable.
+    AND parent.status IN ('uploaded', 'attached')
   ORDER BY parent.id
   FOR UPDATE OF parent
 ), all_media_available AS MATERIALIZED (

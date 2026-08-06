@@ -60,6 +60,60 @@ type socialAccountResponse struct {
 	ExternalUserID    *string   `json:"external_user_id,omitempty"`
 	ExternalUserEmail *string   `json:"external_user_email,omitempty"`
 	Scope             []string  `json:"scope,omitempty"`
+	// Explicit identity fields (2026-07-31 TikTok identity accuracy PRD).
+	// username is the verified provider handle; display_name is the editable
+	// profile name. Both are additive and nullable. For TikTok, username is
+	// only returned from identity-schema-v2 rows (post-fix fetch); legacy rows
+	// return null plus identity_refresh_required=true because their stored
+	// metadata duplicated the display name into the username slot.
+	Username                *string    `json:"username"`
+	DisplayName             *string    `json:"display_name"`
+	IdentityRefreshRequired bool       `json:"identity_refresh_required"`
+	LastConnectedAt         *time.Time `json:"last_connected_at"`
+}
+
+// accountIdentityMetadata is the subset of social_accounts.metadata used for
+// the explicit identity fields.
+type accountIdentityMetadata struct {
+	Username                    string `json:"username"`
+	DisplayName                 string `json:"display_name"`
+	UsernameMissing             bool   `json:"username_missing"`
+	TikTokIdentitySchemaVersion int    `json:"tiktok_identity_schema_version"`
+}
+
+// resolveAccountIdentity derives the explicit identity fields from stored
+// metadata. The legacy detector is the explicit schema-version marker, never
+// username/display-name equality: valid TikTok accounts can intentionally use
+// the same value for both fields.
+func resolveAccountIdentity(a db.SocialAccount, status string) (username, displayName *string, refreshRequired bool) {
+	var meta accountIdentityMetadata
+	if len(a.Metadata) > 0 {
+		_ = json.Unmarshal(a.Metadata, &meta)
+	}
+	if meta.DisplayName != "" {
+		displayName = &meta.DisplayName
+	}
+	if a.Platform == "tiktok" {
+		if meta.TikTokIdentitySchemaVersion >= tiktokIdentitySchemaVersion {
+			// Post-fix row: metadata.username is the verified handle. When
+			// TikTok omitted it (username_missing=true) the key is absent and
+			// username stays null without re-prompting a reconnect.
+			if meta.Username != "" {
+				username = &meta.Username
+			}
+			return username, displayName, false
+		}
+		// Legacy row: metadata.username duplicated the display name, so it is
+		// not a verified username. Only active managed rows are prompted to
+		// refresh; disconnected or reconnect-required rows already go through
+		// the reconnect flow that upgrades them to v2.
+		refreshRequired = a.ConnectionType == "managed" && status == "active"
+		return nil, displayName, refreshRequired
+	}
+	if meta.Username != "" {
+		username = &meta.Username
+	}
+	return username, displayName, false
 }
 
 func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAccountResponse {
@@ -89,19 +143,29 @@ func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAc
 	if len(profileName) > 0 {
 		pName = profileName[0]
 	}
+	username, displayName, refreshRequired := resolveAccountIdentity(a, status)
+	var lastConnectedAt *time.Time
+	if a.LastConnectedAt.Valid {
+		t := a.LastConnectedAt.Time
+		lastConnectedAt = &t
+	}
 	return socialAccountResponse{
-		ID:                a.ID,
-		ProfileID:         a.ProfileID,
-		ProfileName:       pName,
-		Platform:          a.Platform,
-		AccountName:       name,
-		ExternalAccountID: a.ExternalAccountID,
-		ConnectedAt:       a.ConnectedAt.Time,
-		Status:            status,
-		ConnectionType:    a.ConnectionType,
-		ExternalUserID:    extUserID,
-		ExternalUserEmail: extUserEmail,
-		Scope:             a.Scope,
+		ID:                      a.ID,
+		ProfileID:               a.ProfileID,
+		ProfileName:             pName,
+		Platform:                a.Platform,
+		AccountName:             name,
+		ExternalAccountID:       a.ExternalAccountID,
+		ConnectedAt:             a.ConnectedAt.Time,
+		Status:                  status,
+		ConnectionType:          a.ConnectionType,
+		ExternalUserID:          extUserID,
+		ExternalUserEmail:       extUserEmail,
+		Scope:                   a.Scope,
+		Username:                username,
+		DisplayName:             displayName,
+		IdentityRefreshRequired: refreshRequired,
+		LastConnectedAt:         lastConnectedAt,
 	}
 }
 

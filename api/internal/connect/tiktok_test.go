@@ -92,15 +92,17 @@ func TestTikTokExchangeCode_HappyPath(t *testing.T) {
 	}
 }
 
-func TestTikTokFetchProfile(t *testing.T) {
+func TestTikTokFetchProfileKeepsUsernameAndDisplayNameDistinct(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer AT-1" {
 			t.Errorf("auth header: got %q", r.Header.Get("Authorization"))
 		}
-		if !strings.Contains(r.URL.RawQuery, "fields=open_id%2Cdisplay_name%2Cavatar_url") {
+		// The User Info request must ask TikTok for the stable username in
+		// addition to the editable display name (incident: robyn6608 vs Robyn).
+		if !strings.Contains(r.URL.RawQuery, "fields=open_id%2Cusername%2Cdisplay_name%2Cavatar_url") {
 			t.Errorf("query: %q", r.URL.RawQuery)
 		}
-		_, _ = io.WriteString(w, `{"data":{"user":{"open_id":"open-123","display_name":"TailTales","avatar_url":"https://example.com/avatar.jpg"}},"error":{"code":"ok"}}`)
+		_, _ = io.WriteString(w, `{"data":{"user":{"open_id":"open-123","username":"robyn6608","display_name":"Robyn","avatar_url":"https://example.com/avatar.jpg"}},"error":{"code":"ok"}}`)
 	}))
 	defer mock.Close()
 
@@ -111,8 +113,51 @@ func TestTikTokFetchProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchProfile: %v", err)
 	}
-	if p.ExternalAccountID != "open-123" || p.Username != "TailTales" || p.AvatarURL == "" {
+	if p.ExternalAccountID != "open-123" || p.AvatarURL == "" {
 		t.Errorf("profile: %+v", p)
+	}
+	if p.Username != "robyn6608" {
+		t.Errorf("Username must be the TikTok username, got %q", p.Username)
+	}
+	if p.DisplayName != "Robyn" {
+		t.Errorf("DisplayName must be the TikTok display name, got %q", p.DisplayName)
+	}
+}
+
+func TestTikTokFetchProfileMissingUsernameLeavesUsernameEmpty(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"data":{"user":{"open_id":"open-123","display_name":"Robyn","avatar_url":"https://example.com/avatar.jpg"}},"error":{"code":"ok"}}`)
+	}))
+	defer mock.Close()
+
+	c := NewTikTokConnector("c", "s", "https://api.example.com")
+	c.UserInfoEndpoint = mock.URL
+
+	p, err := c.FetchProfile(context.Background(), "AT-1")
+	if err != nil {
+		t.Fatalf("FetchProfile: %v", err)
+	}
+	// The connector must not fabricate a username from the display name; the
+	// shared callback handles the customer-facing display-name fallback.
+	if p.Username != "" {
+		t.Errorf("Username must stay empty when TikTok omits it, got %q", p.Username)
+	}
+	if p.DisplayName != "Robyn" {
+		t.Errorf("DisplayName: got %q", p.DisplayName)
+	}
+}
+
+func TestTikTokFetchProfileEmptyOpenIDFailsClosed(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"data":{"user":{"username":"robyn6608","display_name":"Robyn"}},"error":{"code":"ok"}}`)
+	}))
+	defer mock.Close()
+
+	c := NewTikTokConnector("c", "s", "https://api.example.com")
+	c.UserInfoEndpoint = mock.URL
+
+	if _, err := c.FetchProfile(context.Background(), "AT-1"); err == nil {
+		t.Fatal("expected empty open_id to fail closed")
 	}
 }
 
