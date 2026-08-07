@@ -114,7 +114,15 @@ func (d threadsContainerDiagnostics) format() string {
 // waitForContainer polls a Threads container until it is publishable, fails,
 // or the budget runs out. Only FINISHED — or the bounded grace above —
 // authorizes threads_publish.
-func (a *ThreadsAdapter) waitForContainer(ctx context.Context, accessToken, containerID string, origin MediaOrigin) (outcome threadsContainerOutcome, err error) {
+func (a *ThreadsAdapter) waitForContainer(ctx context.Context, accessToken, containerID string, origin MediaOrigin) (threadsContainerOutcome, error) {
+	return a.waitForContainerUntil(ctx, accessToken, containerID, origin, time.Now().Add(threadsContainerPollBudget))
+}
+
+// waitForContainerUntil is waitForContainer with a caller-supplied deadline so
+// a set of containers can share one budget instead of each getting a fresh
+// one. Carousel children need this: N children with independent budgets would
+// allow N times the intended worst-case wait.
+func (a *ThreadsAdapter) waitForContainerUntil(ctx context.Context, accessToken, containerID string, origin MediaOrigin, deadline time.Time) (outcome threadsContainerOutcome, err error) {
 	start := time.Now()
 	diag := threadsContainerDiagnostics{containerID: containerID, mediaOrigin: origin}
 	unknownStatusStreak := 0
@@ -181,7 +189,7 @@ func (a *ThreadsAdapter) waitForContainer(ctx context.Context, accessToken, cont
 			}
 		}
 
-		if time.Since(start)+threadsContainerPollInterval > threadsContainerPollBudget {
+		if time.Now().Add(threadsContainerPollInterval).After(deadline) {
 			diag.elapsed = time.Since(start)
 			return threadsContainerOutcome{}, newProviderFailure(
 				"Threads is still processing this media. It will be retried. "+diag.format(),
@@ -621,11 +629,21 @@ func (a *ThreadsAdapter) createCarouselContainer(ctx context.Context, accessToke
 		}
 		childIDs = append(childIDs, id)
 	}
-	// No fixed wait before assembling the parent. The parent container is the
-	// publishable object and its own status is the authoritative readiness
-	// gate, so the caller's waitForContainer covers what this sleep guessed
-	// at. If parent creation is ever observed rejecting in-progress children,
-	// that needs child batch polling with its own budget, not a sleep.
+
+	// Children must be ready before the parent references them. Threads
+	// rejects an in-progress child with code 100 / subcode 4279004,
+	// "The children with IDs ... are invalid, nonexistent, or expired" —
+	// observed on dev the moment the previous fixed 5-second sleep was
+	// removed. The fix is to observe readiness, not to guess at it again:
+	// poll each child, sharing one deadline so N children cannot multiply
+	// the intended worst-case wait.
+	childDeadline := time.Now().Add(threadsContainerPollBudget)
+	for _, id := range childIDs {
+		if _, err := a.waitForContainerUntil(ctx, accessToken, id, MediaOriginManaged, childDeadline); err != nil {
+			return "", fmt.Errorf("threads carousel child %s not ready: %w", id, err)
+		}
+	}
+
 	params := url.Values{
 		"access_token": {accessToken},
 		"text":         {text},
@@ -649,7 +667,21 @@ func (a *ThreadsAdapter) postContainer(ctx context.Context, userID string, param
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("container creation failed (%d): %s", resp.StatusCode, string(body))
+		text := string(body)
+		// Subcode 4279004 ("Invalid Carousel Children") means a referenced
+		// child was not usable when the parent was assembled. Children are
+		// polled to FINISHED before this call, but one can still expire in
+		// the gap, and rebuilding the set on a retry fixes it. Without this
+		// it lands as platform_error / contact_support, which tells the
+		// customer to open a ticket for something a retry resolves.
+		if strings.Contains(text, `"error_subcode":4279004`) || strings.Contains(text, `"error_subcode": 4279004`) {
+			return "", newProviderFailure(
+				fmt.Sprintf("threads carousel children were not usable (%d): %s", resp.StatusCode, truncateForLog(text, 1000)),
+				map[string]any{"provider": "meta", "http_status": resp.StatusCode, "code": "100", "subcode": "4279004"},
+				FailureContract{ErrorCode: "temporary_platform_error", Stage: "container_processing", IsRetriable: true},
+			)
+		}
+		return "", fmt.Errorf("container creation failed (%d): %s", resp.StatusCode, text)
 	}
 
 	var container struct {

@@ -206,6 +206,9 @@ type threadsScriptedTransport struct {
 	publishCalls   int
 	containerCalls int
 	lastPublishURL string
+	// sequence records the order of provider operations so a test can assert
+	// that children are ready before the parent references them.
+	sequence []string
 }
 
 func (t *threadsScriptedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -221,6 +224,7 @@ func (t *threadsScriptedTransport) RoundTrip(req *http.Request) (*http.Response,
 	switch {
 	case strings.Contains(path, "threads_publish"):
 		t.publishCalls++
+		t.sequence = append(t.sequence, "publish")
 		t.lastPublishURL = req.URL.String()
 		code := t.publishCode
 		if code == 0 {
@@ -233,6 +237,13 @@ func (t *threadsScriptedTransport) RoundTrip(req *http.Request) (*http.Response,
 		return respond(code, body)
 	case strings.HasSuffix(path, "/threads"):
 		t.containerCalls++
+		kind := "create"
+		if strings.Contains(req.URL.RawQuery, "CAROUSEL") {
+			kind = "create_parent"
+		} else if strings.Contains(req.URL.RawQuery, "is_carousel_item") {
+			kind = "create_child"
+		}
+		t.sequence = append(t.sequence, kind)
 		id := "container_new"
 		if t.containerIdx < len(t.containerIDs) {
 			id = t.containerIDs[t.containerIdx]
@@ -242,6 +253,7 @@ func (t *threadsScriptedTransport) RoundTrip(req *http.Request) (*http.Response,
 	case strings.Contains(req.URL.RawQuery, "fields=id%2Cstatus%2Cerror_message"),
 		strings.Contains(req.URL.RawQuery, "fields=id,status,error_message"):
 		t.statusCalls++
+		t.sequence = append(t.sequence, "status")
 		code := http.StatusOK
 		if t.statusIdx < len(t.statusCodes) {
 			code = t.statusCodes[t.statusIdx]
@@ -637,10 +649,15 @@ func TestThreadsResumeUnknownStatusCreatesFreshContainer(t *testing.T) {
 	}
 }
 
-func TestThreadsCarouselWaitsOnParentContainer(t *testing.T) {
+// Removing the old fixed 5-second child sleep made Threads reject the parent
+// with code 100 / subcode 4279004, "The children with IDs ... are invalid,
+// nonexistent, or expired" — reproduced on dev. Children must be observed
+// ready before the parent references them, and the parent still gets its own
+// readiness gate afterwards.
+func TestThreadsCarouselWaitsForChildrenBeforeBuildingParent(t *testing.T) {
 	withFastThreadsPolling(t, time.Second)
 	tr := &threadsScriptedTransport{
-		statuses:     []string{`{"status":"IN_PROGRESS"}`, `{"status":"FINISHED"}`},
+		statuses:     []string{`{"status":"FINISHED"}`},
 		containerIDs: []string{"child_1", "child_2", "parent_1"},
 	}
 	adapter := newThreadsAdapterScripted(tr)
@@ -652,15 +669,58 @@ func TestThreadsCarouselWaitsOnParentContainer(t *testing.T) {
 	}, sink.opts()); err != nil {
 		t.Fatalf("Post: %v", err)
 	}
-	if tr.containerCalls != 3 {
-		t.Errorf("container creations = %d, want 2 children + 1 parent", tr.containerCalls)
+
+	want := []string{
+		"create_child", "create_child", // both children first
+		"status", "status", // each child observed ready
+		"create_parent", // only then is the parent assembled
+		"status",        // parent gets its own readiness gate
+		"publish",
+	}
+	if len(tr.sequence) != len(want) {
+		t.Fatalf("sequence = %v, want %v", tr.sequence, want)
+	}
+	for i := range want {
+		if tr.sequence[i] != want[i] {
+			t.Fatalf("sequence = %v, want %v", tr.sequence, want)
+		}
 	}
 	// Only the parent is resumable; children are cheap to recreate.
 	if len(sink.tokens) != 1 || sink.tokens[0] != "parent_1" {
 		t.Fatalf("persisted tokens = %v, want only the parent", sink.tokens)
 	}
-	if tr.statusCalls != 2 || tr.publishCalls != 1 {
-		t.Errorf("status/publish = %d/%d, want 2/1", tr.statusCalls, tr.publishCalls)
+}
+
+// Children share one deadline, so N children cannot multiply the intended
+// worst-case wait into N budgets.
+func TestThreadsCarouselChildrenShareOnePollBudget(t *testing.T) {
+	withFastThreadsPolling(t, 40*time.Millisecond)
+	tr := &threadsScriptedTransport{
+		statuses:     []string{`{"status":"IN_PROGRESS"}`},
+		containerIDs: []string{"child_1", "child_2", "child_3", "parent_1"},
+	}
+	adapter := newThreadsAdapterScripted(tr)
+
+	start := time.Now()
+	_, err := adapter.Post(context.Background(), "threads-secret-token", "c", []MediaItem{
+		{URL: "https://e.com/a.jpg", Kind: MediaKindImage},
+		{URL: "https://e.com/b.jpg", Kind: MediaKindImage},
+		{URL: "https://e.com/c.jpg", Kind: MediaKindImage},
+	}, nil)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected the shared budget to expire")
+	}
+	if !strings.Contains(err.Error(), "carousel child") {
+		t.Errorf("error = %q, want carousel child context", err.Error())
+	}
+	// Three children with independent budgets would take ~3x the budget.
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("elapsed %s suggests per-child budgets rather than a shared one", elapsed)
+	}
+	if tr.publishCalls != 0 {
+		t.Errorf("publish calls = %d, want 0", tr.publishCalls)
 	}
 }
 
