@@ -103,6 +103,15 @@ func Classify(raw string) Classification {
 		c.ErrorCode = "account_reconnect_required"
 	case strings.Contains(s, "threads get user id failed") && strings.Contains(s, "(403)"):
 		c.ErrorCode = "missing_permission"
+	case strings.Contains(s, "threads publish failed") && extractMetaSubcode(raw) == "4279009":
+		// Fallback for the Threads publish boundary. The adapter types this
+		// failure directly, so this rule only serves paths that carry no
+		// typed contract: DeriveLegacyContract reclassifying historical rows,
+		// and any future Threads call site returning a bare error. Meta's
+		// is_transient=false does not hold here — the container simply is not
+		// resolvable yet, and a later attempt succeeds.
+		c.ErrorCode = "temporary_platform_error"
+		c.IsRetriable = true
 	case strings.Contains(s, "instagram container processing failed") && strings.Contains(s, "status_code=error"):
 		c.ErrorCode = "media_error"
 	case strings.Contains(s, "container processing failed") || strings.Contains(s, "container processing timed out"):

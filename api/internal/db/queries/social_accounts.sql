@@ -381,6 +381,29 @@ SET status = 'reconnect_required',
 WHERE id = $1
   AND status = 'active';
 
+-- name: MarkSocialAccountReconnectRequiredForAttempt :execrows
+-- Same as MarkSocialAccountReconnectRequired, but refuses to act on an auth
+-- failure that a newer reconnect has already superseded.
+--
+-- A delivery job holds the token it loaded when the job was claimed. If the
+-- customer reconnects while that request is still in flight,
+-- ReactivateSocialAccount flips the row back to 'active' and stamps
+-- last_connected_at. The in-flight request then returns the old token's
+-- auth failure, and an unguarded mark would undo the repair and block a
+-- working account until the customer reconnected a second time.
+--
+-- attempt_started_at is the delivery attempt's start (job.last_attempt_at).
+-- A reconnect at or before that point belongs to this attempt's token, so the
+-- failure is authoritative; a reconnect after it supersedes this failure.
+-- last_connected_at is NULL for accounts connected before migration 137 —
+-- those predate any reconnect we could be racing with, so they still mark.
+UPDATE social_accounts
+SET status = 'reconnect_required',
+    metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('reconnect_required_at', NOW()::TEXT)
+WHERE id = @id
+  AND status = 'active'
+  AND (last_connected_at IS NULL OR last_connected_at <= @attempt_started_at::timestamptz);
+
 -- name: SetInstagramWebhookUserID :execrows
 UPDATE social_accounts
 SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('instagram_webhook_user_id', @instagram_webhook_user_id::TEXT)

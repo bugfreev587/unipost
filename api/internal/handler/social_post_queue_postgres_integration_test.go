@@ -5099,3 +5099,140 @@ func TestRestrictedFinalizationPublishesParentTerminalEventExactlyOnce(t *testin
 		})
 	}
 }
+
+// A delivery job dispatches with the token it loaded when the job was claimed.
+// If the customer completes a reconnect while that request is still in flight,
+// ReactivateSocialAccount flips the row back to 'active' and stamps
+// last_connected_at. The stale auth failure that returns afterwards must not
+// undo that repair — otherwise a working account is blocked again and the
+// customer has to reconnect a second time.
+func TestDispatchFailureReconnectRaceDoesNotReblockRepairedAccount(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	attemptStartedAt := time.Date(2026, 8, 6, 4, 20, 0, 0, time.UTC)
+
+	tests := []struct {
+		name            string
+		suffix          string
+		lastConnectedAt time.Time
+		wantStatus      string
+		wantMarkedStamp bool
+	}{
+		{
+			name:            "reconnect after the attempt started keeps the account active",
+			suffix:          "race_won",
+			lastConnectedAt: attemptStartedAt.Add(30 * time.Second),
+			wantStatus:      "active",
+			wantMarkedStamp: false,
+		},
+		{
+			name:            "reconnect before the attempt still marks a genuine failure",
+			suffix:          "race_lost",
+			lastConnectedAt: attemptStartedAt.Add(-time.Hour),
+			wantStatus:      "reconnect_required",
+			wantMarkedStamp: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			postID := "post_reconnect_" + tc.suffix
+			resultID := "result_reconnect_" + tc.suffix
+			jobID := "job_reconnect_" + tc.suffix
+			accountID := "account_reconnect_" + tc.suffix
+			workspaceID := "workspace_reconnect_" + tc.suffix
+
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO profiles (id, workspace_id) VALUES ($1, $2)
+			`, "profile_"+tc.suffix, workspaceID); err != nil {
+				t.Fatal(err)
+			}
+			// The account is 'active' at the moment the failure lands: either
+			// it never broke, or the customer already repaired it mid-flight.
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO social_accounts (id, profile_id, platform, status, account_name, last_connected_at)
+				VALUES ($1, $2, 'pinterest', 'active', 'race account', $3)
+			`, accountID, "profile_"+tc.suffix, tc.lastConnectedAt); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO social_posts (id, status, workspace_id) VALUES ($1, 'publishing', $2)
+			`, postID, workspaceID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO social_post_results (id, post_id, social_account_id, status)
+				VALUES ($1, $2, $3, 'processing')
+			`, resultID, postID, accountID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO post_delivery_jobs (
+					id, post_id, social_post_result_id, workspace_id, social_account_id,
+					platform, kind, state, attempts, max_attempts, lease_owner, last_attempt_at
+				) VALUES ($1, $2, $3, $4, $5, 'pinterest', 'dispatch', 'running', 1, 3, 'race_owner', $6)
+			`, jobID, postID, resultID, workspaceID, accountID, attemptStartedAt); err != nil {
+				t.Fatal(err)
+			}
+
+			queries := db.New(pool)
+			job, err := queries.GetPostDeliveryJobByIDAndWorkspace(ctx, db.GetPostDeliveryJobByIDAndWorkspaceParams{
+				ID: jobID, WorkspaceID: workspaceID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			post, err := queries.GetSocialPostByID(ctx, postID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := db.SocialPostResult{
+				ID: resultID, PostID: postID, SocialAccountID: accountID, Status: "processing",
+			}
+
+			h := NewSocialPostHandler(queries, nil, nil, events.NoopBus{}, nil, nil, nil)
+			staleAuthFailure := typedFailureStageTestError{
+				message:     "Pinterest rejected this connection. Reconnect the account, then try again.",
+				stage:       "dispatch",
+				errorCode:   "auth_token_invalid",
+				isRetriable: false,
+				provider:    map[string]any{"provider": "pinterest", "http_status": 401, "code": "3", "reason": "token_invalid"},
+			}
+			if err := h.handleJobDispatchFailure(ctx, post, result, job, publishOneOutcome{
+				platform: "pinterest", err: staleAuthFailure,
+			}); err != nil {
+				t.Fatalf("handleJobDispatchFailure: %v", err)
+			}
+
+			var status string
+			var markedStamp pgtype.Text
+			if err := pool.QueryRow(ctx, `
+				SELECT status, metadata->>'reconnect_required_at' FROM social_accounts WHERE id = $1
+			`, accountID).Scan(&status, &markedStamp); err != nil {
+				t.Fatal(err)
+			}
+			if status != tc.wantStatus {
+				t.Fatalf("account status = %q, want %q (last_connected_at=%s, attempt=%s)",
+					status, tc.wantStatus, tc.lastConnectedAt, attemptStartedAt)
+			}
+			if markedStamp.Valid != tc.wantMarkedStamp {
+				t.Fatalf("reconnect_required_at set = %v, want %v", markedStamp.Valid, tc.wantMarkedStamp)
+			}
+
+			// The failure itself is always recorded — only the account-level
+			// mark is suppressed by the guard.
+			var failureCode string
+			if err := pool.QueryRow(ctx, `
+				SELECT error_code FROM post_failures WHERE post_id = $1
+			`, postID).Scan(&failureCode); err != nil {
+				t.Fatal(err)
+			}
+			if failureCode != "auth_token_invalid" {
+				t.Fatalf("recorded failure code = %q, want auth_token_invalid", failureCode)
+			}
+		})
+	}
+}

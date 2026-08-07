@@ -299,6 +299,10 @@ func DefaultPostDeliveryWorkerConfigFromEnv() PostDeliveryWorkerConfig {
 			"instagram": envInt("POST_DELIVERY_PLATFORM_CAP_INSTAGRAM", 3),
 			"tiktok":    envInt("POST_DELIVERY_PLATFORM_CAP_TIKTOK", 3),
 			"twitter":   envInt("POST_DELIVERY_PLATFORM_CAP_TWITTER", 5),
+			// Threads container polling can hold a slot for up to five
+			// minutes, so a burst of stuck containers would otherwise be able
+			// to consume every global worker slot.
+			"threads": envInt("POST_DELIVERY_PLATFORM_CAP_THREADS", 3),
 		},
 	})
 }

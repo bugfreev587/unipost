@@ -387,3 +387,19 @@ func waitStarted(t *testing.T, started <-chan string) string {
 		return ""
 	}
 }
+
+// Threads container polling can hold a delivery slot for up to five minutes,
+// so it needs its own cap or a burst of stuck containers can starve every
+// other platform out of the global pool.
+func TestDefaultPostDeliveryWorkerConfigCapsThreads(t *testing.T) {
+	t.Setenv("POST_DELIVERY_PLATFORM_CAP_THREADS", "")
+	config := DefaultPostDeliveryWorkerConfigFromEnv()
+	if got := config.PlatformConcurrencyCaps["threads"]; got != 3 {
+		t.Fatalf("threads cap = %d, want the default 3", got)
+	}
+
+	t.Setenv("POST_DELIVERY_PLATFORM_CAP_THREADS", "7")
+	if got := DefaultPostDeliveryWorkerConfigFromEnv().PlatformConcurrencyCaps["threads"]; got != 7 {
+		t.Fatalf("threads cap = %d, want the override 7", got)
+	}
+}
