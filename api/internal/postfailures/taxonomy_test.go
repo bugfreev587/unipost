@@ -511,3 +511,105 @@ func TestBuildParamsFromErrorLeavesNonContractProviderErrorsUnchanged(t *testing
 		t.Fatalf("wrapping changed non-contract classification: %#v vs %#v", direct, wrapped)
 	}
 }
+
+// The adapter types this failure directly; this fallback covers paths that
+// carry no typed contract, such as DeriveLegacyContract over historical rows.
+func TestClassifyThreadsPublish4279009Fallback(t *testing.T) {
+	raw := `threads publish failed (400): {"error":{"message":"The requested resource does not exist",` +
+		`"type":"OAuthException","code":24,"error_subcode":4279009,"is_transient":false,` +
+		`"error_user_title":"Media Not Found","error_user_msg":"The media with id 18077125565432112 cannot be found.",` +
+		`"fbtrace_id":"At_yhpnIn7TJKEuMRxVnm3P"}}`
+
+	c := Classify(raw)
+	if c.ErrorCode != "temporary_platform_error" {
+		t.Errorf("error_code = %q, want temporary_platform_error", c.ErrorCode)
+	}
+	if !c.IsRetriable {
+		t.Error("is_retriable = false, want true — the container simply is not resolvable yet")
+	}
+	if c.ErrorTemporality != ErrorTemporalityTemporary {
+		t.Errorf("error_temporality = %q, want temporary", c.ErrorTemporality)
+	}
+	if c.ErrorSource != ErrorSourcePlatform {
+		t.Errorf("error_source = %q, want platform", c.ErrorSource)
+	}
+	if NextActionForErrorCode(c.ErrorCode) != "retry_later" {
+		t.Errorf("next_action = %q, want retry_later", NextActionForErrorCode(c.ErrorCode))
+	}
+	// The contract deliberately keeps the top-level Meta code in
+	// platform_error_code and the subcode in provider_error.
+	if c.PlatformErrorCode != "24" {
+		t.Errorf("platform_error_code = %q, want 24", c.PlatformErrorCode)
+	}
+	if c.ProviderError == nil || c.ProviderError.Code != "24" || c.ProviderError.Subcode != "4279009" {
+		t.Errorf("provider_error = %#v, want code 24 / subcode 4279009", c.ProviderError)
+	}
+}
+
+// The override is scoped to the Threads publish boundary. An equivalent Meta
+// payload from another adapter must keep its previous classification.
+func TestClassifyMediaNotFoundOutsideThreadsPublishIsNotReclassified(t *testing.T) {
+	raw := `instagram publish failed (400): {"error":{"message":"The requested resource does not exist",` +
+		`"type":"OAuthException","code":24,"error_subcode":4279009,"is_transient":false}}`
+
+	c := Classify(raw)
+	if c.ErrorCode == "temporary_platform_error" && c.IsRetriable {
+		t.Fatalf("non-Threads media-not-found inherited the Threads override: %#v", c)
+	}
+}
+
+func TestClassifyThreadsContainerFailuresUseTypedContract(t *testing.T) {
+	tests := []struct {
+		name      string
+		errorCode string
+		retriable bool
+		raw       string
+	}{
+		{
+			name:      "permanent media validation is not swallowed by the generic container rule",
+			errorCode: "media_error",
+			retriable: false,
+			raw:       "Threads rejected this media: INVALID_DURATION. container_id=1 poll_count=1 elapsed_ms=5 status=ERROR error_message=INVALID_DURATION",
+		},
+		{
+			name:      "provider processing failure is not swallowed by the generic media rule",
+			errorCode: "temporary_platform_error",
+			retriable: true,
+			raw:       "Threads could not process this media yet. container_id=1 poll_count=1 elapsed_ms=5 status=ERROR error_message=FAILED_PROCESSING_VIDEO",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := typedContainerFailureForTest(tt.errorCode, tt.retriable, tt.raw)
+			c := classifyError(tt.raw, err)
+			if c.ErrorCode != tt.errorCode {
+				t.Errorf("error_code = %q, want %q", c.ErrorCode, tt.errorCode)
+			}
+			if c.IsRetriable != tt.retriable {
+				t.Errorf("is_retriable = %v, want %v", c.IsRetriable, tt.retriable)
+			}
+		})
+	}
+}
+
+type typedContainerFailure struct {
+	message   string
+	errorCode string
+	retriable bool
+}
+
+func (e typedContainerFailure) Error() string { return e.message }
+func (e typedContainerFailure) FailureContractFields() map[string]any {
+	return map[string]any{
+		"error_code":    e.errorCode,
+		"failure_stage": "container_processing",
+		"is_retriable":  e.retriable,
+	}
+}
+func (e typedContainerFailure) ProviderErrorFields() map[string]any {
+	return map[string]any{"provider": "meta"}
+}
+
+func typedContainerFailureForTest(errorCode string, retriable bool, message string) error {
+	return typedContainerFailure{message: message, errorCode: errorCode, retriable: retriable}
+}
