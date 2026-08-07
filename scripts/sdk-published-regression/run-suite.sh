@@ -19,7 +19,22 @@ TEST_PLATFORM_CREDENTIALS_PLATFORM="${TEST_PLATFORM_CREDENTIALS_PLATFORM:-}"
 JS_SDK_SPEC="${JS_SDK_SPEC:-@unipost/sdk@latest}"
 PYTHON_SDK_SPEC="${PYTHON_SDK_SPEC:-unipost}"
 GO_SDK_SPEC="${GO_SDK_SPEC:-github.com/unipost-dev/sdk-go@latest}"
-JAVA_SDK_VERSION="${JAVA_SDK_VERSION:-0.4.0}"
+# JS and Go track @latest, so a new SDK release reaches this suite on its own.
+# Maven has no @latest coordinate, so Java resolved a hardcoded version and
+# silently stayed four releases behind: 0.7.0 shipped the X account read
+# surface on 2026-07-31, the pin stayed at 0.4.0, and when the validator
+# started exercising that surface the job stopped compiling. Read the current
+# release from Maven Central so Java behaves like the others, and fall back to
+# a known-good floor if the metadata is unreachable.
+JAVA_SDK_VERSION="${JAVA_SDK_VERSION:-}"
+if [[ -z "$JAVA_SDK_VERSION" ]]; then
+  JAVA_SDK_VERSION="$(
+    curl -fsSL --max-time 30 \
+      https://repo1.maven.org/maven2/dev/unipost/sdk-java/maven-metadata.xml 2>/dev/null |
+      sed -n 's:.*<release>\(.*\)</release>.*:\1:p' | head -n 1
+  )"
+fi
+JAVA_SDK_VERSION="${JAVA_SDK_VERSION:-0.7.0}"
 export TEST_PLATFORM_CREDENTIALS_PLATFORM
 
 if [[ -z "$UNIPOST_API_KEY" ]]; then
