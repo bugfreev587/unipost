@@ -1202,7 +1202,9 @@ func (h *SocialPostHandler) logPlatformDispatchEvents(ctx context.Context, post 
 			integrationlogs.ActionPinterestDestinationPreflightFailed,
 			integrationlogs.ActionPinterestCreatePinFailed,
 			integrationlogs.ActionPinterestMediaPreflightFailed,
-			integrationlogs.ActionPinterestMediaStaged:
+			integrationlogs.ActionPinterestMediaStaged,
+			integrationlogs.ActionThreadsContainerReady,
+			integrationlogs.ActionThreadsContainerFailed:
 		default:
 			continue
 		}
@@ -1841,6 +1843,63 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 		return nil
 	}
 	h.recordPostFailureDebug(res.ID, post.WorkspaceID, sanitizedDebugCurl)
+	// A token the provider rejects at dispatch is invisible to the token
+	// refresh worker: that worker only marks accounts whose *refresh* fails,
+	// so a still-unexpired but no-longer-authorised token (scope removed,
+	// permission revoked, app-level restriction) leaves the account sitting
+	// at status='active' while every delivery keeps failing the same way.
+	// The customer sees next_action=reconnect_account on the result but gets
+	// no reconnect prompt on the account itself. Mark it here so the account
+	// state matches the contract the result already reports.
+	//
+	// Deliberately after the transaction: the mark touches social_accounts, and
+	// we don't want that row lock inside the delivery finalization transaction.
+	// failureApplied above guarantees this owner actually recorded the failure,
+	// so a lost lease can't mark here.
+	//
+	// The mark is guarded on the attempt start rather than issued blindly. This
+	// job dispatched with the token it loaded at claim time; if the customer
+	// reconnected while the request was in flight, that repair must win over
+	// this now-stale failure. See MarkSocialAccountReconnectRequiredForAttempt.
+	if postFailureShouldMarkReconnectRequired(failure) {
+		attemptStartedAt := job.LastAttemptAt
+		if !attemptStartedAt.Valid {
+			// Unclaimed job shouldn't reach here; fall back to "now" so the
+			// guard degrades to the unguarded behaviour instead of silently
+			// skipping a legitimate mark.
+			attemptStartedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		}
+		rows, err := h.queries.MarkSocialAccountReconnectRequiredForAttempt(ctx, db.MarkSocialAccountReconnectRequiredForAttemptParams{
+			ID:               failure.SocialAccountID.String,
+			AttemptStartedAt: attemptStartedAt,
+		})
+		switch {
+		case err != nil:
+			slog.Warn("failed to mark social account reconnect required after dispatch failure",
+				"post_id", post.ID,
+				"job_id", job.ID,
+				"account_id", failure.SocialAccountID.String,
+				"platform", failure.Platform,
+				"error", err)
+		case rows > 0:
+			slog.Info("marked social account reconnect required after dispatch failure",
+				"post_id", post.ID,
+				"job_id", job.ID,
+				"account_id", failure.SocialAccountID.String,
+				"platform", failure.Platform,
+				"error_code", failure.ErrorCode)
+		default:
+			// Either the account was already non-active, or it was reconnected
+			// after this attempt started and the guard correctly declined.
+			slog.Info("skipped reconnect mark for superseded dispatch failure",
+				"post_id", post.ID,
+				"job_id", job.ID,
+				"account_id", failure.SocialAccountID.String,
+				"platform", failure.Platform,
+				"error_code", failure.ErrorCode,
+				"attempt_started_at", attemptStartedAt.Time)
+		}
+	}
 	logLevel := integrationlogs.LevelWarn
 	if !failure.IsRetriable || (job.Kind == "retry" && job.Attempts >= job.MaxAttempts) {
 		logLevel = integrationlogs.LevelError
