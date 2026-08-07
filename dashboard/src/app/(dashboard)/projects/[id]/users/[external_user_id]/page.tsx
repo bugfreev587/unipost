@@ -1,25 +1,22 @@
 "use client";
 
-// Sprint 4 PR5: Managed User detail view.
+// Developer → App User detail view (deep link).
 //
-// All accounts for one external_user_id, with per-account status,
-// platform, connection date, and a disconnect button per account.
+// Kept as a bookmarkable/shareable route alongside inline expansion on the
+// App Users list. It fetches its own ManagedUserDetail so it works
+// independently of the list page's in-memory cache, but renders the shared
+// ManagedUserAccounts component so the two entry points cannot drift.
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
+import { getManagedUser, type ManagedUserDetail } from "@/lib/api";
+import { ArrowLeft, Mail, Calendar } from "lucide-react";
 import {
-  getManagedUser,
-  dismissSocialAccount,
-  disconnectSocialAccount,
-  type ManagedUserDetail,
-} from "@/lib/api";
-import { ArrowLeft, Unplug, Mail, Calendar } from "lucide-react";
-import { AccountDestinationIcon } from "@/components/account-destination-icon";
-import { YouTubeChannelIdentity } from "@/components/youtube/youtube-channel-identity";
-import { accountIdentityLabels, TIKTOK_IDENTITY_RECONNECT_GUIDANCE } from "@/lib/account-identity";
-import { ConfirmModal } from "@/components/confirm-modal";
+  ManagedUserAccounts,
+  type ManagedUserAccountsStatus,
+} from "@/components/managed-users/managed-user-accounts";
 
 export default function ManagedUserDetailPage() {
   const { id: profileId, external_user_id: rawExternalUserID } = useParams<{
@@ -29,66 +26,42 @@ export default function ManagedUserDetailPage() {
   const externalUserID = decodeURIComponent(rawExternalUserID);
   const { getToken } = useAuth();
   const [user, setUser] = useState<ManagedUserDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<ManagedUserAccountsStatus>("loading");
   const [error, setError] = useState<string | null>(null);
-  const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
-  const [dismissTarget, setDismissTarget] = useState<string | null>(null);
 
+  // No state is written before the first await: the mount effect below calls
+  // this directly, and a synchronous setState there cascades renders.
   const load = useCallback(async () => {
     try {
       const token = await getToken();
-      if (!token) return;
+      if (!token) {
+        setError("Your session expired. Reload the page and try again.");
+        setStatus("error");
+        return;
+      }
       const res = await getManagedUser(token, profileId, externalUserID);
       setUser(res.data);
+      setError(null);
+      setStatus("ready");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load user");
-    } finally {
-      setLoading(false);
+      setStatus("error");
     }
   }, [getToken, profileId, externalUserID]);
 
   useEffect(() => {
+    // `load` writes no state before its first await, so this is an ordinary
+    // mount fetch rather than the synchronous render cascade the rule targets.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 
-  async function handleDisconnect() {
-    if (!disconnectTarget) return;
-    try {
-      const token = await getToken();
-      if (!token) return;
-      await disconnectSocialAccount(token, profileId, disconnectTarget);
-      setDisconnectTarget(null);
-      load();
-    } catch (err) {
-      console.error("Disconnect failed:", err);
-    }
-  }
-
-  async function handleDismiss() {
-    if (!dismissTarget) return;
-    try {
-      const token = await getToken();
-      if (!token) return;
-      await dismissSocialAccount(token, profileId, dismissTarget);
-      setDismissTarget(null);
-      load();
-    } catch (err) {
-      console.error("Dismiss failed:", err);
-    }
-  }
-
-  if (loading) return <div className="p-8 text-[var(--dmuted)]">Loading…</div>;
-  if (error || !user) {
-    return (
-      <div className="p-8 text-[var(--danger)]">
-        {error || "User not found"}
-        <div className="mt-4">
-          <Link href={`/projects/${profileId}/users`} className="text-sm text-[var(--success)] hover:opacity-80">
-            ← Back to users
-          </Link>
-        </div>
-      </div>
-    );
+  // Retry re-runs the request from a visible loading state. A failed load is
+  // never left cached as a success.
+  function retry() {
+    setStatus("loading");
+    setError(null);
+    load();
   }
 
   return (
@@ -103,118 +76,32 @@ export default function ManagedUserDetailPage() {
 
       <div className="mb-6 rounded-lg border border-[var(--dborder)] bg-[var(--surface)] p-6">
         <h1 className="mb-2 break-all font-mono text-xl text-[var(--dtext)]">
-          {user.external_user_id}
+          {user?.external_user_id || externalUserID}
         </h1>
         <div className="flex flex-wrap gap-4 text-sm text-[var(--dmuted)]">
-          {user.external_user_email && (
+          {user?.external_user_email && (
             <div className="flex items-center gap-1">
               <Mail className="w-3 h-3" />
               {user.external_user_email}
             </div>
           )}
-          <div className="flex items-center gap-1">
-            <Calendar className="w-3 h-3" />
-            {user.account_count} {user.account_count === 1 ? "account" : "accounts"}
-          </div>
+          {user ? (
+            <div className="flex items-center gap-1">
+              <Calendar className="w-3 h-3" />
+              {user.account_count} {user.account_count === 1 ? "account" : "accounts"}
+            </div>
+          ) : null}
         </div>
       </div>
 
       <h2 className="mb-3 text-sm uppercase text-[var(--dmuted)]">Connected accounts</h2>
-      <div className="space-y-3">
-        {user.accounts.map((acc) => (
-          <div
-            key={acc.id}
-            className="flex items-center gap-4 rounded-lg border border-[var(--dborder)] bg-[var(--surface)] p-4"
-          >
-            <div className="flex-1 min-w-0">
-              {acc.platform === "youtube" ? (
-                <YouTubeChannelIdentity account={acc} compact disclosure="Source: YouTube" />
-              ) : (
-                <div className="flex items-center gap-3">
-                  <AccountDestinationIcon platform={acc.platform} size={24} />
-                  <div className="min-w-0">
-                    {(() => {
-                      const identity = accountIdentityLabels(acc);
-                      return (
-                        <>
-                          <div className="truncate font-medium text-[var(--dtext)]">
-                            {identity.primary}
-                            {identity.handle ? (
-                              <span className="ml-1.5 font-normal text-[var(--dmuted)]">{identity.handle}</span>
-                            ) : null}
-                          </div>
-                          <div className="mt-0.5 text-xs text-[var(--dmuted)]">
-                            {acc.platform}
-                          </div>
-                          {identity.identityRefreshRequired ? (
-                            <div data-identity-refresh-guidance className="mt-0.5 text-xs text-[var(--warning)]">
-                              {TIKTOK_IDENTITY_RECONNECT_GUIDANCE}
-                            </div>
-                          ) : null}
-                        </>
-                      );
-                    })()}
-                  </div>
-                </div>
-              )}
-              <div className="mt-1 text-xs text-[var(--dmuted)]">
-                UniPost-managed · {acc.connection_type} ·{" "}
-                {new Date(acc.connected_at).toLocaleDateString()}
-              </div>
-            </div>
-            <div data-unipost-account-status>
-              {acc.status === "active" ? (
-                <span className="rounded px-2 py-1 text-xs text-[var(--success)]" style={{ background: "var(--success-soft)" }}>
-                  Active
-                </span>
-              ) : acc.status === "disconnected" ? (
-                <span className="rounded px-2 py-1 text-xs text-[var(--danger)]" style={{ background: "var(--danger-soft)" }}>
-                  Disconnected
-                </span>
-              ) : (
-                <span className="rounded px-2 py-1 text-xs text-[var(--warning)]" style={{ background: "var(--warning-soft)" }}>
-                  {acc.status}
-                </span>
-              )}
-            </div>
-            {acc.status === "disconnected" ? (
-              <button
-                onClick={() => setDismissTarget(acc.id)}
-                className="px-2 py-1 text-xs text-[var(--dmuted)] hover:text-[var(--dtext)]"
-                title="Dismiss"
-              >
-                Dismiss
-              </button>
-            ) : (
-              <button
-                onClick={() => setDisconnectTarget(acc.id)}
-                className="p-2 text-[var(--dmuted)] hover:text-[var(--danger)]"
-                title="Disconnect"
-              >
-                <Unplug className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <ConfirmModal
-        open={disconnectTarget !== null}
-        title="Disconnect Account"
-        message="Disconnect this account? The end user will need to re-Connect to publish again."
-        confirmLabel="Disconnect"
-        variant="danger"
-        onConfirm={handleDisconnect}
-        onCancel={() => setDisconnectTarget(null)}
-      />
-
-      <ConfirmModal
-        open={dismissTarget !== null}
-        title="Dismiss Disconnected Account"
-        message="Hide this disconnected account from Developer App Users permanently? Historical data will be kept, but this account will no longer appear in these dashboard views."
-        confirmLabel="Dismiss"
-        onConfirm={handleDismiss}
-        onCancel={() => setDismissTarget(null)}
+      <ManagedUserAccounts
+        profileId={profileId}
+        status={status}
+        accounts={user?.accounts ?? []}
+        errorMessage={error}
+        onRetry={retry}
+        onMutated={load}
       />
     </div>
   );

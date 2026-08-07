@@ -2401,12 +2401,12 @@ export interface ManagedUserListEntry {
   external_user_id: string;
   external_user_email?: string;
   account_count: number;
-  platform_counts: {
-    twitter: number;
-    linkedin: number;
-    bluesky: number;
-    youtube: number;
-  };
+  // One entry per supported Connect platform, including zero counts. Typed
+  // from ConnectSessionPlatform rather than a hand-maintained subset: the
+  // original four-platform shape hid TikTok/Instagram/Threads/Facebook/
+  // Pinterest accounts from the App Users list even though account_count
+  // included them.
+  platform_counts: Record<ConnectSessionPlatform, number>;
   reconnect_count: number;
   disconnected_count: number;
   first_connected_at: string;
