@@ -181,8 +181,11 @@ func TestPaidScheduleEditDeltasUsesPersistedSnapshotForReschedule(t *testing.T) 
 }
 
 func TestReschedulePostPlansAndMutatesInsidePaidCoordinator(t *testing.T) {
-	oldTime := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	newTime := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
+	oldTime := time.Date(now.Year(), now.Month()+1, 1, 12, 0, 0, 0, time.UTC)
+	newTime := oldTime.AddDate(0, 1, 0)
+	oldPeriod := oldTime.Format("2006-01")
+	newPeriod := newTime.Format("2006-01")
 	posts := []platform.PlatformPostInput{
 		{AccountID: "acct_1", Caption: "one"},
 		{AccountID: "acct_2", Caption: "two"},
@@ -221,12 +224,12 @@ func TestReschedulePostPlansAndMutatesInsidePaidCoordinator(t *testing.T) {
 	if coordinator.calls != 1 {
 		t.Fatalf("coordinator calls = %d, want 1", coordinator.calls)
 	}
-	if len(coordinator.periods) != 2 || coordinator.periods[0] != "2026-07" || coordinator.periods[1] != "2026-08" {
+	if len(coordinator.periods) != 2 || coordinator.periods[0] != oldPeriod || coordinator.periods[1] != newPeriod {
 		t.Fatalf("locked periods = %#v", coordinator.periods)
 	}
 	wantDeltas := []paidquota.PeriodDelta{
-		{Period: "2026-07", ReleasedUnits: 2},
-		{Period: "2026-08", RequestedUnits: 2},
+		{Period: oldPeriod, ReleasedUnits: 2},
+		{Period: newPeriod, RequestedUnits: 2},
 	}
 	if len(coordinator.deltas) != len(wantDeltas) {
 		t.Fatalf("deltas = %#v", coordinator.deltas)
