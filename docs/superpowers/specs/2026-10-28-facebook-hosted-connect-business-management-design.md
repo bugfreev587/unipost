@@ -6,7 +6,7 @@
 
 **Branch:** `dev-facebook-business-management`
 
-**Base:** `origin/main` at `762bf793b9bda4fa7f4abc93c30a6abb5e57fdaf`
+**Base:** `origin/dev` at `1df0bafbe04513345d325dc80fe0e9e39fc4736d`
 
 **Owner areas:** Hosted Connect, Facebook integration
 
@@ -58,6 +58,11 @@ Centralizing the Dashboard and Hosted Connect scope lists would prevent future d
 - Run `go test ./internal/connect ./internal/platform` to cover both Facebook authorization paths.
 - Run `go test ./...` before claiming backend completion.
 - Confirm the branch diff changes only the approved design, implementation, and focused tests.
+
+The initial full-suite run exposed an existing date-sensitive handler test whose
+hard-coded reschedule target had passed. Stabilize that test with future month
+boundaries and derived period expectations. This is test-only release hygiene;
+the production scheduling validation remains unchanged.
 
 ## 7. Operational dependency
 
