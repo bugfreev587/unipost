@@ -10,6 +10,17 @@
 
 ---
 
+## Task 0: Remove the date-sensitive full-suite blocker
+
+**Files:**
+
+- Modify: `api/internal/handler/social_posts_drafts_test.go`
+
+1. Preserve the existing failing test as the reproduction: its hard-coded August 2026 reschedule target is now in the past and receives the production 60-second validation error.
+2. Replace its fixed source and destination dates with the first day of the next two UTC months.
+3. Derive expected quota period strings from those dates instead of hard-coding `2026-07` and `2026-08`.
+4. Run the targeted test and confirm the existing coordinator, period delta, and database mutation assertions pass without changing production code.
+
 ## Task 1: Add failing authorization-scope coverage
 
 **Files:**
