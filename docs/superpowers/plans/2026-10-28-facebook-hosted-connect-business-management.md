@@ -1,6 +1,6 @@
 # Facebook Hosted Connect Business Management Implementation Plan
 
-> Execute in the conversation-owned `dev-facebook-business-management` worktree. Keep the production change limited to the Hosted Connect Facebook scope list.
+> Execute in the conversation-owned `hotfix-facebook-business-management` worktree. Keep the production change limited to the Hosted Connect Facebook scope list.
 
 **Goal:** Make Facebook Hosted Connect request `business_management` so Meta can return Business Portfolio-managed Pages through the existing `/me/accounts` flow.
 
@@ -66,4 +66,5 @@
 ## Task 5: Commit the focused implementation
 
 1. Commit the test and implementation changes separately from the approved design documentation.
-2. Do not push, open a pull request, deploy, or promote without a subsequent explicit user request.
+2. Push the staging-based hotfix branch and open a pull request to `staging` under the user's explicit Preview Acceptance exception.
+3. Merge only after the staging PR checks pass, then wait for the staging deployment and verify the changed flow against the real staging environment.

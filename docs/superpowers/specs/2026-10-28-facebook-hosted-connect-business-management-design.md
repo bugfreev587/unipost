@@ -4,9 +4,11 @@
 
 **Date:** 2026-10-28
 
-**Branch:** `dev-facebook-business-management`
+**Branch:** `hotfix-facebook-business-management`
 
-**Base:** `origin/dev` at `1df0bafbe04513345d325dc80fe0e9e39fc4736d`
+**Base:** `origin/staging` at `fad8ab530e55db91fc7223d6ee96313fbe52516c`
+
+**Release path:** `hotfix-facebook-business-management` → `staging`
 
 **Owner areas:** Hosted Connect, Facebook integration
 
@@ -67,3 +69,8 @@ the production scheduling validation remains unchanged.
 ## 7. Operational dependency
 
 The Meta app must have publishable access to `business_management`. The `unipost-dev` Meta app currently shows the permission as `Ready to publish`, so this dependency is not blocking development-environment validation.
+
+The first `dev` Draft PR passed ordinary CI but failed Preview Acceptance because
+Railway did not create a PR deployment for its exact head SHA. After reviewing the
+failure evidence, the user explicitly authorized bypassing that Preview gate and
+requested a staging-based hotfix PR with direct staging verification.
