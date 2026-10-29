@@ -38,6 +38,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
@@ -52,8 +53,14 @@ type ConnectSessionHandler struct {
 	// quota is the plan-aware checker used to enforce the X-paid-only
 	// gate (migration 057). Optional — nil means the connect handler
 	// runs without plan checks (legacy + test path).
-	quota *quota.Checker
-	ilog  *integrationlogs.Logger
+	quota            *quota.Checker
+	ilog             *integrationlogs.Logger
+	platformControls platformcontrols.Evaluator
+}
+
+func (h *ConnectSessionHandler) SetPlatformOperationalControls(evaluator platformcontrols.Evaluator) *ConnectSessionHandler {
+	h.platformControls = evaluator
+	return h
 }
 
 func NewConnectSessionHandler(queries *db.Queries, dashboardURL string, quotaChecker *quota.Checker) *ConnectSessionHandler {
@@ -207,18 +214,23 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profileID, perr := h.resolveProfileForWorkspace(r.Context(), workspaceID, body.ProfileID)
-	if perr != nil {
-		writeError(w, perr.status, perr.code, perr.msg)
-		return
-	}
-
 	body.Platform = strings.ToLower(strings.TrimSpace(body.Platform))
 	body.ExternalUserID = strings.TrimSpace(body.ExternalUserID)
 
 	if !connectablePlatforms[body.Platform] {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
 			"platform must be one of "+connectablePlatformList)
+		return
+	}
+	decision, controlErr := evaluatePlatformOperation(r.Context(), h.platformControls, body.Platform, platformcontrols.OperationConnect)
+	if controlErr != nil {
+		writePlatformOperationUnavailable(w, decision)
+		return
+	}
+
+	profileID, perr := h.resolveProfileForWorkspace(r.Context(), workspaceID, body.ProfileID)
+	if perr != nil {
+		writeError(w, perr.status, perr.code, perr.msg)
 		return
 	}
 	// Plan gate (migration 057): block new X / Twitter connections on

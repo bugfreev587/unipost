@@ -23,10 +23,58 @@ import (
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 var errOAuthPKCEExchangeObserved = errors.New("exchange observed")
+
+func TestOAuthConnectFullyDisabledPlatformStopsBeforeStateAndProvider(t *testing.T) {
+	store := &oauthPKCETestDB{}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluator := &fixedPlatformControlEvaluator{decision: fullyDisabledDecision("tiktok", platformcontrols.OperationConnect)}
+	h := NewOAuthHandler(db.New(store), encryptor, nil).SetPlatformOperationalControls(evaluator)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/profiles/pr_1/oauth/connect/tiktok", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = withOAuthPKCEChiParams(req, map[string]string{"profileID": "pr_1", "platform": "tiktok"})
+	rec := httptest.NewRecorder()
+
+	h.Connect(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), platformcontrols.APICode) {
+		t.Fatalf("response=(%d, %q)", rec.Code, rec.Body.String())
+	}
+	if store.state != "" {
+		t.Fatalf("OAuth state was created while disabled: %q", store.state)
+	}
+	if evaluator.calls != 1 || evaluator.platform != "tiktok" || evaluator.op != platformcontrols.OperationConnect {
+		t.Fatalf("evaluation=%+v", evaluator)
+	}
+}
+
+func TestOAuthConnectControlReadFailureFailsClosed(t *testing.T) {
+	store := &oauthPKCETestDB{}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewOAuthHandler(db.New(store), encryptor, nil).
+		SetPlatformOperationalControls(&fixedPlatformControlEvaluator{err: errOperationalControlUnavailable})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/profiles/pr_1/oauth/connect/tiktok", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = withOAuthPKCEChiParams(req, map[string]string{"profileID": "pr_1", "platform": "tiktok"})
+	rec := httptest.NewRecorder()
+	h.Connect(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable || store.state != "" {
+		t.Fatalf("response=(%d, %q) state=%q", rec.Code, rec.Body.String(), store.state)
+	}
+}
 
 func TestOAuthPKCEConnectStoresRandomVerifierAndUsesItForTwitterChallenge(t *testing.T) {
 	store := &oauthPKCETestDB{}

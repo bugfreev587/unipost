@@ -28,6 +28,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
@@ -537,6 +538,61 @@ func TestCreateConnectSession_OAuthQuickstartPlatforms(t *testing.T) {
 				t.Fatalf("quickstart create should not require white-label credential lookup, got %d", fdb.platformCredentialLookups)
 			}
 		})
+	}
+}
+
+func TestCreateConnectSessionFullyDisabledPlatformStopsBeforePersistence(t *testing.T) {
+	fdb := &connectSessionTestDB{platform: "tiktok", allowQuickstart: true}
+	evaluator := &fixedPlatformControlEvaluator{decision: fullyDisabledDecision("tiktok", platformcontrols.OperationConnect)}
+	h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil).
+		SetPlatformOperationalControls(evaluator)
+	body := `{
+		"platform": "tiktok",
+		"profile_id": "pr_1",
+		"external_user_id": "user_123",
+		"allow_quickstart_creds": true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/connect/sessions", strings.NewReader(body))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), platformcontrols.APICode) {
+		t.Fatalf("response=(%d, %q)", rec.Code, rec.Body.String())
+	}
+	if fdb.createConnectSessionCalls != 0 {
+		t.Fatalf("CreateConnectSession calls=%d, want 0", fdb.createConnectSessionCalls)
+	}
+}
+
+func TestHostedConnectFullyDisabledPlatformStopsAuthorizeAndCallbackProviderCalls(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{platform: "tiktok", status: "pending", allowQuickstart: true}
+	connector := &operationalControlConnector{platform: "tiktok"}
+	evaluator := &fixedPlatformControlEvaluator{decision: fullyDisabledDecision("tiktok", platformcontrols.OperationConnect)}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, events.NoopBus{}, connect.NewRegistry(connector),
+		"https://api.example.com", nil, newConnectSessionOwnershipStore(fdb),
+	).SetPlatformOperationalControls(evaluator)
+
+	authorizeReq := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1/authorize?state=state_1", nil)
+	authorizeReq = withChiParam(authorizeReq, "id", "cs_1")
+	authorizeRec := httptest.NewRecorder()
+	h.Authorize(authorizeRec, authorizeReq)
+	if authorizeRec.Code != http.StatusServiceUnavailable || connector.authorizeCalls != 0 {
+		t.Fatalf("authorize response=%d calls=%d body=%q", authorizeRec.Code, connector.authorizeCalls, authorizeRec.Body.String())
+	}
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/tiktok?code=auth-code&state=state_1", nil)
+	callbackReq = withChiParam(callbackReq, "platform", "tiktok")
+	callbackRec := httptest.NewRecorder()
+	h.Callback(callbackRec, callbackReq)
+	if callbackRec.Code != http.StatusServiceUnavailable || connector.exchangeCalls != 0 {
+		t.Fatalf("callback response=%d calls=%d body=%q", callbackRec.Code, connector.exchangeCalls, callbackRec.Body.String())
 	}
 }
 
@@ -2551,6 +2607,32 @@ type fakeOAuthConnector struct {
 	profile     *connect.Profile
 	exchangeErr error
 	profileErr  error
+}
+
+type operationalControlConnector struct {
+	platform       string
+	authorizeCalls int
+	exchangeCalls  int
+}
+
+func (c *operationalControlConnector) Platform() string { return c.platform }
+
+func (c *operationalControlConnector) AuthorizeURL(connect.SessionView) (string, error) {
+	c.authorizeCalls++
+	return "https://auth.example.com", nil
+}
+
+func (c *operationalControlConnector) ExchangeCode(context.Context, connect.SessionView, string) (*connect.TokenSet, error) {
+	c.exchangeCalls++
+	return &connect.TokenSet{AccessToken: "access", RefreshToken: "refresh", ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func (c *operationalControlConnector) FetchProfile(context.Context, string) (*connect.Profile, error) {
+	return &connect.Profile{ExternalAccountID: "id", Username: "user"}, nil
+}
+
+func (c *operationalControlConnector) Refresh(context.Context, string) (*connect.TokenSet, error) {
+	return nil, errors.New("unexpected refresh")
 }
 
 type fakeInstagramWebhookSubscriber struct {

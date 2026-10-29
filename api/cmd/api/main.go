@@ -46,6 +46,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/paidquotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/postfailuredebug"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -239,6 +240,8 @@ func main() {
 	})
 	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
 	publishingRestrictionStore := publishingrestrictions.NewPostgresStore(pool)
+	platformControlService := platformcontrols.NewService(platformcontrols.NewPostgresStore(pool))
+	platformControlHandler := handler.NewPlatformOperationalControlsHandler(platformControlService)
 	publishingRestrictionCampaignPreviewSecret := strings.TrimSpace(os.Getenv("PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET"))
 	publishingRestrictionNoticeTemplateID := strings.TrimSpace(os.Getenv("LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID"))
 	publishingRecoveryNoticeTemplateID := strings.TrimSpace(os.Getenv("LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID"))
@@ -802,7 +805,9 @@ func main() {
 		xAccountReadRecoveryWorker := worker.NewXAccountReadRecoveryWorker(xAccountReadService)
 		go xAccountReadRecoveryWorker.Start(workerCtx)
 	}
-	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
+	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).
+		SetPlatformOperationalControls(platformControlService).
+		SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr).
 		SetXCreditsService(xCreditsService).
@@ -837,7 +842,9 @@ func main() {
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
 	// for the hosted-page origin so the same env var that drives the
 	// preview link drives the connect link.
-	connectSessionHandler := handler.NewConnectSessionHandler(queries, os.Getenv("NEXT_PUBLIC_APP_URL"), quotaChecker).SetIntegrationLogger(integrationLogger)
+	connectSessionHandler := handler.NewConnectSessionHandler(queries, os.Getenv("NEXT_PUBLIC_APP_URL"), quotaChecker).
+		SetPlatformOperationalControls(platformControlService).
+		SetIntegrationLogger(integrationLogger)
 	connectOwnershipStore := connectownership.NewStore(pool)
 	// Sprint 3 PR5: Bluesky Connect form handler. No API key — the
 	// session id + oauth_state act as the bearer. Server-renders an
@@ -875,7 +882,9 @@ func main() {
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
-	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry, apiBaseURL, superAdminChecker, connectOwnershipStore).SetIntegrationLogger(integrationLogger)
+	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry, apiBaseURL, superAdminChecker, connectOwnershipStore).
+		SetPlatformOperationalControls(platformControlService).
+		SetIntegrationLogger(integrationLogger)
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
@@ -1104,6 +1113,10 @@ func main() {
 			Get("/v1/admin/observability/request-event-partitions", requesteventpartitions.StatusHandler(partitionStore, requestEventPartitionWorker))
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
 			Get("/v1/admin/publishing-restrictions", publishingRestrictionHandler.AdminList)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Platform operational controls are restricted to super admins")).
+			Get("/v1/admin/platform-operational-controls", platformControlHandler.AdminList)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Platform operational controls are restricted to super admins")).
+			Patch("/v1/admin/platform-operational-controls/{platform}", platformControlHandler.AdminSet)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
 			Patch("/v1/admin/publishing-restrictions/{platform}", publishingRestrictionHandler.AdminSet)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).

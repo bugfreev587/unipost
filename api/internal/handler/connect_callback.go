@@ -47,6 +47,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/instagramwebhooks"
 	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
@@ -107,6 +108,12 @@ type ConnectCallbackHandler struct {
 	quota                      *quota.Checker
 	instagramWebhookSubscriber instagramWebhookSubscriber
 	ownershipStore             managedAccountOwnershipStore
+	platformControls           platformcontrols.Evaluator
+}
+
+func (h *ConnectCallbackHandler) SetPlatformOperationalControls(evaluator platformcontrols.Evaluator) *ConnectCallbackHandler {
+	h.platformControls = evaluator
+	return h
 }
 
 func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry, callbackBaseURL string, superAdminChecker *auth.SuperAdminChecker, ownershipStore managedAccountOwnershipStore) *ConnectCallbackHandler {
@@ -372,6 +379,11 @@ func (h *ConnectCallbackHandler) Authorize(w http.ResponseWriter, r *http.Reques
 		renderConnectError(w, http.StatusGone, "This Connect link has expired.")
 		return
 	}
+	decision, controlErr := evaluatePlatformOperation(r.Context(), h.platformControls, session.Platform, platformcontrols.OperationConnect)
+	if controlErr != nil {
+		renderConnectError(w, http.StatusServiceUnavailable, decisionMessage(decision))
+		return
+	}
 
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
 	resolved, err := h.resolveConnectorForStoredMode(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds, session.XAppMode)
@@ -498,6 +510,11 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	code := r.URL.Query().Get("code")
 	errParam := r.URL.Query().Get("error")
 	errDesc := r.URL.Query().Get("error_description")
+	decision, controlErr := evaluatePlatformOperation(r.Context(), h.platformControls, platformName, platformcontrols.OperationConnect)
+	if controlErr != nil {
+		renderConnectError(w, http.StatusServiceUnavailable, decisionMessage(decision))
+		return
+	}
 
 	// OAuth provider returned an error. The most common is
 	// access_denied (user clicked "Cancel" on the consent screen),

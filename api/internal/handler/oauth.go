@@ -20,6 +20,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -32,6 +33,12 @@ type OAuthHandler struct {
 	// behaves as "no super admins configured" — every FB attempt
 	// returns 403. Non-FB platforms ignore it.
 	superAdminChecker *auth.SuperAdminChecker
+	platformControls  platformcontrols.Evaluator
+}
+
+func (h *OAuthHandler) SetPlatformOperationalControls(evaluator platformcontrols.Evaluator) *OAuthHandler {
+	h.platformControls = evaluator
+	return h
 }
 
 func NewOAuthHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, superAdmins *auth.SuperAdminChecker) *OAuthHandler {
@@ -103,6 +110,12 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 
 	if platformName == "" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "platform is required")
+		return
+	}
+	platformName = strings.ToLower(strings.TrimSpace(platformName))
+	decision, controlErr := evaluatePlatformOperation(r.Context(), h.platformControls, platformName, platformcontrols.OperationConnect)
+	if controlErr != nil {
+		writePlatformOperationUnavailable(w, decision)
 		return
 	}
 
@@ -201,6 +214,11 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	if code == "" || state == "" {
 		h.redirectWithError(w, r, "", "Missing code or state parameter")
+		return
+	}
+	decision, controlErr := evaluatePlatformOperation(r.Context(), h.platformControls, platformName, platformcontrols.OperationConnect)
+	if controlErr != nil {
+		writePlatformOperationUnavailable(w, decision)
 		return
 	}
 
