@@ -41,6 +41,34 @@ func fullyDisabledDecision(platform string, operation platformcontrols.Operation
 
 var errOperationalControlUnavailable = errors.New("operational control unavailable")
 
+func TestSocialAccountReadFullyDisabledReturnsBeforeProviderWork(t *testing.T) {
+	evaluator := &fixedPlatformControlEvaluator{decision: fullyDisabledDecision("tiktok", platformcontrols.OperationRead)}
+	h := (&SocialAccountHandler{}).SetPlatformOperationalControls(evaluator)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/accounts/tk_1/metrics", nil)
+
+	if h.platformReadAllowed(rec, req, "tiktok") {
+		t.Fatal("fully disabled platform was allowed")
+	}
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), platformcontrols.APICode) {
+		t.Fatalf("response=(%d, %q)", rec.Code, rec.Body.String())
+	}
+	if evaluator.calls != 1 || evaluator.op != platformcontrols.OperationRead {
+		t.Fatalf("evaluation=%+v", evaluator)
+	}
+}
+
+func TestSocialAccountReadControlFailureFailsClosed(t *testing.T) {
+	h := (&SocialAccountHandler{}).SetPlatformOperationalControls(&fixedPlatformControlEvaluator{err: errOperationalControlUnavailable})
+	rec := httptest.NewRecorder()
+	if h.platformReadAllowed(rec, httptest.NewRequest(http.MethodGet, "/", nil), "tiktok") {
+		t.Fatal("control-store failure was allowed")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
 type fakePlatformControlsAdminService struct {
 	fixedPlatformControlEvaluator
 	controls  []platformcontrols.Control

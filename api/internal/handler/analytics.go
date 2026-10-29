@@ -14,11 +14,18 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 )
 
 type AnalyticsHandler struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
+	controls  platformcontrols.Evaluator
+}
+
+func (h *AnalyticsHandler) SetPlatformOperationalControls(evaluator platformcontrols.Evaluator) *AnalyticsHandler {
+	h.controls = evaluator
+	return h
 }
 
 func NewAnalyticsHandler(queries *db.Queries, encryptor *crypto.AESEncryptor) *AnalyticsHandler {
@@ -135,6 +142,11 @@ func (h *AnalyticsHandler) GetAnalytics(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
+		decision, controlErr := evaluatePlatformOperation(r.Context(), h.controls, acc.Platform, platformcontrols.OperationRead)
+		if controlErr != nil {
+			writePlatformOperationUnavailable(w, decision)
+			return
+		}
 		adapter, adErr := platform.Get(acc.Platform)
 		if adErr != nil {
 			slog.Warn("analytics refresh: adapter not found",

@@ -378,6 +378,7 @@ func main() {
 	)
 	if processMode == processModeAPI {
 		tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor).
+			SetPlatformOperationalControls(platformControlService).
 			SetXTokenRefresher(xTokenRefresher)
 		go tokenWorker.Start(workerCtx)
 	}
@@ -653,6 +654,7 @@ func main() {
 	// the bus dependency (eventBus) is already wired.
 	if processMode == processModeAPI {
 		managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, eventBus, apiBaseURL).
+			SetPlatformOperationalControls(platformControlService).
 			SetXTokenRefresher(xTokenRefresher)
 		go managedTokenWorker.Start(workerCtx)
 	}
@@ -676,6 +678,7 @@ func main() {
 
 	if processMode == processModeAPI {
 		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor).
+			SetPlatformOperationalControls(platformControlService).
 			SetXTokenRefresher(xTokenRefresher)
 		go analyticsRefreshWorker.Start(workerCtx)
 
@@ -763,6 +766,7 @@ func main() {
 	cliSetupTokenHandler := handler.NewCLISetupTokenHandler(queries).WithAPIBaseURL(os.Getenv("API_BASE_URL"))
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker).
+		SetPlatformOperationalControls(platformControlService).
 		SetXTokenRefresher(xTokenRefresher)
 	xAccountReadStore := xaccountreads.NewPostgresStore(pool)
 	xAccountReadCursorKey := strings.TrimSpace(os.Getenv("X_ACCOUNT_READ_CURSOR_KEY"))
@@ -818,7 +822,8 @@ func main() {
 		SetLoopsSyncer(loopsSyncer).
 		SetHoldReconciler(paidQuotaHoldReconciler).
 		SetPaidQuotaEvaluator(paidPlanQuotaEmailService)
-	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
+	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor).
+		SetPlatformOperationalControls(platformControlService)
 	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
 	// dynamic GROUP BY clause sqlc can't model.
 	analyticsRollupHandler := handler.NewAnalyticsRollupHandler(pool)

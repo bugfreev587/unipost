@@ -83,6 +83,9 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 			"Account is disconnected — reconnect before fetching metrics")
 		return
 	}
+	if !h.platformReadAllowed(w, r, acc.Platform) {
+		return
+	}
 
 	adapter, err := platform.Get(acc.Platform)
 	if err != nil {

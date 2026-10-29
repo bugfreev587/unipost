@@ -12,6 +12,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
@@ -20,6 +21,12 @@ type TokenRefreshWorker struct {
 	queries    *db.Queries
 	encryptor  *crypto.AESEncryptor
 	xRefresher xinbox.TokenRefresher
+	controls   platformcontrols.Evaluator
+}
+
+func (w *TokenRefreshWorker) SetPlatformOperationalControls(evaluator platformcontrols.Evaluator) *TokenRefreshWorker {
+	w.controls = evaluator
+	return w
 }
 
 func (w *TokenRefreshWorker) SetXTokenRefresher(refresher xinbox.TokenRefresher) *TokenRefreshWorker {
@@ -62,74 +69,81 @@ func (w *TokenRefreshWorker) refreshExpiring(ctx context.Context) {
 	slog.Info("token refresh: found expiring tokens", "count", len(accounts))
 
 	for _, acc := range accounts {
-		if !acc.RefreshToken.Valid {
-			slog.Warn("token refresh: no refresh token", "account_id", acc.ID)
-			continue
-		}
-
-		refreshToken, err := w.encryptor.Decrypt(acc.RefreshToken.String)
-		if err != nil {
-			slog.Error("token refresh: failed to decrypt refresh token", "account_id", acc.ID, "error", err)
-			continue
-		}
-
-		var newAccess, newRefresh string
-		var expiresAt time.Time
-		if acc.Platform == "twitter" {
-			if w.xRefresher == nil {
-				err = errors.New("X token refresher is not configured")
-			} else {
-				var tokens *connect.TokenSet
-				tokens, err = w.xRefresher.Refresh(ctx, acc, refreshToken)
-				if err == nil {
-					newAccess, newRefresh, expiresAt = tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresAt
-				}
-			}
-		} else {
-			adapter, adapterErr := platform.Get(acc.Platform)
-			if adapterErr != nil {
-				slog.Warn("token refresh: unsupported platform", "platform", acc.Platform, "account_id", acc.ID)
-				continue
-			}
-			newAccess, newRefresh, expiresAt, err = adapter.RefreshToken(ctx, refreshToken)
-		}
-		if err != nil {
-			slog.Error("token refresh: failed to refresh", "account_id", acc.ID, "error", err)
-			if refreshFailureShouldMarkReconnectRequired(err) {
-				if rows, markErr := w.queries.MarkSocialAccountReconnectRequired(ctx, acc.ID); markErr != nil {
-					slog.Error("token refresh: failed to mark reconnect required", "account_id", acc.ID, "error", markErr)
-				} else if rows > 0 {
-					slog.Info("token refresh: marked reconnect required", "account_id", acc.ID, "platform", acc.Platform)
-				}
-			}
-			continue
-		}
-
-		encAccess, err := w.encryptor.Encrypt(newAccess)
-		if err != nil {
-			slog.Error("token refresh: failed to encrypt access token", "account_id", acc.ID, "error", err)
-			continue
-		}
-
-		encRefresh, err := w.encryptor.Encrypt(newRefresh)
-		if err != nil {
-			slog.Error("token refresh: failed to encrypt refresh token", "account_id", acc.ID, "error", err)
-			continue
-		}
-
-		err = w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
-			ID:             acc.ID,
-			AccessToken:    encAccess,
-			RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
-			TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-		})
-		if err != nil {
-			slog.Error("token refresh: failed to update tokens", "account_id", acc.ID, "error", err)
-			continue
-		}
-
-		slog.Info("token refresh: refreshed", "account_id", acc.ID, "platform", acc.Platform)
+		w.refreshOne(ctx, acc)
 	}
+}
+
+func (w *TokenRefreshWorker) refreshOne(ctx context.Context, acc db.SocialAccount) {
+	if platformReadBlocked(ctx, w.controls, acc.Platform, "token_refresh") {
+		return
+	}
+	if !acc.RefreshToken.Valid {
+		slog.Warn("token refresh: no refresh token", "account_id", acc.ID)
+		return
+	}
+
+	refreshToken, err := w.encryptor.Decrypt(acc.RefreshToken.String)
+	if err != nil {
+		slog.Error("token refresh: failed to decrypt refresh token", "account_id", acc.ID, "error", err)
+		return
+	}
+
+	var newAccess, newRefresh string
+	var expiresAt time.Time
+	if acc.Platform == "twitter" {
+		if w.xRefresher == nil {
+			err = errors.New("X token refresher is not configured")
+		} else {
+			var tokens *connect.TokenSet
+			tokens, err = w.xRefresher.Refresh(ctx, acc, refreshToken)
+			if err == nil {
+				newAccess, newRefresh, expiresAt = tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresAt
+			}
+		}
+	} else {
+		adapter, adapterErr := platform.Get(acc.Platform)
+		if adapterErr != nil {
+			slog.Warn("token refresh: unsupported platform", "platform", acc.Platform, "account_id", acc.ID)
+			return
+		}
+		newAccess, newRefresh, expiresAt, err = adapter.RefreshToken(ctx, refreshToken)
+	}
+	if err != nil {
+		slog.Error("token refresh: failed to refresh", "account_id", acc.ID, "error", err)
+		if refreshFailureShouldMarkReconnectRequired(err) {
+			if rows, markErr := w.queries.MarkSocialAccountReconnectRequired(ctx, acc.ID); markErr != nil {
+				slog.Error("token refresh: failed to mark reconnect required", "account_id", acc.ID, "error", markErr)
+			} else if rows > 0 {
+				slog.Info("token refresh: marked reconnect required", "account_id", acc.ID, "platform", acc.Platform)
+			}
+		}
+		return
+	}
+
+	encAccess, err := w.encryptor.Encrypt(newAccess)
+	if err != nil {
+		slog.Error("token refresh: failed to encrypt access token", "account_id", acc.ID, "error", err)
+		return
+	}
+
+	encRefresh, err := w.encryptor.Encrypt(newRefresh)
+	if err != nil {
+		slog.Error("token refresh: failed to encrypt refresh token", "account_id", acc.ID, "error", err)
+		return
+	}
+
+	err = w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
+		ID:             acc.ID,
+		AccessToken:    encAccess,
+		RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+		TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+	})
+	if err != nil {
+		slog.Error("token refresh: failed to update tokens", "account_id", acc.ID, "error", err)
+		return
+	}
+
+	slog.Info("token refresh: refreshed", "account_id", acc.ID, "platform", acc.Platform)
 }
 
 func refreshFailureShouldMarkReconnectRequired(err error) bool {

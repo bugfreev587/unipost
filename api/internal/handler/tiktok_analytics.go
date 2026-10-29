@@ -102,6 +102,9 @@ func (h *SocialAccountHandler) loadTikTokForAnalytics(w http.ResponseWriter, r *
 		})
 		return nil, nil, "", false
 	}
+	if !h.platformReadAllowed(w, r, "tiktok") {
+		return nil, nil, "", false
+	}
 
 	adapter, err := platform.Get("tiktok")
 	if err != nil {

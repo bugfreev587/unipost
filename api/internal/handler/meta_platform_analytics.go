@@ -261,6 +261,9 @@ func (h *SocialAccountHandler) loadMetaAccountForAnalytics(w http.ResponseWriter
 		writeError(w, http.StatusConflict, "WRONG_PLATFORM", "Account is not a "+label)
 		return nil, "", false
 	}
+	if !h.platformReadAllowed(w, r, platformName) {
+		return nil, "", false
+	}
 
 	accessToken, err := h.encryptor.Decrypt(acc.AccessToken)
 	if err != nil || strings.TrimSpace(accessToken) == "" {

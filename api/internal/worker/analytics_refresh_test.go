@@ -1,12 +1,24 @@
 package worker
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
 
+	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 )
+
+func TestAnalyticsRefreshFullyDisabledStopsBeforeTokenOrAdapter(t *testing.T) {
+	evaluator := &blockedPlatformControlEvaluator{}
+	w := NewAnalyticsRefreshWorker(nil, nil).SetPlatformOperationalControls(evaluator)
+	w.refreshOne(context.Background(), db.GetDuePostAnalyticsRefreshRow{Platform: "tiktok", SocialPostResultID: "result_1"})
+	if evaluator.calls != 1 || evaluator.op != platformcontrols.OperationRead {
+		t.Fatalf("evaluation=%+v", evaluator)
+	}
+}
 
 func TestAnalyticsRefreshFailurePolicy(t *testing.T) {
 	t.Parallel()

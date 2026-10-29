@@ -40,6 +40,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -53,9 +54,15 @@ type ManagedTokenRefreshWorker struct {
 	bus             events.EventBus
 	callbackBaseURL string
 	xRefresher      xinbox.TokenRefresher
+	controls        platformcontrols.Evaluator
 
 	// tickInterval is variable for tests; production uses 5 min.
 	tickInterval time.Duration
+}
+
+func (w *ManagedTokenRefreshWorker) SetPlatformOperationalControls(evaluator platformcontrols.Evaluator) *ManagedTokenRefreshWorker {
+	w.controls = evaluator
+	return w
 }
 
 func (w *ManagedTokenRefreshWorker) SetXTokenRefresher(refresher xinbox.TokenRefresher) *ManagedTokenRefreshWorker {
@@ -161,6 +168,9 @@ func (w *ManagedTokenRefreshWorker) RunOnce(ctx context.Context) {
 }
 
 func (w *ManagedTokenRefreshWorker) refreshOne(ctx context.Context, acc db.SocialAccount) {
+	if platformReadBlocked(ctx, w.controls, acc.Platform, "managed_token_refresh") {
+		return
+	}
 	if !acc.RefreshToken.Valid || acc.RefreshToken.String == "" {
 		slog.Warn("managed token refresh: missing refresh token", "account_id", acc.ID)
 		w.markReconnectRequired(ctx, acc, "missing_refresh_token")

@@ -17,6 +17,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -27,6 +28,21 @@ type SocialAccountHandler struct {
 	superAdminChecker *auth.SuperAdminChecker
 	httpClient        *http.Client
 	xTokenRefresher   xinbox.TokenRefresher
+	platformControls  platformcontrols.Evaluator
+}
+
+func (h *SocialAccountHandler) SetPlatformOperationalControls(evaluator platformcontrols.Evaluator) *SocialAccountHandler {
+	h.platformControls = evaluator
+	return h
+}
+
+func (h *SocialAccountHandler) platformReadAllowed(w http.ResponseWriter, r *http.Request, platformName string) bool {
+	decision, err := evaluatePlatformOperation(r.Context(), h.platformControls, platformName, platformcontrols.OperationRead)
+	if err != nil {
+		writePlatformOperationUnavailable(w, decision)
+		return false
+	}
+	return true
 }
 
 func (h *SocialAccountHandler) SetXTokenRefresher(refresher xinbox.TokenRefresher) *SocialAccountHandler {

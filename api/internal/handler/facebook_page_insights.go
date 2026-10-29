@@ -70,6 +70,9 @@ func (h *SocialAccountHandler) FacebookPageInsights(w http.ResponseWriter, r *ht
 	if days > 92 {
 		days = 92
 	}
+	if !h.platformReadAllowed(w, r, "facebook") {
+		return
+	}
 
 	adapter, err := platform.Get("facebook")
 	if err != nil {

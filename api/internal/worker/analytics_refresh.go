@@ -16,6 +16,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -36,6 +37,12 @@ type AnalyticsRefreshWorker struct {
 	queries    *db.Queries
 	encryptor  *crypto.AESEncryptor
 	xRefresher xinbox.TokenRefresher
+	controls   platformcontrols.Evaluator
+}
+
+func (w *AnalyticsRefreshWorker) SetPlatformOperationalControls(evaluator platformcontrols.Evaluator) *AnalyticsRefreshWorker {
+	w.controls = evaluator
+	return w
 }
 
 func (w *AnalyticsRefreshWorker) SetXTokenRefresher(refresher xinbox.TokenRefresher) *AnalyticsRefreshWorker {
@@ -124,6 +131,9 @@ func (w *AnalyticsRefreshWorker) refreshDue(ctx context.Context) {
 }
 
 func (w *AnalyticsRefreshWorker) refreshOne(ctx context.Context, r db.GetDuePostAnalyticsRefreshRow) {
+	if platformReadBlocked(ctx, w.controls, r.Platform, "analytics_refresh") {
+		return
+	}
 	adapter, err := platform.Get(r.Platform)
 	if err != nil {
 		slog.Warn("analytics refresh: unknown platform", "platform", r.Platform)

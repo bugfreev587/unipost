@@ -173,6 +173,9 @@ func (h *SocialAccountHandler) loadYouTubeForAnalytics(w http.ResponseWriter, r 
 		writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Reconnect YouTube to enable analytics.")
 		return nil, nil, "", false
 	}
+	if !h.platformReadAllowed(w, r, "youtube") {
+		return nil, nil, "", false
+	}
 
 	adapter, err := platform.Get("youtube")
 	if err != nil {

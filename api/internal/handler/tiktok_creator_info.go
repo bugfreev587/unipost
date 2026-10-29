@@ -63,6 +63,9 @@ func (h *SocialAccountHandler) TikTokCreatorInfo(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusConflict, "WRONG_PLATFORM", "Account is not a TikTok account")
 		return
 	}
+	if !h.platformReadAllowed(w, r, "tiktok") {
+		return
+	}
 
 	adapter, err := platform.Get("tiktok")
 	if err != nil {

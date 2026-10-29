@@ -95,6 +95,9 @@ func (h *SocialAccountHandler) PinterestBoards(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusConflict, "WRONG_PLATFORM", "Account is not a Pinterest account")
 		return
 	}
+	if !h.platformReadAllowed(w, r, "pinterest") {
+		return
+	}
 
 	adapter, err := platform.Get("pinterest")
 	if err != nil {
@@ -179,6 +182,9 @@ func (h *SocialAccountHandler) CreatePinterestBoard(w http.ResponseWriter, r *ht
 	}
 	if acc.Platform != "pinterest" {
 		writeError(w, http.StatusConflict, "WRONG_PLATFORM", "Account is not a Pinterest account")
+		return
+	}
+	if !h.platformReadAllowed(w, r, "pinterest") {
 		return
 	}
 

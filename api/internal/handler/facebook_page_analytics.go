@@ -151,6 +151,9 @@ func (h *SocialAccountHandler) loadFacebookForAnalytics(w http.ResponseWriter, r
 		writeError(w, http.StatusConflict, "WRONG_PLATFORM", "Account is not a Facebook Page")
 		return nil, nil, "", false
 	}
+	if !h.platformReadAllowed(w, r, "facebook") {
+		return nil, nil, "", false
+	}
 
 	adapter, err := platform.Get("facebook")
 	if err != nil {
