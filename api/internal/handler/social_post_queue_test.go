@@ -25,6 +25,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/postfailuredebug"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -2751,6 +2752,7 @@ func (f *persistedTokenDeliveryDB) Exec(_ context.Context, query string, _ ...in
 	if strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails") ||
 		strings.Contains(query, "-- name: CreatePostFailure") {
 		f.restrictedFinalization = true
+		return pgconn.NewCommandTag("UPDATE 1"), nil
 	}
 	return pgconn.CommandTag{}, errors.New("optional write not implemented: " + query)
 }
@@ -2791,6 +2793,22 @@ func (f *persistedTokenDeliveryDB) QueryRow(_ context.Context, query string, arg
 		started := f.job
 		started.PlatformStartedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		return postDeliveryJobScanRow(started)
+	case strings.Contains(query, "-- name: FinalizeRestrictedPostDeliveryJob"):
+		f.restrictedFinalization = true
+		f.job.State = "dead"
+		f.job.FailureStage = args[4].(pgtype.Text)
+		f.job.ErrorCode = args[5].(pgtype.Text)
+		f.job.LastError = pgtype.Text{String: args[6].(string), Valid: true}
+		f.result.Status = "failed"
+		f.result.ExternalID = pgtype.Text{}
+		f.result.ErrorMessage = pgtype.Text{String: args[6].(string), Valid: true}
+		f.result.PublishToken = pgtype.Text{}
+		f.result.ErrorCode = args[5].(pgtype.Text)
+		f.result.FailureStage = args[4].(pgtype.Text)
+		f.result.NextAction = args[7].(pgtype.Text)
+		row := postDeliveryJobScanRow(f.job)
+		row.values = append(row.values, "publishing", "failed", false)
+		return row
 	case strings.Contains(query, "-- name: UpdateSocialPostResultAfterRetry"):
 		if strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails") {
 			f.restrictedFinalization = true
@@ -2892,6 +2910,93 @@ func TestProcessPostDeliveryJobResumesPersistedTikTokTokenAcrossNewRestriction(t
 	}
 	if dbtx.restrictedFinalization {
 		t.Fatal("persisted-token resume must not be finalized as publishing-restricted")
+	}
+}
+
+func TestProcessPostDeliveryJobPersistedTokenBlockedByOperationalControl(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedToken, err := encryptor.Encrypt("tiktok-access-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "acct_tiktok",
+		Caption:   "must not resume",
+		MediaURLs: []string{"https://media.example.com/video.mp4"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job := baseDeliveryJob()
+	job.SocialAccountID = "acct_tiktok"
+	job.Platform = "tiktok"
+	dbtx := &persistedTokenDeliveryDB{
+		job: job,
+		post: db.SocialPost{
+			ID:          job.PostID,
+			Caption:     pgtype.Text{String: "must not resume", Valid: true},
+			Status:      "publishing",
+			CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			Metadata:    metadata,
+			WorkspaceID: job.WorkspaceID,
+		},
+		result: db.SocialPostResult{
+			ID:              job.SocialPostResultID,
+			PostID:          job.PostID,
+			SocialAccountID: job.SocialAccountID,
+			Status:          "processing",
+			Caption:         "must not resume",
+			PublishToken:    pgtype.Text{String: "publish_token_123", Valid: true},
+		},
+		account: db.SocialAccount{
+			ID:                job.SocialAccountID,
+			ProfileID:         "profile_1",
+			Platform:          "tiktok",
+			AccessToken:       encryptedToken,
+			ExternalAccountID: "tiktok_user_1",
+			Status:            "active",
+			ConnectedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	}
+	control := &fixedPlatformControlEvaluator{decision: platformcontrols.Decision{
+		Platform:  "tiktok",
+		State:     platformcontrols.StatePublishingDisabled,
+		Operation: platformcontrols.OperationPublish,
+		Blocked:   true,
+		Message:   "TikTok publishing is temporarily disabled.",
+	}}
+	adapter := &persistedTokenTikTokAdapterSpy{}
+	previous, previousErr := platform.Get("tiktok")
+	platform.Register(adapter)
+	defer func() {
+		if previousErr == nil {
+			platform.Register(previous)
+		} else {
+			platform.Register(platform.NewTikTokAdapter())
+		}
+	}()
+
+	h := NewSocialPostHandler(db.New(dbtx), encryptor, nil, nil, nil, nil, nil).
+		SetPlatformOperationalControls(control)
+	if err := h.ProcessPostDeliveryJob(context.Background(), job); err != nil {
+		t.Fatalf("ProcessPostDeliveryJob: %v", err)
+	}
+
+	if control.calls != 1 || control.platform != "tiktok" || control.op != platformcontrols.OperationPublish {
+		t.Fatalf("operational evaluation=%+v", control)
+	}
+	if adapter.resumeCalls != 0 || adapter.initCalls != 0 || adapter.uploadCalls != 0 {
+		t.Fatalf("TikTok provider calls resume/init/upload=%d/%d/%d, want 0/0/0", adapter.resumeCalls, adapter.initCalls, adapter.uploadCalls)
+	}
+	if !dbtx.restrictedFinalization || dbtx.job.State != "dead" {
+		t.Fatalf("job finalization=%v state=%q, want temporary operational failure", dbtx.restrictedFinalization, dbtx.job.State)
+	}
+	if dbtx.result.ErrorCode.String != "platform_operation_disabled" || dbtx.result.NextAction.String != "retry_after_platform_recovery" {
+		t.Fatalf("result error_code=%q next_action=%q", dbtx.result.ErrorCode.String, dbtx.result.NextAction.String)
 	}
 }
 

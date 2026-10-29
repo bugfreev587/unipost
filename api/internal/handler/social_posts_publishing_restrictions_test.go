@@ -17,6 +17,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
@@ -27,6 +28,72 @@ type fakePostRestrictionEvaluator struct {
 	err             error
 	errOnCall       int
 	calls           []string
+}
+
+type mappedPlatformControlEvaluator struct {
+	decisions map[string]platformcontrols.Decision
+	calls     []string
+}
+
+func (e *mappedPlatformControlEvaluator) Evaluate(_ context.Context, platformName string, operation platformcontrols.Operation) (platformcontrols.Decision, error) {
+	e.calls = append(e.calls, platformName+":"+string(operation))
+	decision := e.decisions[platformName]
+	decision.Platform = platformName
+	decision.Operation = operation
+	if decision.State == "" {
+		decision.State = platformcontrols.StateActive
+	}
+	return decision, nil
+}
+
+func TestMixedPlatformOperationalControlRejectsTikTokAndAcceptsLinkedIn(t *testing.T) {
+	h, dbtx, planEvaluator, parsed, accounts := newPolicySnapshotHarness(t, "publishing")
+	planEvaluator.decisions = nil
+	dbAccount := dbtx.accounts["ig_1"]
+	dbAccount.Platform = "linkedin"
+	dbtx.accounts["ig_1"] = dbAccount
+	accounts["ig_1"] = platform.ValidateAccount{Platform: "linkedin"}
+	control := &mappedPlatformControlEvaluator{decisions: map[string]platformcontrols.Decision{
+		"tiktok": {
+			State:      platformcontrols.StatePublishingDisabled,
+			Blocked:    true,
+			Message:    "TikTok publishing is temporarily disabled.",
+			ReasonCode: "security_incident",
+		},
+	}}
+	h.SetPlatformOperationalControls(control)
+
+	blocked, err := h.evaluatePublishingRestrictions(context.Background(), "ws_1", parsed.Posts, accounts)
+	if err != nil {
+		t.Fatalf("evaluate publishing admission: %v", err)
+	}
+	if len(blocked) != 1 || !blocked["tk_1"].Restricted || blocked["ig_1"].Restricted {
+		t.Fatalf("blocked targets=%+v, want only TikTok", blocked)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts", nil)
+	if _, err := h.executeImmediatePost(req, "ws_1", parsed, accounts, blocked); err != nil {
+		t.Fatalf("executeImmediatePost: %v", err)
+	}
+
+	if got := strings.Join(control.calls, ","); got != "tiktok:publish,linkedin:publish" {
+		t.Fatalf("operational calls=%q", got)
+	}
+	if len(dbtx.results) != 2 || len(dbtx.jobs) != 1 {
+		t.Fatalf("results=%d jobs=%d, want 2 results and one LinkedIn job", len(dbtx.results), len(dbtx.jobs))
+	}
+	if dbtx.results[0].Status != "failed" {
+		t.Fatalf("TikTok result=%+v", dbtx.results[0])
+	}
+	if len(dbtx.failureDetails) == 0 {
+		t.Fatal("missing TikTok failure details")
+	}
+	details := dbtx.failureDetails[len(dbtx.failureDetails)-1]
+	if details.ErrorCode.String != "platform_operation_disabled" || details.NextAction.String != "retry_after_platform_recovery" {
+		t.Fatalf("TikTok failure details=%+v", dbtx.failureDetails)
+	}
+	if dbtx.results[1].Status != "pending" || dbtx.jobs[0].Platform != "linkedin" {
+		t.Fatalf("LinkedIn result/job=%+v %+v", dbtx.results[1], dbtx.jobs[0])
+	}
 }
 
 func TestRetryResultRechecksRestrictionBeforeEnqueue(t *testing.T) {

@@ -31,6 +31,7 @@ import (
 	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/postfailuredebug"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
@@ -74,6 +75,7 @@ type SocialPostHandler struct {
 	holdReconciler         paidquota.HoldReconciler
 	paidQuotaEvaluator     paidQuotaEvaluationService
 	publishingRestrictions publishingRestrictionEvaluator
+	platformControls       platformcontrols.Evaluator
 	postFailureDebug       postFailureDebugSink
 	appBaseURL             string
 }

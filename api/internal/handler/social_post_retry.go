@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
@@ -52,7 +53,7 @@ func (e *retrySocialAccountUnavailableError) Error() string {
 }
 
 func (e *retryPublishingRestrictionError) Error() string {
-	return publishingrestrictions.UserMessage
+	return publishingBlockMessage(e.decision)
 }
 
 // RetryResult handles
@@ -194,6 +195,15 @@ func (h *SocialPostHandler) evaluateRetryPublishingRestriction(
 	}
 	if socialAccountUnavailableForDelivery(account, true) {
 		return publishingrestrictions.Decision{}, &retrySocialAccountUnavailableError{accountID: result.SocialAccountID}
+	}
+	if h.platformControls != nil {
+		decision, err := h.platformControls.Evaluate(ctx, account.Platform, platformcontrols.OperationPublish)
+		if err != nil {
+			return publishingrestrictions.Decision{}, err
+		}
+		if decision.Blocked {
+			return platformControlPublishingDecision(decision), nil
+		}
 	}
 	if h.publishingRestrictions == nil {
 		return publishingrestrictions.Decision{}, nil

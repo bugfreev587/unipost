@@ -240,6 +240,8 @@ func NextActionForErrorCode(errorCode string) string {
 		return "review_quota"
 	case "plan_platform_publishing_restricted":
 		return "upgrade_or_wait_then_retry"
+	case "platform_operation_disabled":
+		return "retry_after_platform_recovery"
 	case "account_reconnect_required", "auth_token_invalid":
 		return "reconnect_account"
 	case "missing_permission":

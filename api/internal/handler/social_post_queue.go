@@ -19,6 +19,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/platformcontrols"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -192,7 +193,7 @@ func evaluateQueuedDeliveryTargets(
 		if validationErr == nil {
 			decision = blockedTargets[pp.AccountID]
 			if decision.Restricted {
-				validationErr = errors.New(publishingrestrictions.UserMessage)
+				validationErr = errors.New(publishingBlockMessage(decision))
 			}
 		}
 		evaluations = append(evaluations, queuedDeliveryEvaluation{
@@ -313,7 +314,7 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveriesWithQuotaBlocks(
 					postfailures.FirstNonEmpty(platformName, accountMap[pp.AccountID].Platform), "quota",
 					validationErr.Error(), validationErr.Error())
 			} else if policyDecision.Restricted {
-				failure = publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName, policyDecision.CycleID)
+				failure = publishingBlockFailure(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName, policyDecision)
 			}
 			h.recordPostFailure(ctx, failure)
 			if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
@@ -729,7 +730,7 @@ func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post 
 		platformName := accountMap[pp.AccountID].Platform
 		message := quotaMessage
 		if decision, restricted := blockedTargets[pp.AccountID]; restricted && decision.Restricted {
-			message = publishingrestrictions.UserMessage
+			message = publishingBlockMessage(decision)
 			policyFailed = true
 		}
 		res, err := h.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
@@ -750,7 +751,7 @@ func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post 
 		summaries = append(summaries, fmt.Sprintf("[%s] %s", pp.AccountID, message))
 		failure := postfailures.BuildParams(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName, "quota", message, message)
 		if decision, restricted := blockedTargets[pp.AccountID]; restricted && decision.Restricted {
-			failure = publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName, decision.CycleID)
+			failure = publishingBlockFailure(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName, decision)
 		}
 		h.recordPostFailure(ctx, failure)
 		if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
@@ -1031,6 +1032,13 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 			err:      errors.New("account is disconnected"),
 		})
 	}
+	operationalDecision, err := h.evaluateDeliveryOperationalControl(ctx, job.Platform, accountMap[pp.AccountID])
+	if err != nil {
+		return err
+	}
+	if operationalDecision.Restricted {
+		return h.finalizeRestrictedDeliveryJob(ctx, job, res, post, operationalDecision)
+	}
 
 	if shouldEvaluateDeliveryPublishingRestriction(res) {
 		policyDecision, err := h.evaluateDeliveryPublishingRestriction(ctx, post.WorkspaceID, job.Platform, accountMap[pp.AccountID])
@@ -1194,6 +1202,25 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	return nil
 }
 
+func (h *SocialPostHandler) evaluateDeliveryOperationalControl(
+	ctx context.Context,
+	jobPlatform string,
+	account platform.ValidateAccount,
+) (publishingrestrictions.Decision, error) {
+	if h == nil || h.platformControls == nil || account.Disconnected {
+		return publishingrestrictions.Decision{}, nil
+	}
+	platformName := strings.ToLower(strings.TrimSpace(account.Platform))
+	if platformName == "" {
+		platformName = strings.ToLower(strings.TrimSpace(jobPlatform))
+	}
+	decision, err := h.platformControls.Evaluate(ctx, platformName, platformcontrols.OperationPublish)
+	if err != nil {
+		return publishingrestrictions.Decision{}, err
+	}
+	return platformControlPublishingDecision(decision), nil
+}
+
 func (h *SocialPostHandler) logPlatformDispatchEvents(ctx context.Context, post db.SocialPost, res db.SocialPostResult, job db.PostDeliveryJob, events []platform.DispatchEvent) {
 	for _, event := range events {
 		switch event.Name {
@@ -1280,14 +1307,15 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 		return fmt.Errorf("%w: post %s", errInvalidPostMediaMetadata, post.ID)
 	}
 	finalizedAt := time.Now()
+	message := publishingBlockMessage(decision)
 	params := db.FinalizeRestrictedPostDeliveryJobParams{
-		FailureStage:     postfailures.ToText(publishingrestrictions.FailureStage),
-		ErrorCode:        postfailures.ToText(publishingrestrictions.NormalizedCode),
-		ErrorMessage:     publishingrestrictions.UserMessage,
+		FailureStage:     postfailures.ToText(publishingBlockFailureStage(decision)),
+		ErrorCode:        postfailures.ToText(publishingBlockCode(decision)),
+		ErrorMessage:     message,
 		ID:               job.ID,
 		LeaseOwner:       job.LeaseOwner,
 		LastAttemptAt:    job.LastAttemptAt,
-		NextAction:       postfailures.ToText(publishingrestrictions.NextAction),
+		NextAction:       postfailures.ToText(publishingBlockNextAction(decision)),
 		ErrorSource:      postfailures.ToText(postfailures.ErrorSourceUnipost),
 		ErrorTemporality: postfailures.ToText(postfailures.ErrorTemporalityTemporary),
 		MediaIds:         mediaIDs,
@@ -1323,18 +1351,18 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	}
 	switch finalizedJob.State {
 	case "dead":
-		failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision.CycleID)
+		failure := publishingBlockFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision)
 		h.recordPostFailureHistory(ctx, failure)
 		h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 			WorkspaceID:     post.WorkspaceID,
 			Level:           integrationlogs.LevelWarn,
 			Status:          integrationlogs.StatusError,
 			Action:          integrationlogs.ActionPostPublishPlatformFailed,
-			Message:         "Platform delivery blocked by publishing restriction.",
+			Message:         "Platform delivery blocked before provider dispatch.",
 			PostID:          post.ID,
 			SocialAccountID: res.SocialAccountID,
 			Platform:        decision.Platform,
-			ErrorCode:       publishingrestrictions.NormalizedCode,
+			ErrorCode:       publishingBlockCode(decision),
 			Metadata: map[string]any{
 				"job_id":               job.ID,
 				"result_id":            res.ID,

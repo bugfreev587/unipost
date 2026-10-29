@@ -638,6 +638,7 @@ func main() {
 	paidQuotaHoldReconciler := paidquota.NewPostgresHoldReconciler(pool)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetPublishingRestrictions(publishingRestrictionService).
+		SetPlatformOperationalControls(platformControlService).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
 		SetQuotaEmailService(freePlanQuotaEmailService).
