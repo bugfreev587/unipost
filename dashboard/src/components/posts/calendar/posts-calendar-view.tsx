@@ -103,6 +103,7 @@ const WHEEL_SNAP_IDLE_MS = 110;
 const MONTH_VISIBLE_WEEKS = 6;
 const WEEK_VISIBLE_DAYS = 7;
 const WEEK_BUFFER_DAYS = 1;
+const POSTS_POLL_INTERVAL_MS = 8000;
 
 type SelectedPostTarget = {
   postId: string;
@@ -224,15 +225,14 @@ export function PostsCalendarView() {
     router.replace(`${pathname}${query ? `?${query}` : ""}`, { scroll: false });
   }, [pathname, router, searchParams]);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const token = await getToken();
-      if (!token) {
-        setLoading(false);
-        return;
-      }
+      if (!token) return;
       const [postRes, profileRes] = await Promise.all([
         listAllSocialPosts(token),
         listProfiles(token),
@@ -252,15 +252,27 @@ export function PostsCalendarView() {
       setProfiles(loadedProfiles);
       setAccounts(accountGroups.flat());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load posts calendar");
+      if (!opts?.silent) {
+        setError(err instanceof Error ? err.message : "Failed to load posts calendar");
+      }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [getToken]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void loadData({ silent: true });
+      }
+    }, POSTS_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [workspaceId, loadData]);
 
   useEffect(() => {
     clearCalendarSnap();
