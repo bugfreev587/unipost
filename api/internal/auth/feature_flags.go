@@ -1,14 +1,5 @@
-// feature_flags.go holds the server-side kill-switches for features
-// that are gradually rolled out. Each flag gates on the caller's
-// identity — typically "is this user on the SUPER_ADMINS internal
-// allowlist". Toggling requires an env-var redeploy of SUPER_ADMINS.
-//
-// Facebook Pages lives here because Meta's App Review watches for
-// traffic against scopes the app hasn't been approved for yet — an
-// accidentally-leaked frontend flag flip could send unreviewed
-// requests to production Meta. Routing the gate through the same
-// SUPER_ADMINS allowlist the billing sandbox uses keeps internal
-// testing isolated while we wait for audit approval.
+// feature_flags.go holds server-side gates for features that are
+// gradually rolled out to the SUPER_ADMINS internal allowlist.
 
 package auth
 
@@ -32,16 +23,4 @@ func RequireSuperAdmin(checker *SuperAdminChecker, code, message string) func(ht
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// RequireFacebookSuperAdmin is a chi-compatible middleware that
-// rejects requests when the authenticated Clerk user isn't on
-// SUPER_ADMINS. MUST be mounted inside a group that already runs
-// ClerkSessionMiddleware so the user ID is in context.
-//
-// Returns 403 FACEBOOK_DISABLED so neither the dashboard nor a
-// curious direct caller can drive traffic through Meta while we're
-// still in App Review.
-func RequireFacebookSuperAdmin(checker *SuperAdminChecker) func(http.Handler) http.Handler {
-	return RequireSuperAdmin(checker, "FACEBOOK_DISABLED", "Facebook integration is not enabled for your account")
 }

@@ -814,8 +814,7 @@ export async function connectSocialAccount(
 // Facebook Page Picker types + helpers. Lives in lib/api alongside the
 // other account-connection helpers so callers find it next to
 // listSocialAccounts / connectSocialAccount. The backend endpoint is
-// gated by ENABLE_FACEBOOK_PAGES — expect 403 FACEBOOK_DISABLED until
-// the flag is flipped on.
+// available to the user who initiated the Facebook OAuth flow.
 export interface PendingFacebookPage {
   id: string;
   name: string;
