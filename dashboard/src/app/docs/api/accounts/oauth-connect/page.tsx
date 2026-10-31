@@ -10,7 +10,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "profile_id?", type: "string", description: "Profile that should own the connected account. Required when the workspace has multiple profiles." },
-  { name: "platform", type: "string", description: <>OAuth platform key. Facebook Page OAuth is beta/admin-gated; Bluesky uses <Link href="/docs/api/accounts/connect">direct credentials</Link> instead.<EnumValues values={["twitter", "linkedin", "instagram", "threads", "youtube", "tiktok", "pinterest", "facebook"]} /></> },
+  { name: "platform", type: "string", description: <>OAuth platform key. Bluesky uses <Link href="/docs/api/accounts/connect">direct credentials</Link> instead.<EnumValues values={["twitter", "linkedin", "instagram", "threads", "youtube", "tiktok", "pinterest", "facebook"]} /></> },
   { name: "redirect_url?", type: "string", description: "Optional app URL where the browser should land after OAuth completes. This is not the OAuth callback URL or platform redirect_uri." },
 ];
 

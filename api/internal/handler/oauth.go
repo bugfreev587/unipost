@@ -28,9 +28,8 @@ type OAuthHandler struct {
 	encryptor       *crypto.AESEncryptor
 	baseRedirectURL string
 	ilog            *integrationlogs.Logger
-	// superAdminChecker gates the Facebook Pages detour. A nil checker
-	// behaves as "no super admins configured" — every FB attempt
-	// returns 403. Non-FB platforms ignore it.
+	// superAdminChecker is used by the existing free-plan sharing gate.
+	// Facebook OAuth itself is available to regular workspace users.
 	superAdminChecker *auth.SuperAdminChecker
 }
 
