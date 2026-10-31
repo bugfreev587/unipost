@@ -33,7 +33,6 @@ var facebookConnectScopes = []string{
 	"pages_read_engagement",
 	"pages_read_user_content",
 	"pages_manage_engagement",
-	"pages_messaging",
 	"pages_manage_metadata",
 }
 

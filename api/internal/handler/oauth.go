@@ -106,18 +106,6 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Super-admin-only gate for Facebook during App Review — only
-	// users on SUPER_ADMINS can kick off OAuth so the app never mints
-	// an auth URL for a regular customer while scopes are still being
-	// reviewed. Non-FB platforms skip this check entirely.
-	if platformName == "facebook" {
-		userID := auth.GetUserID(r.Context())
-		if !h.superAdminChecker.IsSuperAdmin(r.Context(), userID) {
-			writeError(w, http.StatusForbidden, "FACEBOOK_DISABLED", "Facebook integration is not enabled for your account")
-			return
-		}
-	}
-
 	profileID, profileErr := h.resolveProfileID(r, requestedProfileID)
 	if profileErr != nil {
 		writeError(w, profileErr.status, profileErr.code, profileErr.msg)
@@ -269,24 +257,6 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	// pending_connections and redirect the browser to the dashboard
 	// picker. See PRD §4.2.
 	if platformName == "facebook" {
-		// This callback is hit by Meta's browser redirect, which
-		// doesn't run through Clerk middleware — so we re-derive the
-		// super-admin check from profile → workspace.user_id instead
-		// of reading auth.GetUserID from context.
-		if !h.callerIsFacebookSuperAdmin(r, oauthState.ProfileID) {
-			h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
-				Level:     integrationlogs.LevelWarn,
-				Status:    integrationlogs.StatusError,
-				Action:    integrationlogs.ActionAccountConnectCallbackFailed,
-				Message:   "Facebook OAuth callback blocked by super-admin gate.",
-				ProfileID: oauthState.ProfileID,
-				Platform:  platformName,
-				ErrorCode: "facebook_disabled",
-				Metadata:  map[string]any{"flow": "dashboard_oauth"},
-			})
-			h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Facebook integration is not enabled")
-			return
-		}
 		h.handleFacebookCallback(w, r, oauthState, config, result)
 		return
 	}

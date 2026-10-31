@@ -19,7 +19,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: 'Common values include "UNAUTHORIZED", "VALIDATION_ERROR", and "FACEBOOK_DISABLED".' },
+  { name: "error.code", type: "string", description: 'Common values include "UNAUTHORIZED" and "VALIDATION_ERROR".' },
   { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "unauthorized" or "validation_error".' },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
