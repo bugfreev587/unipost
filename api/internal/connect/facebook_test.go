@@ -66,6 +66,9 @@ func TestFacebookConnectorAuthorizeURL(t *testing.T) {
 	if got := facebookTestScopeCount(strings.Fields(parsedURL.Query().Get("scope")), "business_management"); got != 1 {
 		t.Fatalf("business_management scope count = %d, want 1: %s", got, rawURL)
 	}
+	if got := facebookTestScopeCount(strings.Fields(parsedURL.Query().Get("scope")), "pages_messaging"); got != 0 {
+		t.Fatalf("pages_messaging scope count = %d, want 0 until Meta grants advanced access: %s", got, rawURL)
+	}
 }
 
 func TestFacebookConnectorExchangeSelectsFirstPublishablePage(t *testing.T) {
