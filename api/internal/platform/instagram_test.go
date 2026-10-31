@@ -47,6 +47,47 @@ func TestInstagramAuthURLUsesBusinessLoginContract(t *testing.T) {
 	}
 }
 
+func TestInstagramExchangeCodeUsesMultipartFormData(t *testing.T) {
+	transport := &instagramSequenceTransport{responses: []instagramHTTPResponse{
+		{status: http.StatusOK, body: `{"access_token":"SHORT-AT","user_id":12345}`},
+		{status: http.StatusOK, body: `{"access_token":"LONG-AT","token_type":"bearer","expires_in":5184000}`},
+		{status: http.StatusOK, body: `{"id":"app-scoped-99","user_id":"professional-42","username":"shipper"}`},
+	}}
+	adapter := &InstagramAdapter{client: &http.Client{Transport: transport}}
+	config := adapter.DefaultOAuthConfig("https://api.example.com")
+	config.ClientID = "ig-client"
+	config.ClientSecret = "ig-secret"
+	config.TokenURL = "https://api.instagram.test/oauth/access_token"
+
+	if _, err := adapter.ExchangeCode(context.Background(), config, "auth-code"); err != nil {
+		t.Fatalf("ExchangeCode: %v", err)
+	}
+	if len(transport.requests) == 0 {
+		t.Fatal("token exchange request was not sent")
+	}
+	if got := transport.requests[0].Header.Get("Content-Type"); !strings.HasPrefix(got, "multipart/form-data; boundary=") {
+		t.Fatalf("token exchange Content-Type = %q, want multipart/form-data", got)
+	}
+	req := transport.requests[0]
+	if req.Method != http.MethodPost {
+		t.Fatalf("token exchange method = %q, want POST", req.Method)
+	}
+	if err := req.ParseMultipartForm(1 << 20); err != nil {
+		t.Fatalf("parse token exchange multipart form: %v", err)
+	}
+	for field, want := range map[string]string{
+		"client_id":     "ig-client",
+		"client_secret": "ig-secret",
+		"redirect_uri":  "https://api.example.com/v1/oauth/callback/instagram",
+		"code":          "auth-code",
+		"grant_type":    "authorization_code",
+	} {
+		if got := req.FormValue(field); got != want {
+			t.Errorf("token exchange %s = %q, want %q", field, got, want)
+		}
+	}
+}
+
 func TestInstagramExchangeCodePersistsWebhookAccountID(t *testing.T) {
 	transport := &instagramSequenceTransport{responses: []instagramHTTPResponse{
 		{status: http.StatusOK, body: `{"access_token":"SHORT-AT","user_id":12345}`},
