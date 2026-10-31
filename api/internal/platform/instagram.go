@@ -1,11 +1,13 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -61,15 +63,29 @@ func (a *InstagramAdapter) GetAuthURL(config OAuthConfig, state string) string {
 
 func (a *InstagramAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, code string) (*ConnectResult, error) {
 	// Exchange code for short-lived token
-	params := url.Values{
-		"client_id":     {config.ClientID},
-		"client_secret": {config.ClientSecret},
-		"redirect_uri":  {config.RedirectURL},
-		"code":          {code},
-		"grant_type":    {"authorization_code"},
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	for key, value := range map[string]string{
+		"client_id":     config.ClientID,
+		"client_secret": config.ClientSecret,
+		"redirect_uri":  config.RedirectURL,
+		"code":          code,
+		"grant_type":    "authorization_code",
+	} {
+		if err := form.WriteField(key, value); err != nil {
+			return nil, fmt.Errorf("failed to build token exchange request: %w", err)
+		}
+	}
+	if err := form.Close(); err != nil {
+		return nil, fmt.Errorf("failed to build token exchange request: %w", err)
 	}
 
-	resp, err := a.client.PostForm(config.TokenURL, params)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.TokenURL, &body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token exchange request: %w", err)
+	}
+	req.Header.Set("Content-Type", form.FormDataContentType())
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code: %w", err)
 	}
