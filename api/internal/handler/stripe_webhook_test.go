@@ -122,6 +122,32 @@ func TestStripeSandboxCheckoutRebindsExistingSameCustomerSubscription(t *testing
 	}
 }
 
+func TestStripeSandboxCheckoutRebindsStaleCustomerFromPreviousStripeAccount(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_previous_account", Valid: true}
+	store.stripeSubscriptionErr = pgx.ErrNoRows
+	trial := &recordingTrialWebhookService{
+		retrieve: trials.SubscriptionSnapshot{
+			StripeMode: "sandbox", ID: "sub_staging", Status: "active", CustomerID: "cus_staging", PriceID: "price_basic",
+			CurrentPeriodStartAt: webhookPtrTime(time.Unix(1784822617, 0).UTC()), CurrentPeriodEndAt: webhookPtrTime(time.Unix(1787501017, 0).UTC()),
+			Metadata: map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "unipost_environment": "staging"},
+		},
+		ordinaryResult: trials.WebhookReconcileResult{Managed: false},
+	}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+
+	response := postTestCheckoutWebhook(t, h, secret, trial.retrieve.Metadata, stripe.CheckoutSessionPaymentStatusPaid)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if got := store.subscription; got.PlanID != "basic" || got.StripeCustomerID.String != "cus_staging" || got.StripeSubscriptionID.String != "sub_staging" {
+		t.Fatalf("subscription = %#v", got)
+	}
+}
+
 func TestStripeSandboxSubscriptionUpdateRejectsReplacementSubscription(t *testing.T) {
 	t.Setenv(runtimeenv.EnvVar, "staging")
 	store := newStripeWebhookStore("ws_staging")
