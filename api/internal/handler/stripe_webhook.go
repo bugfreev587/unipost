@@ -302,7 +302,7 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	if advancedReplay {
 		return nil
 	}
-	projected, err := h.projectStripeSubscription(r, event, snapshot, subscriptionProjectionOptions{allowCheckoutSubscriptionReplacement: true})
+	projected, err := h.projectStripeSubscription(r, event, snapshot, subscriptionProjectionOptions{allowCheckoutBillingIdentityReplacement: true})
 	if err != nil {
 		return err
 	}
@@ -476,7 +476,7 @@ type subscriptionProjectionResult struct {
 }
 
 type subscriptionProjectionOptions struct {
-	allowCheckoutSubscriptionReplacement bool
+	allowCheckoutBillingIdentityReplacement bool
 }
 
 func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event stripe.Event, snapshot trials.SubscriptionSnapshot, options subscriptionProjectionOptions) (subscriptionProjectionResult, error) {
@@ -497,7 +497,7 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 		localSub, err = h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 		customerConflicts := localSub.StripeCustomerID.Valid && localSub.StripeCustomerID.String != snapshot.CustomerID
 		subscriptionConflicts := localSub.StripeSubscriptionID.Valid && localSub.StripeSubscriptionID.String != snapshot.ID
-		if err == nil && (customerConflicts || (subscriptionConflicts && !options.allowCheckoutSubscriptionReplacement)) {
+		if err == nil && (customerConflicts || subscriptionConflicts) && !options.allowCheckoutBillingIdentityReplacement {
 			return subscriptionProjectionResult{}, fmt.Errorf("Stripe subscription metadata conflicts with the workspace billing identity")
 		}
 	}
