@@ -66,7 +66,7 @@ type stripeCustomerService interface {
 	New(*stripe.CustomerParams) (*stripe.Customer, error)
 }
 
-func resolveTrialStripeCustomer(ctx context.Context, customers stripeCustomerService, candidateID, workspaceID, userID, workspaceName, email, mode string) (string, error) {
+func resolveStripeCustomer(ctx context.Context, customers stripeCustomerService, candidateID, workspaceID, userID, workspaceName, email, mode string) (string, error) {
 	if customers == nil {
 		return "", errors.New("Stripe customer service is unavailable")
 	}
@@ -434,32 +434,14 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 	// from live and sandbox don't overlap, so even if a workspace changes
 	// modes (user added/removed from SUPER_ADMINS), the previous mode's
 	// customer ID will be invalid in the new mode and we'll mint a new one.
-	customerID := ""
-	if trialNeedsCustomer {
-		user, _ := h.queries.GetUser(r.Context(), userID)
-		customerID, err = resolveTrialStripeCustomer(
-			r.Context(), mode.Client.Customers, sub.StripeCustomerID.String,
-			workspaceID, userID, workspace.Name, user.Email, mode.Name,
-		)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to validate customer for trial checkout")
-			return
-		}
-	} else if sub.StripeCustomerID.String != "" {
-		customerID = sub.StripeCustomerID.String
-	} else {
-		user, _ := h.queries.GetUser(r.Context(), userID)
-		params := stripeCustomerParams(workspaceID, userID, workspace.Name, user.Email, mode.Name)
-		c, err := mode.Client.Customers.New(params)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create customer")
-			return
-		}
-		if c == nil || c.ID == "" {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create customer")
-			return
-		}
-		customerID = c.ID
+	user, _ := h.queries.GetUser(r.Context(), userID)
+	customerID, err := resolveStripeCustomer(
+		r.Context(), mode.Client.Customers, sub.StripeCustomerID.String,
+		workspaceID, userID, workspace.Name, user.Email, mode.Name,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to validate billing customer")
+		return
 	}
 	if trialNeedsCustomer {
 		trialReq.CustomerID = customerID
