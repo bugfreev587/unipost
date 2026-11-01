@@ -34,6 +34,8 @@ jobs:
           if-no-files-found: warn
 
   sdk_js:
+    needs: smoke
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -63,6 +65,8 @@ jobs:
           if-no-files-found: warn
 
   sdk_python:
+    needs: sdk_js
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -92,6 +96,8 @@ jobs:
           if-no-files-found: warn
 
   sdk_go:
+    needs: sdk_python
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -121,6 +127,8 @@ jobs:
           if-no-files-found: warn
 
   sdk_java:
+    needs: sdk_go
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
