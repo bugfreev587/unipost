@@ -138,6 +138,11 @@ is_plan_gate_response() {
     [[ "$(echo "$RESP_BODY" | jq -r '.error.normalized_code // .error.code // empty' 2>/dev/null)" == "plan_feature_not_available" ]]
 }
 
+is_validation_plan_gate_response() {
+  [[ "$RESP_STATUS" == "200" ]] &&
+    [[ "$(echo "$RESP_BODY" | jq -r '[.data.errors[]?.code] | index("plan_platform_not_allowed") != null' 2>/dev/null)" == "true" ]]
+}
+
 assert_jq() {
   local query="$1"
   local expected="$2"
@@ -490,14 +495,22 @@ fi
 if [[ -n "$TEXT_ID" ]]; then
   api POST "/v1/posts/validate" "$(jq -nc --arg id "$TEXT_ID" \
     '{platform_posts: [{account_id: $id, caption: "smoke test"}]}')"
-  assert_status "200" "POST /validate happy path (text-friendly account)"
-  assert_jq '.data.valid' 'true' 'validate returns valid=true'
+  if is_validation_plan_gate_response; then
+    skip "validate happy path" "platform plan-gated"
+  else
+    assert_status "200" "POST /validate happy path (text-friendly account)"
+    assert_jq '.data.valid' 'true' 'validate returns valid=true'
+  fi
 elif [[ -n "$ANY_ID" ]]; then
   # Fall back: use any account but allow missing-media to be a soft pass.
   api POST "/v1/posts/validate" "$(jq -nc --arg id "$ANY_ID" \
     '{platform_posts: [{account_id: $id, caption: "smoke test", media_urls: ["https://x/y.jpg"]}]}')"
-  assert_status "200" "POST /validate happy path (with stub media)"
-  assert_jq '.data.valid' 'true' 'validate returns valid=true'
+  if is_validation_plan_gate_response; then
+    skip "validate happy path" "platform plan-gated"
+  else
+    assert_status "200" "POST /validate happy path (with stub media)"
+    assert_jq '.data.valid' 'true' 'validate returns valid=true'
+  fi
 else
   skip "validate happy path" "no account_id available"
 fi
@@ -507,9 +520,13 @@ if [[ -n "$TWITTER_ID" ]]; then
   LONG=$(printf 'a%.0s' $(seq 1 300))
   api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" --arg c "$LONG" \
     '{platform_posts: [{account_id: $id, caption: $c}]}')"
-  assert_status "200" "POST /validate (long caption)"
-  assert_jq '.data.valid' 'false' 'long caption invalid'
-  assert_jq '.data.errors[0].code' 'exceeds_max_length' 'error code = exceeds_max_length'
+  if is_validation_plan_gate_response; then
+    skip "long-caption test" "platform plan-gated"
+  else
+    assert_status "200" "POST /validate (long caption)"
+    assert_jq '.data.valid' 'false' 'long caption invalid'
+    assert_jq '.data.errors[0].code' 'exceeds_max_length' 'error code = exceeds_max_length'
+  fi
 else
   skip "long-caption test" "no twitter account"
 fi
@@ -535,24 +552,28 @@ if [[ -n "$TWITTER_ID" ]]; then
       {account_id: $id, caption: "2/", thread_position: 2},
       {account_id: $id, caption: "3/", thread_position: 3}
     ]}')"
-  assert_jq '.data.valid' 'true' '3-tweet thread valid'
+  if is_validation_plan_gate_response; then
+    skip "thread validation tests" "platform plan-gated"
+  else
+    assert_jq '.data.valid' 'true' '3-tweet thread valid'
 
-  # Missing position 1.
-  api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
-    '{platform_posts: [
-      {account_id: $id, caption: "x", thread_position: 2},
-      {account_id: $id, caption: "y", thread_position: 3}
-    ]}')"
-  assert_jq '.data.errors[0].code' 'thread_positions_not_contiguous' 'positions not contiguous'
+    # Missing position 1.
+    api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
+      '{platform_posts: [
+        {account_id: $id, caption: "x", thread_position: 2},
+        {account_id: $id, caption: "y", thread_position: 3}
+      ]}')"
+    assert_jq '.data.errors[0].code' 'thread_positions_not_contiguous' 'positions not contiguous'
 
-  # Mixed thread + standalone.
-  api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
-    '{platform_posts: [
-      {account_id: $id, caption: "thread 1", thread_position: 1},
-      {account_id: $id, caption: "thread 2", thread_position: 2},
-      {account_id: $id, caption: "standalone"}
-    ]}')"
-  assert_jq '.data.errors[0].code' 'thread_mixed_with_single' 'mixed thread + standalone'
+    # Mixed thread + standalone.
+    api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
+      '{platform_posts: [
+        {account_id: $id, caption: "thread 1", thread_position: 1},
+        {account_id: $id, caption: "thread 2", thread_position: 2},
+        {account_id: $id, caption: "standalone"}
+      ]}')"
+    assert_jq '.data.errors[0].code' 'thread_mixed_with_single' 'mixed thread + standalone'
+  fi
 else
   skip "thread validation tests" "no twitter account"
 fi
@@ -561,7 +582,11 @@ if [[ -n "$IG_ID" ]]; then
   # Threads on a platform that doesn't support them.
   api POST "/v1/posts/validate" "$(jq -nc --arg id "$IG_ID" \
     '{platform_posts: [{account_id: $id, caption: "x", media_urls: ["https://x/y.jpg"], thread_position: 1}]}')"
-  assert_jq '.data.errors | map(.code) | index("threads_unsupported") != null' 'true' 'threads_unsupported on instagram'
+  if is_validation_plan_gate_response; then
+    skip "instagram thread test" "platform plan-gated"
+  else
+    assert_jq '.data.errors | map(.code) | index("threads_unsupported") != null' 'true' 'threads_unsupported on instagram'
+  fi
 else
   skip "instagram thread test" "no instagram account"
 fi
