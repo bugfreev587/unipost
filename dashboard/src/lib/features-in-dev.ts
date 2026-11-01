@@ -5,7 +5,6 @@
 // stay hidden from non-super-admin users until launch readiness, at
 // which point we remove the feature name from this array.
 export const FEATURES_IN_DEV = [
-  "facebook_pages",
   "ai_assist_create_post_drawer",
 ] as const;
 

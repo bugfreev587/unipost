@@ -6,7 +6,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useUser, useClerk } from "@clerk/nextjs";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { useTheme } from "@/components/theme-provider";
-import { isFeatureInDevEnabledForMe } from "@/lib/features-in-dev";
 import { usePlanGates } from "@/lib/use-plan-gates";
 import { getCanonicalProjectPath } from "@/lib/profile-route";
 import { getDashboardDocsHref } from "@/lib/dashboard-docs-link";
@@ -83,10 +82,6 @@ const ALL_NAV_ITEMS: NavItem[] = [
     { href: "/analytics/api", label: "API" },
   ]},
 ];
-
-export function isFacebookEnabledForMe(isSuperAdmin: boolean | undefined): boolean {
-  return isFeatureInDevEnabledForMe("facebook_pages", isSuperAdmin);
-}
 
 function subscribeToClientSnapshot() {
   return () => {};

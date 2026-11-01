@@ -9,13 +9,12 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation, getMe,
+  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation,
   getAccountCapabilities,
   type SocialAccount, type Profile, type XInboxCapabilities,
 } from "@/lib/api";
 import { evaluateXInboxEligibility } from "@/lib/x-inbox-eligibility";
 import { accountIdentityLabels, TIKTOK_IDENTITY_RECONNECT_GUIDANCE } from "@/lib/account-identity";
-import { isFacebookEnabledForMe } from "@/components/dashboard/shell";
 import { FacebookPagePicker } from "@/components/accounts/facebook-page-picker";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
@@ -28,22 +27,17 @@ import { humanizeConnectError } from "@/lib/connect-errors";
 import { clearStoredReplay, readStoredReplay, writeStoredReplay } from "@/components/tutorials/replay-storage";
 import { writeStoredQuickstartSelectedAccountId } from "@/components/tutorials/quickstart-selection-storage";
 
-// BASE_PLATFORMS is the always-available set. Feature-flagged platforms
-// (currently just Facebook during audit) are appended at render time
-// via the isFacebookEnabled() check so a flag-off deploy doesn't show a
-// broken entry.
-const BASE_PLATFORMS = [
+const PLATFORMS = [
   { id: "bluesky", name: "Bluesky", type: "credentials" as const },
   { id: "linkedin", name: "LinkedIn", type: "oauth" as const },
   { id: "instagram", name: "Instagram", type: "oauth" as const },
+  { id: "facebook", name: "Facebook Page", type: "oauth" as const },
   { id: "threads", name: "Threads", type: "oauth" as const },
   { id: "pinterest", name: "Pinterest", type: "oauth" as const },
   { id: "tiktok", name: "TikTok", type: "oauth" as const },
   { id: "youtube", name: "YouTube", type: "oauth" as const },
   { id: "twitter", name: "X / Twitter", type: "oauth" as const },
 ];
-
-const FACEBOOK_PLATFORM = { id: "facebook", name: "Facebook Page", type: "oauth" as const };
 
 // Platforms that work with text-only or simple image posts. These are the
 // most reliable choices for a first-time Connect during activation — video
@@ -63,18 +57,6 @@ export default function AccountsPage() {
   const { id: profileId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const { getToken } = useAuth();
-  // isSuperAdmin comes from /v1/me and authoritatively gates
-  // in-development features. Starts
-  // undefined so we don't flash the Facebook button before the
-  // /me round-trip resolves — the splice below only runs when the
-  // value lands true.
-  const [isSuperAdmin, setIsSuperAdmin] = useState<boolean>(false);
-
-  const PLATFORMS = (() => {
-    const list = [...BASE_PLATFORMS];
-    if (isFacebookEnabledForMe(isSuperAdmin)) list.splice(3, 0, FACEBOOK_PLATFORM);
-    return list;
-  })();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [xCapabilities, setXCapabilities] = useState<Record<string, XInboxCapabilities>>({});
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -205,23 +187,6 @@ export default function AccountsPage() {
   }, [getToken]);
 
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
-
-  // Resolve super-admin status once per mount. If the /me call fails
-  // we fall back to "not super admin" — this page is the only
-  // Facebook Pages entry point, so a failed fetch simply hides the
-  // in-development button until the user refreshes.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const token = await getToken();
-        if (!token) return;
-        const res = await getMe(token);
-        if (!cancelled) setIsSuperAdmin(!!res.data.is_super_admin);
-      } catch { /* silent — leave the FB button hidden */ }
-    })();
-    return () => { cancelled = true; };
-  }, [getToken]);
 
   const byoAccounts = useMemo(
     () => accounts.filter((a) => a.connection_type === "byo"),

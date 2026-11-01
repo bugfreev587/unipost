@@ -1216,8 +1216,7 @@ func main() {
 			Get("/v1/accounts/{id}/facebook/page-analytics", socialAccountHandler.FacebookPageAnalytics)
 		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Post("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
-		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
-			Get("/v1/accounts/{id}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
+		r.Get("/v1/accounts/{id}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
 		// FB webhook subscription diagnose / repair. Read endpoint
 		// shows whether the Page's webhook subscription with our App
 		// is healthy; the POST re-runs SubscribePageToWebhooks for
@@ -1246,8 +1245,7 @@ func main() {
 			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-analytics", socialAccountHandler.FacebookPageAnalytics)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
 		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
-		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
-			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
 		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
 		r.Get("/v1/profiles/{profileID}/users/{external_user_id}", managedUsersHandler.Get)
 		r.Post("/v1/profiles/{profileID}/users/{external_user_id}/dismiss", managedUsersHandler.DismissDisconnected)
@@ -1369,10 +1367,7 @@ func main() {
 		r.Post("/v1/oauth/connect", oauthHandler.Connect)
 
 		// Facebook Page picker — pending-connection read + finalize.
-		// Still gated by ENABLE_FACEBOOK_PAGES super-admin while the
-		// integration is in audit.
 		r.Route("/v1/pending-connections", func(r chi.Router) {
-			r.Use(auth.RequireFacebookSuperAdmin(superAdminChecker))
 			r.Get("/{id}", oauthHandler.PendingConnectionGet)
 			r.Post("/{id}/finalize", oauthHandler.PendingConnectionFinalize)
 		})

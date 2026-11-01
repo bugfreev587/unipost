@@ -41,12 +41,12 @@ func newFacebookExchangeTestConnector(t *testing.T, pages []map[string]any) (*Fa
 
 func TestFacebookConnectorAuthorizeURL(t *testing.T) {
 	c := NewFacebookConnector("fb-client", "fb-secret", "https://api.example.com")
-	u, err := c.AuthorizeURL(SessionView{OAuthState: "state_123"})
+	rawURL, err := c.AuthorizeURL(SessionView{OAuthState: "state_123"})
 	if err != nil {
 		t.Fatalf("AuthorizeURL: %v", err)
 	}
-	if !strings.HasPrefix(u, "https://www.facebook.com/v22.0/dialog/oauth?") {
-		t.Fatalf("authorize url = %q", u)
+	if !strings.HasPrefix(rawURL, "https://www.facebook.com/v22.0/dialog/oauth?") {
+		t.Fatalf("authorize url = %q", rawURL)
 	}
 	for _, part := range []string{
 		"client_id=fb-client",
@@ -54,9 +54,20 @@ func TestFacebookConnectorAuthorizeURL(t *testing.T) {
 		"state=state_123",
 		"pages_manage_posts",
 	} {
-		if !strings.Contains(u, part) {
-			t.Fatalf("authorize url missing %q: %s", part, u)
+		if !strings.Contains(rawURL, part) {
+			t.Fatalf("authorize url missing %q: %s", part, rawURL)
 		}
+	}
+
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse authorize url: %v", err)
+	}
+	if got := facebookTestScopeCount(strings.Fields(parsedURL.Query().Get("scope")), "business_management"); got != 1 {
+		t.Fatalf("business_management scope count = %d, want 1: %s", got, rawURL)
+	}
+	if got := facebookTestScopeCount(strings.Fields(parsedURL.Query().Get("scope")), "pages_messaging"); got != 0 {
+		t.Fatalf("pages_messaging scope count = %d, want 0 until Meta grants advanced access: %s", got, rawURL)
 	}
 }
 
@@ -112,6 +123,19 @@ func TestFacebookConnectorExchangeSelectsFirstPublishablePage(t *testing.T) {
 	if tokens.RefreshToken != "" {
 		t.Fatalf("refresh token = %q", tokens.RefreshToken)
 	}
+	if got := facebookTestScopeCount(tokens.Scopes, "business_management"); got != 1 {
+		t.Fatalf("business_management scope count = %d, want 1: %#v", got, tokens.Scopes)
+	}
+}
+
+func facebookTestScopeCount(scopes []string, target string) int {
+	count := 0
+	for _, scope := range scopes {
+		if scope == target {
+			count++
+		}
+	}
+	return count
 }
 
 func TestFacebookConnectorExchangeClassifiesPageAvailability(t *testing.T) {

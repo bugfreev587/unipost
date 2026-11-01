@@ -534,30 +534,6 @@ func (h *OAuthHandler) PendingConnectionFinalize(w http.ResponseWriter, r *http.
 	})
 }
 
-// callerIsFacebookSuperAdmin looks up the workspace owner for the
-// pending OAuth state's profile and checks whether that user is on
-// SUPER_ADMINS. Used by the callback path, where Meta's redirect
-// doesn't preserve a Clerk session — the safe, DB-backed derivation
-// matches what the super-admin middleware does for live requests.
-func (h *OAuthHandler) callerIsFacebookSuperAdmin(r *http.Request, profileID string) bool {
-	if h.superAdminChecker == nil {
-		return false
-	}
-	profile, err := h.queries.GetProfile(r.Context(), profileID)
-	if err != nil {
-		return false
-	}
-	workspace, err := h.queries.GetWorkspace(r.Context(), profile.WorkspaceID)
-	if err != nil {
-		return false
-	}
-	user, err := h.queries.GetUser(r.Context(), workspace.UserID)
-	if err != nil {
-		return h.superAdminChecker.IsSuperAdmin(r.Context(), workspace.UserID)
-	}
-	return h.superAdminChecker.IsSuperAdminByUser(workspace.UserID, user.Email)
-}
-
 // facebookFeedStoryURL mirrors the adapter's URL builder for use
 // outside the adapter (e.g. on Get-time status refresh). Kept
 // exported from handler only so callers don't reach into the

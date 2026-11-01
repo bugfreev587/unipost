@@ -478,6 +478,19 @@ test("Posts calendar create flow refreshes data after drawer success", async () 
   assert.match(drawer, /onCreated=\{handleCreated\}/);
 });
 
+test("Posts calendar silently refreshes async publish status while the page is visible", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+
+  assert.match(source, /const POSTS_POLL_INTERVAL_MS = 8000/);
+  assert.match(source, /const loadData = useCallback\(async \(opts\?: \{ silent\?: boolean \}\) => \{/);
+  assert.match(source, /if \(!opts\?\.silent\) \{[\s\S]*?setLoading\(true\)/);
+  assert.match(source, /if \(!opts\?\.silent\) setLoading\(false\)/);
+  assert.match(
+    source,
+    /if \(!workspaceId\) return;[\s\S]*?window\.setInterval\(\(\) => \{[\s\S]*?document\.visibilityState === "visible"[\s\S]*?loadData\(\{ silent: true \}\)[\s\S]*?POSTS_POLL_INTERVAL_MS[\s\S]*?window\.clearInterval\(timer\)/,
+  );
+});
+
 test("Posts calendar keeps empty workspace paths usable", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const profilesFilter = source.slice(

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -72,9 +73,15 @@ func TestFacebookOAuthScopesIncludeAnalyticsScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "business_management pages_show_list pages_manage_posts pages_read_engagement pages_read_user_content pages_manage_engagement pages_messaging pages_manage_metadata read_insights"
+	want := "business_management pages_show_list pages_manage_posts pages_read_engagement pages_read_user_content pages_manage_engagement pages_manage_metadata read_insights"
 	if q := u.Query().Get("scope"); q != want {
 		t.Fatalf("scope = %q, want %q", q, want)
+	}
+	if strings.Contains(u.Query().Get("scope"), "pages_messaging") {
+		t.Fatalf("public OAuth must not request unapproved pages_messaging: %s", got)
+	}
+	if !slices.Contains(FacebookPagesScopes, "pages_messaging") {
+		t.Fatal("canonical review inventory must retain pages_messaging for future approval")
 	}
 }
 

@@ -133,6 +133,16 @@ assert_status_one_of() {
   fail "$label" "expected one of [$*], got $RESP_STATUS — body: ${RESP_BODY:0:200}"
 }
 
+is_plan_gate_response() {
+  [[ "$RESP_STATUS" == "402" ]] &&
+    [[ "$(echo "$RESP_BODY" | jq -r '.error.normalized_code // .error.code // empty' 2>/dev/null)" == "plan_feature_not_available" ]]
+}
+
+is_validation_plan_gate_response() {
+  [[ "$RESP_STATUS" == "200" ]] &&
+    [[ "$(echo "$RESP_BODY" | jq -r '[.data.errors[]?.code] | index("plan_platform_not_allowed") != null' 2>/dev/null)" == "true" ]]
+}
+
 assert_jq() {
   local query="$1"
   local expected="$2"
@@ -234,46 +244,52 @@ assert_jq_truthy '.data' 'data array present'
 
 # Mint a new test key via the API key (new capability).
 api POST "/v1/api-keys" '{"name":"smoke-test-mint","environment":"test"}'
-assert_status "201" "POST /v1/api-keys (mint via API key)"
-MINTED_KEY_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
-MINTED_KEY=$(echo "$RESP_BODY" | jq -r '.data.key // empty')
-if [[ -n "$MINTED_KEY" && "$MINTED_KEY" == up_test_* ]]; then
-  pass "minted key has up_test_ prefix"
+if [[ "$RESP_STATUS" == "201" ]]; then
+  pass "POST /v1/api-keys (mint via API key) (HTTP 201)"
+  MINTED_KEY_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
+  MINTED_KEY=$(echo "$RESP_BODY" | jq -r '.data.key // empty')
+  if [[ -n "$MINTED_KEY" && "$MINTED_KEY" == up_test_* ]]; then
+    pass "minted key has up_test_ prefix"
+  else
+    fail "minted key prefix" "got: ${MINTED_KEY:0:16}..."
+  fi
+
+  # Confirm the new key is listed.
+  if [[ -n "$MINTED_KEY_ID" ]]; then
+    api GET "/v1/api-keys"
+    FOUND=$(echo "$RESP_BODY" | jq -r --arg id "$MINTED_KEY_ID" '[.data[] | select(.id == $id)] | length')
+    if [[ "$FOUND" == "1" ]]; then
+      pass "minted key visible in list"
+    else
+      fail "minted key not in list" "id=$MINTED_KEY_ID"
+    fi
+
+    # The minted key itself can read /v1/workspace.
+    PROBE=$(curl -sS -o /tmp/unipost-smoke-mint -w '%{http_code}' \
+      -H "Authorization: Bearer $MINTED_KEY" "${BASE_URL}/v1/workspace")
+    if [[ "$PROBE" == "200" ]]; then
+      pass "minted key can authenticate"
+    else
+      fail "minted key authentication" "HTTP $PROBE"
+    fi
+
+    # Revoke via the original API key.
+    api DELETE "/v1/api-keys/${MINTED_KEY_ID}"
+    assert_status "204" "DELETE /v1/api-keys/{id} (revoke via API key)"
+
+    # The revoked key should no longer authenticate.
+    PROBE=$(curl -sS -o /tmp/unipost-smoke-mint -w '%{http_code}' \
+      -H "Authorization: Bearer $MINTED_KEY" "${BASE_URL}/v1/workspace")
+    if [[ "$PROBE" == "401" ]]; then
+      pass "revoked key rejected on subsequent request"
+    else
+      fail "revoked key still works" "HTTP $PROBE"
+    fi
+  fi
+elif is_plan_gate_response; then
+  skip "API key mint regression" "plan-gated"
 else
-  fail "minted key prefix" "got: ${MINTED_KEY:0:16}..."
-fi
-
-# Confirm the new key is listed.
-if [[ -n "$MINTED_KEY_ID" ]]; then
-  api GET "/v1/api-keys"
-  FOUND=$(echo "$RESP_BODY" | jq -r --arg id "$MINTED_KEY_ID" '[.data[] | select(.id == $id)] | length')
-  if [[ "$FOUND" == "1" ]]; then
-    pass "minted key visible in list"
-  else
-    fail "minted key not in list" "id=$MINTED_KEY_ID"
-  fi
-
-  # The minted key itself can read /v1/workspace.
-  PROBE=$(curl -sS -o /tmp/unipost-smoke-mint -w '%{http_code}' \
-    -H "Authorization: Bearer $MINTED_KEY" "${BASE_URL}/v1/workspace")
-  if [[ "$PROBE" == "200" ]]; then
-    pass "minted key can authenticate"
-  else
-    fail "minted key authentication" "HTTP $PROBE"
-  fi
-
-  # Revoke via the original API key.
-  api DELETE "/v1/api-keys/${MINTED_KEY_ID}"
-  assert_status "204" "DELETE /v1/api-keys/{id} (revoke via API key)"
-
-  # The revoked key should no longer authenticate.
-  PROBE=$(curl -sS -o /tmp/unipost-smoke-mint -w '%{http_code}' \
-    -H "Authorization: Bearer $MINTED_KEY" "${BASE_URL}/v1/workspace")
-  if [[ "$PROBE" == "401" ]]; then
-    pass "revoked key rejected on subsequent request"
-  else
-    fail "revoked key still works" "HTTP $PROBE"
-  fi
+  fail "POST /v1/api-keys (mint via API key)" "expected HTTP 201, got $RESP_STATUS — body: ${RESP_BODY:0:200}"
 fi
 
 # Bad token format → 401 (covers DualAuth's prefix branch + Clerk fallback).
@@ -305,7 +321,13 @@ assert_status "200" "GET /v1/api-metrics/overall"
 TODAY=$(date -u +%Y-%m-%d)
 YESTERDAY=$(date -u -v-1d +%Y-%m-%d 2>/dev/null || date -u -d '1 day ago' +%Y-%m-%d)
 api GET "/v1/analytics/summary?from=${YESTERDAY}&to=${TODAY}"
-assert_status "200" "GET /v1/analytics/summary"
+if [[ "$RESP_STATUS" == "200" ]]; then
+  pass "GET /v1/analytics/summary (HTTP 200)"
+elif is_plan_gate_response; then
+  skip "Analytics summary regression" "plan-gated"
+else
+  fail "GET /v1/analytics/summary" "expected HTTP 200, got $RESP_STATUS — body: ${RESP_BODY:0:200}"
+fi
 
 api GET "/v1/platform-credentials"
 assert_status "200" "GET /v1/platform-credentials"
@@ -327,8 +349,14 @@ assert_status "200" "GET /v1/members"
 assert_jq_truthy '.data' 'members data present'
 
 api GET "/v1/audit-log?limit=5"
-assert_status "200" "GET /v1/audit-log"
-assert_jq_truthy '.data' 'audit-log data present'
+if [[ "$RESP_STATUS" == "200" ]]; then
+  pass "GET /v1/audit-log (HTTP 200)"
+  assert_jq_truthy '.data' 'audit-log data present'
+elif is_plan_gate_response; then
+  skip "Audit log regression" "plan-gated"
+else
+  fail "GET /v1/audit-log" "expected HTTP 200, got $RESP_STATUS — body: ${RESP_BODY:0:200}"
+fi
 
 api GET "/v1/logs?limit=2"
 assert_status "200" "GET /v1/logs"
@@ -391,17 +419,23 @@ if [[ -n "$PROFILE_ID" ]]; then
   EXTERNAL_USER_ID="smoke-youtube-$(date -u +%s)"
   api POST "/v1/connect/sessions" "$(jq -nc --arg profile_id "$PROFILE_ID" --arg external_user_id "$EXTERNAL_USER_ID" \
     '{platform:"youtube", profile_id:$profile_id, external_user_id:$external_user_id, return_url:"https://example.com/return"}')"
-  assert_status "201" "POST /v1/connect/sessions (youtube)"
-  assert_jq '.data.platform' 'youtube' 'connect session platform=youtube'
-  assert_jq_truthy '.data.id' 'connect session id present'
-  assert_jq_truthy '.data.url' 'connect session url present'
-  CONNECT_SESSION_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
+  if [[ "$RESP_STATUS" == "201" ]]; then
+    pass "POST /v1/connect/sessions (youtube) (HTTP 201)"
+    assert_jq '.data.platform' 'youtube' 'connect session platform=youtube'
+    assert_jq_truthy '.data.id' 'connect session id present'
+    assert_jq_truthy '.data.url' 'connect session url present'
+    CONNECT_SESSION_ID=$(echo "$RESP_BODY" | jq -r '.data.id // empty')
 
-  if [[ -n "$CONNECT_SESSION_ID" ]]; then
-    api GET "/v1/connect/sessions/${CONNECT_SESSION_ID}"
-    assert_status "200" "GET /v1/connect/sessions/{id} (youtube)"
-    assert_jq '.data.id' "$CONNECT_SESSION_ID" 'connect session id round-trips'
-    assert_jq '.data.platform' 'youtube' 'connect session get platform=youtube'
+    if [[ -n "$CONNECT_SESSION_ID" ]]; then
+      api GET "/v1/connect/sessions/${CONNECT_SESSION_ID}"
+      assert_status "200" "GET /v1/connect/sessions/{id} (youtube)"
+      assert_jq '.data.id' "$CONNECT_SESSION_ID" 'connect session id round-trips'
+      assert_jq '.data.platform' 'youtube' 'connect session get platform=youtube'
+    fi
+  elif is_plan_gate_response; then
+    skip "YouTube connect session regression" "plan-gated"
+  else
+    fail "POST /v1/connect/sessions (youtube)" "expected HTTP 201, got $RESP_STATUS — body: ${RESP_BODY:0:200}"
   fi
 else
   skip "YouTube connect session regression" "no profile available"
@@ -447,10 +481,10 @@ section "Sprint 1 PR3 — Validate endpoint"
 # for tests that don't care about media requirements.
 api GET "/v1/accounts"
 assert_status "200" "GET /v1/accounts"
-TWITTER_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.platform == "twitter")][0].id // empty')
-IG_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.platform == "instagram")][0].id // empty')
-TEXT_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.platform == "twitter" or .platform == "linkedin" or .platform == "bluesky" or .platform == "threads")][0].id // empty')
-ANY_ID=$(echo "$RESP_BODY" | jq -r '.data[0].id // empty')
+TWITTER_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.status == "active" or .status == "connected") | select(.platform == "twitter")][0].id // empty')
+IG_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.status == "active" or .status == "connected") | select(.platform == "instagram")][0].id // empty')
+TEXT_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.status == "active" or .status == "connected") | select(.platform == "twitter" or .platform == "linkedin" or .platform == "bluesky" or .platform == "threads")][0].id // empty')
+ANY_ID=$(echo "$RESP_BODY" | jq -r '[.data[] | select(.status == "active" or .status == "connected")][0].id // empty')
 
 if [[ -z "$ANY_ID" ]]; then
   echo -e "  ${YELLOW}note:${NC} no social accounts in this workspace — most tests below will skip"
@@ -461,14 +495,22 @@ fi
 if [[ -n "$TEXT_ID" ]]; then
   api POST "/v1/posts/validate" "$(jq -nc --arg id "$TEXT_ID" \
     '{platform_posts: [{account_id: $id, caption: "smoke test"}]}')"
-  assert_status "200" "POST /validate happy path (text-friendly account)"
-  assert_jq '.data.valid' 'true' 'validate returns valid=true'
+  if is_validation_plan_gate_response; then
+    skip "validate happy path" "platform plan-gated"
+  else
+    assert_status "200" "POST /validate happy path (text-friendly account)"
+    assert_jq '.data.valid' 'true' 'validate returns valid=true'
+  fi
 elif [[ -n "$ANY_ID" ]]; then
   # Fall back: use any account but allow missing-media to be a soft pass.
   api POST "/v1/posts/validate" "$(jq -nc --arg id "$ANY_ID" \
     '{platform_posts: [{account_id: $id, caption: "smoke test", media_urls: ["https://x/y.jpg"]}]}')"
-  assert_status "200" "POST /validate happy path (with stub media)"
-  assert_jq '.data.valid' 'true' 'validate returns valid=true'
+  if is_validation_plan_gate_response; then
+    skip "validate happy path" "platform plan-gated"
+  else
+    assert_status "200" "POST /validate happy path (with stub media)"
+    assert_jq '.data.valid' 'true' 'validate returns valid=true'
+  fi
 else
   skip "validate happy path" "no account_id available"
 fi
@@ -478,9 +520,13 @@ if [[ -n "$TWITTER_ID" ]]; then
   LONG=$(printf 'a%.0s' $(seq 1 300))
   api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" --arg c "$LONG" \
     '{platform_posts: [{account_id: $id, caption: $c}]}')"
-  assert_status "200" "POST /validate (long caption)"
-  assert_jq '.data.valid' 'false' 'long caption invalid'
-  assert_jq '.data.errors[0].code' 'exceeds_max_length' 'error code = exceeds_max_length'
+  if is_validation_plan_gate_response; then
+    skip "long-caption test" "platform plan-gated"
+  else
+    assert_status "200" "POST /validate (long caption)"
+    assert_jq '.data.valid' 'false' 'long caption invalid'
+    assert_jq '.data.errors[0].code' 'exceeds_max_length' 'error code = exceeds_max_length'
+  fi
 else
   skip "long-caption test" "no twitter account"
 fi
@@ -506,24 +552,28 @@ if [[ -n "$TWITTER_ID" ]]; then
       {account_id: $id, caption: "2/", thread_position: 2},
       {account_id: $id, caption: "3/", thread_position: 3}
     ]}')"
-  assert_jq '.data.valid' 'true' '3-tweet thread valid'
+  if is_validation_plan_gate_response; then
+    skip "thread validation tests" "platform plan-gated"
+  else
+    assert_jq '.data.valid' 'true' '3-tweet thread valid'
 
-  # Missing position 1.
-  api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
-    '{platform_posts: [
-      {account_id: $id, caption: "x", thread_position: 2},
-      {account_id: $id, caption: "y", thread_position: 3}
-    ]}')"
-  assert_jq '.data.errors[0].code' 'thread_positions_not_contiguous' 'positions not contiguous'
+    # Missing position 1.
+    api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
+      '{platform_posts: [
+        {account_id: $id, caption: "x", thread_position: 2},
+        {account_id: $id, caption: "y", thread_position: 3}
+      ]}')"
+    assert_jq '.data.errors[0].code' 'thread_positions_not_contiguous' 'positions not contiguous'
 
-  # Mixed thread + standalone.
-  api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
-    '{platform_posts: [
-      {account_id: $id, caption: "thread 1", thread_position: 1},
-      {account_id: $id, caption: "thread 2", thread_position: 2},
-      {account_id: $id, caption: "standalone"}
-    ]}')"
-  assert_jq '.data.errors[0].code' 'thread_mixed_with_single' 'mixed thread + standalone'
+    # Mixed thread + standalone.
+    api POST "/v1/posts/validate" "$(jq -nc --arg id "$TWITTER_ID" \
+      '{platform_posts: [
+        {account_id: $id, caption: "thread 1", thread_position: 1},
+        {account_id: $id, caption: "thread 2", thread_position: 2},
+        {account_id: $id, caption: "standalone"}
+      ]}')"
+    assert_jq '.data.errors[0].code' 'thread_mixed_with_single' 'mixed thread + standalone'
+  fi
 else
   skip "thread validation tests" "no twitter account"
 fi
@@ -532,7 +582,11 @@ if [[ -n "$IG_ID" ]]; then
   # Threads on a platform that doesn't support them.
   api POST "/v1/posts/validate" "$(jq -nc --arg id "$IG_ID" \
     '{platform_posts: [{account_id: $id, caption: "x", media_urls: ["https://x/y.jpg"], thread_position: 1}]}')"
-  assert_jq '.data.errors | map(.code) | index("threads_unsupported") != null' 'true' 'threads_unsupported on instagram'
+  if is_validation_plan_gate_response; then
+    skip "instagram thread test" "platform plan-gated"
+  else
+    assert_jq '.data.errors | map(.code) | index("threads_unsupported") != null' 'true' 'threads_unsupported on instagram'
+  fi
 else
   skip "instagram thread test" "no instagram account"
 fi
@@ -805,6 +859,8 @@ if [[ "$RESP_STATUS" == "201" ]]; then
     api DELETE "/v1/webhooks/${CUSTOM_WEBHOOK_ID}"
     assert_status "200" "DELETE /v1/webhooks/{id} (custom-secret webhook)"
   fi
+elif is_plan_gate_response; then
+  skip "Webhook CRUD regression" "plan-gated"
 else
   fail "POST /v1/webhooks with custom secret" "HTTP $RESP_STATUS — body: ${RESP_BODY:0:200}"
 fi
@@ -851,6 +907,8 @@ if [[ "$RESP_STATUS" == "201" ]]; then
   # Cleanup.
   api DELETE "/v1/webhooks/${WEBHOOK_ID}"
   assert_status "200" "DELETE /v1/webhooks/{id}"
+elif is_plan_gate_response; then
+  skip "Webhook CRUD regression" "plan-gated"
 else
   fail "POST /v1/webhooks" "HTTP $RESP_STATUS — body: ${RESP_BODY:0:200}"
 fi

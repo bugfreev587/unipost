@@ -28,6 +28,43 @@ import (
 
 var errOAuthPKCEExchangeObserved = errors.New("exchange observed")
 
+func TestFacebookOAuthConnectAllowsRegularUser(t *testing.T) {
+	store := &oauthPKCETestDB{}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	h := NewOAuthHandler(db.New(store), encryptor, nil)
+	h.baseRedirectURL = "https://api.example"
+	t.Setenv("FACEBOOK_APP_ID", "facebook-client-id")
+	t.Setenv("FACEBOOK_APP_SECRET", "facebook-client-secret")
+
+	previous, err := platform.Get("facebook")
+	if err != nil {
+		previous = nil
+	}
+	platform.Register(platform.NewFacebookAdapter())
+	t.Cleanup(func() {
+		if previous != nil {
+			platform.Register(previous)
+		}
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/profiles/pr_1/oauth/connect/facebook", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = withOAuthPKCEChiParams(req, map[string]string{"profileID": "pr_1", "platform": "facebook"})
+	rec := httptest.NewRecorder()
+
+	h.Connect(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "FACEBOOK_DISABLED") {
+		t.Fatalf("regular user Facebook OAuth is still audit-gated: %s", rec.Body.String())
+	}
+}
+
 func TestOAuthPKCEConnectStoresRandomVerifierAndUsesItForTwitterChallenge(t *testing.T) {
 	store := &oauthPKCETestDB{}
 	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))

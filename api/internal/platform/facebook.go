@@ -85,7 +85,6 @@ var facebookPagesBaseScopes = []string{
 	"pages_read_engagement",
 	"pages_read_user_content",
 	"pages_manage_engagement",
-	"pages_messaging",
 	"pages_manage_metadata",
 }
 
@@ -93,11 +92,15 @@ var facebookPageAnalyticsScopes = []string{
 	"read_insights",
 }
 
+var facebookMessengerScopes = []string{
+	"pages_messaging",
+}
+
 // FacebookPagesScopes is the full permission set the PRD lists for Facebook
 // Pages, including optional analytics scopes. Exported so tests and dashboard
 // docs can reference the canonical review list. OAuth requests use
 // FacebookOAuthScopes so production can keep unapproved read scopes disabled.
-var FacebookPagesScopes = append(append([]string(nil), facebookPagesBaseScopes...), facebookPageAnalyticsScopes...)
+var FacebookPagesScopes = append(append(append([]string(nil), facebookPagesBaseScopes...), facebookPageAnalyticsScopes...), facebookMessengerScopes...)
 
 func (a *FacebookAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 	// Meta reuses the same App for IG/Threads/Facebook Pages; the
