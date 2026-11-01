@@ -77,8 +77,8 @@ func (h *SocialAccountHandler) TikTokCreatorInfo(w http.ResponseWriter, r *http.
 
 	accessToken, err := h.encryptor.Decrypt(acc.AccessToken)
 	if err != nil {
-		slog.Error("tiktok creator_info: decrypt access token failed", "account_id", acc.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to decrypt access token")
+		slog.Warn("tiktok creator_info: decrypt access token failed; user must reconnect", "account_id", acc.ID, "error", err)
+		writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Your TikTok connection has expired. Please reconnect the account.")
 		return
 	}
 
