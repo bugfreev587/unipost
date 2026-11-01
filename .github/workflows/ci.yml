@@ -291,7 +291,10 @@ jobs:
         run: npm run test:youtube-compliance
 
       - name: Build dashboard
-        run: npm run build
+        # Next 16 Turbopack intermittently fails to resolve next/font/google's
+        # internal virtual module on clean GitHub runners. Keep CI deterministic
+        # by using the supported Webpack build path for this required gate.
+        run: npm run build -- --webpack
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium

@@ -24,9 +24,13 @@ test('smoke regression only selects active account fixtures', () => {
 
 test('smoke regression treats plan gates as capability skips', () => {
   assert.match(smoke, /is_plan_gate_response\(\)/);
+  assert.match(smoke, /is_validation_plan_gate_response\(\)/);
   assert.match(smoke, /skip "API key mint regression" "plan-gated"/);
   assert.match(smoke, /skip "Analytics summary regression" "plan-gated"/);
   assert.match(smoke, /skip "Audit log regression" "plan-gated"/);
   assert.match(smoke, /skip "YouTube connect session regression" "plan-gated"/);
   assert.match(smoke, /skip "Webhook CRUD regression" "plan-gated"/);
+  assert.match(smoke, /skip "validate happy path" "platform plan-gated"/);
+  assert.match(smoke, /skip "long-caption test" "platform plan-gated"/);
+  assert.match(smoke, /skip "thread validation tests" "platform plan-gated"/);
 });
