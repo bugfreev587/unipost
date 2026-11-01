@@ -164,7 +164,7 @@ function assertPublishingRestrictionCIContracts({ packageJson, workflow }) {
   );
   assert.equal(contractsStep.run, "npm run test:publishing-restrictions");
   const buildStep = requiredStep(dashboardJob, "Build dashboard", "jobs.dashboard");
-  assert.equal(buildStep.run, "npm run build");
+  assert.equal(buildStep.run, "npm run build -- --webpack");
   assert.ok(
     dashboardJob.steps.indexOf(contractsStep) < dashboardJob.steps.indexOf(buildStep),
     "publishing restriction contracts must run before the dashboard build",
