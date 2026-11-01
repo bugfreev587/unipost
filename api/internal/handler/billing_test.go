@@ -145,7 +145,7 @@ func TestListTrialHistoryReturnsNewestFirstAndRedactsInternals(t *testing.T) {
 	}
 }
 
-func TestResolveTrialStripeCustomerValidatesCandidateBeforeReuse(t *testing.T) {
+func TestResolveStripeCustomerValidatesCandidateBeforeReuse(t *testing.T) {
 	for _, test := range []struct {
 		name           string
 		candidate      *stripe.Customer
@@ -168,7 +168,7 @@ func TestResolveTrialStripeCustomerValidatesCandidateBeforeReuse(t *testing.T) {
 				retrieveResult: test.candidate, retrieveErr: test.retrieveErr,
 				createResult: &stripe.Customer{ID: "cus_new"},
 			}
-			got, err := resolveTrialStripeCustomer(t.Context(), client, "cus_existing", "ws_1", "owner_1", "Workspace", "owner@example.com", "live")
+			got, err := resolveStripeCustomer(t.Context(), client, "cus_existing", "ws_1", "owner_1", "Workspace", "owner@example.com", "live")
 			if test.wantErr {
 				if err == nil || client.createCalls != 0 {
 					t.Fatalf("id=%q error=%v createCalls=%d", got, err, client.createCalls)
@@ -182,9 +182,9 @@ func TestResolveTrialStripeCustomerValidatesCandidateBeforeReuse(t *testing.T) {
 	}
 }
 
-func TestResolveTrialStripeCustomerCreatesStableCustomerWhenCandidateAbsent(t *testing.T) {
+func TestResolveStripeCustomerCreatesStableCustomerWhenCandidateAbsent(t *testing.T) {
 	client := &fakeStripeCustomerService{createResult: &stripe.Customer{ID: "cus_new"}}
-	got, err := resolveTrialStripeCustomer(t.Context(), client, "", "ws_1", "owner_1", "Workspace", "owner@example.com", "sandbox")
+	got, err := resolveStripeCustomer(t.Context(), client, "", "ws_1", "owner_1", "Workspace", "owner@example.com", "sandbox")
 	if err != nil || got != "cus_new" || client.retrieveCalls != 0 || client.createCalls != 1 {
 		t.Fatalf("id=%q error=%v retrieve=%d create=%d", got, err, client.retrieveCalls, client.createCalls)
 	}
