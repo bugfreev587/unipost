@@ -120,6 +120,49 @@ type managedUserListEntry struct {
 	LastRefreshedAt   *time.Time     `json:"last_refreshed_at,omitempty"`
 }
 
+// managedUserPlatforms is the supported Connect platform set, in the order the
+// dashboard renders platform badges. Every key here is always present in
+// platform_counts, including with a zero value, so a client can rely on the
+// object describing the complete supported surface rather than only the
+// platforms that happen to be connected.
+//
+// This list must stay in sync with the connect_sessions platform CHECK
+// constraint. Before the fix, only twitter/linkedin/bluesky/youtube were
+// counted, so an App User with a TikTok account reported account_count = 2
+// while the list rendered a single platform icon.
+var managedUserPlatforms = []string{
+	"twitter",
+	"linkedin",
+	"bluesky",
+	"youtube",
+	"tiktok",
+	"instagram",
+	"threads",
+	"facebook",
+	"pinterest",
+}
+
+// managedUserPlatformCounts maps one aggregated list row onto the full
+// platform_counts object. It seeds every supported platform to zero first, so
+// adding a platform to managedUserPlatforms without wiring its aggregate here
+// degrades to an explicit zero rather than a missing key.
+func managedUserPlatformCounts(row db.ListManagedUsersByProfileRow) map[string]int {
+	counts := make(map[string]int, len(managedUserPlatforms))
+	for _, platform := range managedUserPlatforms {
+		counts[platform] = 0
+	}
+	counts["twitter"] = int(row.TwitterCount)
+	counts["linkedin"] = int(row.LinkedinCount)
+	counts["bluesky"] = int(row.BlueskyCount)
+	counts["youtube"] = int(row.YoutubeCount)
+	counts["tiktok"] = int(row.TiktokCount)
+	counts["instagram"] = int(row.InstagramCount)
+	counts["threads"] = int(row.ThreadsCount)
+	counts["facebook"] = int(row.FacebookCount)
+	counts["pinterest"] = int(row.PinterestCount)
+	return counts
+}
+
 // managedUserDetail is the GET /v1/users/{id} response shape. Same
 // header info as the list entry plus the full per-account list so
 // the dashboard detail page can render account cards.
@@ -168,15 +211,10 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 			ExternalUserID:    row.ExternalUserID,
 			ExternalUserEmail: row.ExternalUserEmail,
 			AccountCount:      int(row.AccountCount),
-			PlatformCounts: map[string]int{
-				"twitter":  int(row.TwitterCount),
-				"linkedin": int(row.LinkedinCount),
-				"bluesky":  int(row.BlueskyCount),
-				"youtube":  int(row.YoutubeCount),
-			},
-			ReconnectCount:   int(row.ReconnectCount),
+			PlatformCounts:    managedUserPlatformCounts(row),
+			ReconnectCount:    int(row.ReconnectCount),
 			DisconnectedCount: int(row.DisconnectedCount),
-			FirstConnectedAt: row.FirstConnectedAt.Time,
+			FirstConnectedAt:  row.FirstConnectedAt.Time,
 		}
 		if row.LastRefreshedAt.Valid {
 			t := row.LastRefreshedAt.Time

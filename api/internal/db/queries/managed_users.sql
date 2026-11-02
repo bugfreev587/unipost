@@ -6,10 +6,19 @@ SELECT
     ''
   )::TEXT AS external_user_email,
   COUNT(*)::INTEGER AS account_count,
-  COUNT(*) FILTER (WHERE platform = 'twitter')::INTEGER  AS twitter_count,
-  COUNT(*) FILTER (WHERE platform = 'linkedin')::INTEGER AS linkedin_count,
-  COUNT(*) FILTER (WHERE platform = 'bluesky')::INTEGER  AS bluesky_count,
-  COUNT(*) FILTER (WHERE platform = 'youtube')::INTEGER  AS youtube_count,
+  -- One count per supported Connect platform. Keep this list in sync with the
+  -- connect_sessions platform CHECK constraint (migration 074): a platform that
+  -- is connectable but missing here makes the App Users row under-report its
+  -- icons while COUNT(*) still reports the true total.
+  COUNT(*) FILTER (WHERE platform = 'twitter')::INTEGER   AS twitter_count,
+  COUNT(*) FILTER (WHERE platform = 'linkedin')::INTEGER  AS linkedin_count,
+  COUNT(*) FILTER (WHERE platform = 'bluesky')::INTEGER   AS bluesky_count,
+  COUNT(*) FILTER (WHERE platform = 'youtube')::INTEGER   AS youtube_count,
+  COUNT(*) FILTER (WHERE platform = 'tiktok')::INTEGER    AS tiktok_count,
+  COUNT(*) FILTER (WHERE platform = 'instagram')::INTEGER AS instagram_count,
+  COUNT(*) FILTER (WHERE platform = 'threads')::INTEGER   AS threads_count,
+  COUNT(*) FILTER (WHERE platform = 'facebook')::INTEGER  AS facebook_count,
+  COUNT(*) FILTER (WHERE platform = 'pinterest')::INTEGER AS pinterest_count,
   COUNT(*) FILTER (WHERE status = 'reconnect_required')::INTEGER AS reconnect_count,
   COUNT(*) FILTER (WHERE disconnected_at IS NOT NULL OR status = 'disconnected')::INTEGER AS disconnected_count,
   MIN(connected_at)::TIMESTAMPTZ   AS first_connected_at,

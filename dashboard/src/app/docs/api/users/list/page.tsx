@@ -14,7 +14,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "data[].external_user_id", type: "string", description: "Your own stable end-user identifier." },
   { name: "data[].external_user_email", type: "string | null", description: "Optional email captured during onboarding." },
   { name: "data[].account_count", type: "number", description: "Total connected accounts for that managed user." },
-  { name: "data[].platform_counts", type: "object", description: "Breakdown of connected accounts by platform." },
+  { name: "data[].platform_counts", type: "object", description: "Breakdown of connected accounts by platform. Contains an entry for every supported Connect platform, including platforms with a count of 0, so the values sum to account_count." },
   { name: "data[].reconnect_count", type: "number", description: "How many accounts need reconnect attention." },
   { name: "meta.total", type: "number", description: "Total number of managed users available for this profile/workspace scope." },
   { name: "meta.limit", type: "number", description: "Applied list limit for this response." },
@@ -99,8 +99,15 @@ const RESPONSE_SNIPPETS = [
       "external_user_email": "alex@example.com",
       "account_count": 3,
       "platform_counts": {
+        "twitter": 0,
+        "linkedin": 2,
+        "bluesky": 0,
+        "youtube": 0,
+        "tiktok": 0,
         "instagram": 1,
-        "linkedin": 2
+        "threads": 0,
+        "facebook": 0,
+        "pinterest": 0
       },
       "reconnect_count": 0
     }

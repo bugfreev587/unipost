@@ -290,6 +290,9 @@ jobs:
       - name: Run YouTube UI compliance contracts
         run: npm run test:youtube-compliance
 
+      - name: Run App Users platform coverage and inline expansion contracts
+        run: npm run test:app-users
+
       - name: Build dashboard
         # Next 16 Turbopack intermittently fails to resolve next/font/google's
         # internal virtual module on clean GitHub runners. Keep CI deterministic
