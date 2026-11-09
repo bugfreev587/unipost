@@ -53,6 +53,9 @@ function formatApiErrorMessage(args: {
 }
 
 export function canonicalizeApiPath(path: string): string {
+  if (path === "/v1/social-accounts" || path.startsWith("/v1/social-accounts?") || path.startsWith("/v1/social-accounts/")) {
+    return "/v1/accounts" + path.slice("/v1/social-accounts".length);
+  }
   if (path === "/v1/social-posts") {
     return "/v1/posts";
   }
