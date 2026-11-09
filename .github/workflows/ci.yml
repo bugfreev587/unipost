@@ -246,7 +246,7 @@ jobs:
 
   dashboard:
     name: Dashboard build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       NEXT_TELEMETRY_DISABLED: "1"
