@@ -33,7 +33,7 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'hotfix-') ||
       startsWith(github.event.pull_request.head.ref, 'codex/staging-') ||
       startsWith(github.event.pull_request.head.ref, 'codex/pr270-'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       HEAD_REF: ${{ github.event.pull_request.head.ref }}
