@@ -17,11 +17,14 @@ async function withServer(handler, run) {
   }
 }
 
-test("canonicalizeApiPath maps legacy social-posts routes to canonical posts routes", () => {
+test("canonicalizeApiPath maps legacy post and account routes to canonical API routes", () => {
   assert.equal(canonicalizeApiPath("/v1/social-posts"), "/v1/posts");
   assert.equal(canonicalizeApiPath("/v1/social-posts/validate"), "/v1/posts/validate");
   assert.equal(canonicalizeApiPath("/v1/social-posts/post_123/analytics"), "/v1/posts/post_123/analytics");
-  assert.equal(canonicalizeApiPath("/v1/social-accounts"), "/v1/social-accounts");
+  assert.equal(canonicalizeApiPath("/v1/social-accounts"), "/v1/accounts");
+  assert.equal(canonicalizeApiPath("/v1/social-accounts?platform=twitter"), "/v1/accounts?platform=twitter");
+  assert.equal(canonicalizeApiPath("/v1/social-accounts/acc_123/health"), "/v1/accounts/acc_123/health");
+  assert.equal(canonicalizeApiPath("/v1/social-accounts-extra"), "/v1/social-accounts-extra");
 });
 
 test("apiRequest throws structured UniPostApiError for non-2xx API responses", async () => {
