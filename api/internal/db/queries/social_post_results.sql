@@ -228,3 +228,26 @@ SET remotely_deleted_at = COALESCE(remotely_deleted_at, NOW()),
     error_message       = COALESCE(error_message, $3)
 WHERE social_account_id = $1
   AND external_id       = $2;
+
+-- name: ListAccountHealthResults :many
+-- Health follows terminal outcomes, excluding deliberate pre-dispatch cancellations.
+-- A result has no created_at; use its newest delivery completion, then parent time.
+SELECT r.status, r.error_message, r.error_code, r.published_at,
+       COALESCE(r.published_at, job.finished_at, p.created_at)::timestamptz AS occurred_at,
+       (MAX(r.published_at) FILTER (WHERE r.status = 'published') OVER ())::timestamptz AS last_successful_post_at
+FROM social_post_results r
+JOIN social_posts p ON p.id = r.post_id
+LEFT JOIN LATERAL (
+  SELECT j.state, j.finished_at
+  FROM post_delivery_jobs j
+  WHERE j.social_post_result_id = r.id
+  ORDER BY j.created_at DESC, j.id DESC
+  LIMIT 1
+) job ON true
+WHERE r.social_account_id = $1
+  AND r.status IN ('published', 'failed')
+  AND COALESCE(r.error_code, '') <> 'delivery_cancelled'
+  AND COALESCE(r.error_message, '') <> 'Delivery cancelled before provider dispatch.'
+  AND COALESCE(job.state, '') <> 'cancelled'
+ORDER BY occurred_at DESC, r.id DESC
+LIMIT $2;

@@ -163,19 +163,24 @@ func (w *PostDispatchWorker) Start(ctx context.Context) {
 }
 
 func (w *PostDispatchWorker) runOnce(ctx context.Context) {
-	if err := w.postHandler.RecoverStaleDeliveryJobs(ctx, staleDeliveryAttemptTimeout); err != nil {
+	recoveryCtx, cancelRecovery := context.WithTimeout(ctx, 10*time.Second)
+	recoveryErr := w.postHandler.RecoverStaleDeliveryJobs(recoveryCtx, staleDeliveryAttemptTimeout)
+	cancelRecovery()
+	if err := recoveryErr; err != nil {
 		slog.Error("post dispatch worker: stale recovery failed", "error", err)
 	}
 	claimLimit := w.executor.reserveSlots(w.config.ClaimBatchLimit)
 	if claimLimit <= 0 {
 		return
 	}
-	jobs, err := w.queries.ClaimPostDispatchJobs(ctx, db.ClaimPostDispatchJobsParams{
+	claimCtx, cancelClaim := context.WithTimeout(ctx, 10*time.Second)
+	jobs, err := w.queries.ClaimPostDispatchJobs(claimCtx, db.ClaimPostDispatchJobsParams{
 		BatchLimit:             claimLimit,
 		WorkspaceConcurrentCap: w.config.WorkspaceConcurrentCap,
 		LeaseSeconds:           leaseSecondsArg(),
 		LeaseOwner:             leaseOwnerArg(),
 	})
+	cancelClaim()
 	if err != nil {
 		w.executor.releaseReservedSlots(int(claimLimit))
 		slog.Error("post dispatch worker: claim failed", "error", err)
@@ -247,19 +252,24 @@ func (w *PostRetryWorker) Start(ctx context.Context) {
 }
 
 func (w *PostRetryWorker) runOnce(ctx context.Context) {
-	if err := w.postHandler.RecoverStaleDeliveryJobs(ctx, staleDeliveryAttemptTimeout); err != nil {
+	recoveryCtx, cancelRecovery := context.WithTimeout(ctx, 10*time.Second)
+	recoveryErr := w.postHandler.RecoverStaleDeliveryJobs(recoveryCtx, staleDeliveryAttemptTimeout)
+	cancelRecovery()
+	if err := recoveryErr; err != nil {
 		slog.Error("post retry worker: stale recovery failed", "error", err)
 	}
 	claimLimit := w.executor.reserveSlots(w.config.ClaimBatchLimit)
 	if claimLimit <= 0 {
 		return
 	}
-	jobs, err := w.queries.ClaimPostRetryJobs(ctx, db.ClaimPostRetryJobsParams{
+	claimCtx, cancelClaim := context.WithTimeout(ctx, 10*time.Second)
+	jobs, err := w.queries.ClaimPostRetryJobs(claimCtx, db.ClaimPostRetryJobsParams{
 		BatchLimit:             claimLimit,
 		WorkspaceConcurrentCap: w.config.WorkspaceConcurrentCap,
 		LeaseSeconds:           leaseSecondsArg(),
 		LeaseOwner:             leaseOwnerArg(),
 	})
+	cancelClaim()
 	if err != nil {
 		w.executor.releaseReservedSlots(int(claimLimit))
 		slog.Error("post retry worker: claim failed", "error", err)
