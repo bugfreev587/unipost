@@ -210,6 +210,71 @@ func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSoc
 	return i, err
 }
 
+const listAccountHealthResults = `-- name: ListAccountHealthResults :many
+SELECT r.status, r.error_message, r.error_code, r.published_at,
+       COALESCE(r.published_at, job.finished_at, p.created_at)::timestamptz AS occurred_at,
+       (MAX(r.published_at) FILTER (WHERE r.status = 'published') OVER ())::timestamptz AS last_successful_post_at
+FROM social_post_results r
+JOIN social_posts p ON p.id = r.post_id
+LEFT JOIN LATERAL (
+  SELECT j.state, j.finished_at
+  FROM post_delivery_jobs j
+  WHERE j.social_post_result_id = r.id
+  ORDER BY j.created_at DESC, j.id DESC
+  LIMIT 1
+) job ON true
+WHERE r.social_account_id = $1
+  AND r.status IN ('published', 'failed')
+  AND COALESCE(r.error_code, '') <> 'delivery_cancelled'
+  AND COALESCE(r.error_message, '') <> 'Delivery cancelled before provider dispatch.'
+  AND COALESCE(job.state, '') <> 'cancelled'
+ORDER BY occurred_at DESC, r.id DESC
+LIMIT $2
+`
+
+type ListAccountHealthResultsParams struct {
+	SocialAccountID string `json:"social_account_id"`
+	Limit           int32  `json:"limit"`
+}
+
+type ListAccountHealthResultsRow struct {
+	Status               string             `json:"status"`
+	ErrorMessage         pgtype.Text        `json:"error_message"`
+	ErrorCode            pgtype.Text        `json:"error_code"`
+	PublishedAt          pgtype.Timestamptz `json:"published_at"`
+	OccurredAt           pgtype.Timestamptz `json:"occurred_at"`
+	LastSuccessfulPostAt pgtype.Timestamptz `json:"last_successful_post_at"`
+}
+
+// Health follows terminal outcomes, excluding deliberate pre-dispatch cancellations.
+// A result has no created_at; use its newest delivery completion, then parent time.
+func (q *Queries) ListAccountHealthResults(ctx context.Context, arg ListAccountHealthResultsParams) ([]ListAccountHealthResultsRow, error) {
+	rows, err := q.db.Query(ctx, listAccountHealthResults, arg.SocialAccountID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAccountHealthResultsRow{}
+	for rows.Next() {
+		var i ListAccountHealthResultsRow
+		if err := rows.Scan(
+			&i.Status,
+			&i.ErrorMessage,
+			&i.ErrorCode,
+			&i.PublishedAt,
+			&i.OccurredAt,
+			&i.LastSuccessfulPostAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFacebookVideosAwaitingStatus = `-- name: ListFacebookVideosAwaitingStatus :many
 SELECT
   spr.id                     AS social_post_result_id,

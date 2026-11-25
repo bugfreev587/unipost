@@ -203,6 +203,7 @@ func main() {
 		slog.Error("unable to parse database config", "error", err)
 		os.Exit(1)
 	}
+	configureDatabaseConnectionTimeout(poolConfig)
 	poolConfig.MaxConns = dbPoolMaxConnsForMode(processMode, deliveryWorkerConfig)
 	slog.Info("database pool configured", "process_mode", processMode, "max_conns", poolConfig.MaxConns)
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
@@ -724,7 +725,7 @@ func main() {
 		if processMode == processModeMediaWorker {
 			processName = "media worker"
 		}
-		waitForProcessShutdown(processName, workerCancel, port)
+		waitForProcessShutdown(processName, workerCancel, port, pool.Ping)
 		debugWaitCtx, debugWaitCancel := context.WithTimeout(context.Background(), 4*time.Second)
 		waitForPostFailureDebugShutdown(debugWaitCtx, postFailureDebugWriter)
 		debugWaitCancel()
@@ -1677,20 +1678,37 @@ func shouldStartMediaProcessingWorkers(mode string) bool {
 	return !strings.EqualFold(os.Getenv("MEDIA_PROCESSING_WORKER_DISABLE_API_PROCESSING"), "true")
 }
 
-func newWorkerHealthHandler() http.Handler {
+// Bound connection establishment even when the private network silently drops packets.
+func configureDatabaseConnectionTimeout(config *pgxpool.Config) {
+	if config.ConnConfig.ConnectTimeout <= 0 || config.ConnConfig.ConnectTimeout > 5*time.Second {
+		config.ConnConfig.ConnectTimeout = 5 * time.Second
+	}
+}
+
+func newWorkerHealthHandler(probes ...func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		for _, probe := range probes {
+			probeCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			err := probe(probeCtx)
+			cancel()
+			if err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"status":"degraded","database":"unavailable"}`))
+				return
+			}
+		}
 		_, _ = w.Write([]byte(`{"status":"ok","version":"0.1.0"}`))
 	})
 	return mux
 }
 
-func waitForProcessShutdown(name string, cancel context.CancelFunc, port string) {
+func waitForProcessShutdown(name string, cancel context.CancelFunc, port string, probes ...func(context.Context) error) {
 	slog.Info(name + " process started")
 	srv := &http.Server{
 		Addr:    ":" + port,
-		Handler: newWorkerHealthHandler(),
+		Handler: newWorkerHealthHandler(probes...),
 	}
 	go func() {
 		slog.Info(name+" health server starting", "port", port)
