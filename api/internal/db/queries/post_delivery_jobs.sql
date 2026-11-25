@@ -240,7 +240,15 @@ SELECT
     WHERE j.state = 'succeeded'
       AND j.kind = 'retry'
       AND j.finished_at >= date_trunc('day', NOW())
-  )::bigint AS recovered_today_count
+  )::bigint AS recovered_today_count,
+  MIN(COALESCE(j.next_run_at, j.created_at)) FILTER (
+    WHERE j.state = 'pending' AND j.dismissed_at IS NULL
+      AND COALESCE(j.next_run_at, j.created_at) <= NOW()
+  )::timestamptz AS oldest_pending_at,
+  COALESCE((EXTRACT(EPOCH FROM (NOW() - MIN(COALESCE(j.next_run_at, j.created_at)) FILTER (
+    WHERE j.state = 'pending' AND j.dismissed_at IS NULL
+      AND COALESCE(j.next_run_at, j.created_at) <= NOW()
+  ))) * 1000)::bigint, 0)::bigint AS oldest_pending_age_ms
 FROM post_delivery_jobs j
 LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
 WHERE j.workspace_id = $1;
