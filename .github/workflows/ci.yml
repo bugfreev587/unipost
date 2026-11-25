@@ -100,6 +100,9 @@ jobs:
           go-version-file: api/go.mod
           cache-dependency-path: api/go.sum
 
+      - name: Run delivery health PostgreSQL regression
+        run: go test -tags=integration ./internal/db -run '^TestDeliveryHealthPostgresCancellationOrderingAndQueueAge$' -count=1 -v
+
       - name: Run publishing restriction and migration gate PostgreSQL integration tests
         run: |
           set -euo pipefail
@@ -246,7 +249,7 @@ jobs:
 
   dashboard:
     name: Dashboard build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       NEXT_TELEMETRY_DISABLED: "1"
