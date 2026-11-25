@@ -1,19 +1,3 @@
-// social_account_health.go is the Sprint 2 W7 endpoint:
-//
-//   GET /v1/social-accounts/{id}/health
-//
-// Cheap derivation from existing tables — no active probing, no new
-// background workers. Status is computed from the most recent N=10
-// social_post_results rows for the account:
-//
-//   - all 10 successful → ok
-//   - any of the 10 failed → degraded (with last_error pointing at
-//     the most recent failure)
-//   - account row marked disconnected → disconnected (overrides)
-//
-// Sprint 3 will add active token-expiry probing and a richer
-// "warning" tier — for now we have ok / degraded / disconnected.
-
 package handler
 
 import (
@@ -22,15 +6,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/jackc/pgx/v5"
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
-// healthRecentResultLimit is how many recent results we look at to
-// derive "degraded" status. Small enough to be cheap, large enough
-// that one stale failure rolls off after a few successful posts.
+// healthRecentResultLimit bounds terminal outcome history returned for account health.
 const healthRecentResultLimit = 10
 
 type accountHealthLastError struct {
@@ -94,49 +76,44 @@ func (h *SocialAccountHandler) AccountHealth(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Walk the last N results to derive ok / degraded.
-	results, err := h.queries.ListRecentResultsByAccount(r.Context(), db.ListRecentResultsByAccountParams{
+	results, err := h.queries.ListAccountHealthResults(r.Context(), db.ListAccountHealthResultsParams{
 		SocialAccountID: acc.ID,
 		Limit:           healthRecentResultLimit,
 	})
 	if err != nil {
-		// Don't fail the whole endpoint just because the results
-		// query hiccupped — return the static fields with a generic
-		// "ok" so the dashboard always has something to render.
-		writeSuccess(w, resp)
+		writeError(w, http.StatusServiceUnavailable, "HEALTH_UNAVAILABLE", "Failed to load account health")
 		return
 	}
+	applyAccountHealthResults(&resp, results)
+	writeSuccess(w, resp)
+}
 
+// Results are ordered by the actual terminal outcome time, newest first.
+// A newer successful publish resolves earlier errors; historical cancellations
+// are excluded by the query and never represent a provider/account failure.
+func applyAccountHealthResults(resp *accountHealthResponse, results []db.ListAccountHealthResultsRow) {
 	for _, res := range results {
-		switch res.Status {
-		case "published":
-			if res.PublishedAt.Valid {
-				if resp.LastSuccessfulPostAt == nil || res.PublishedAt.Time.After(*resp.LastSuccessfulPostAt) {
-					t := res.PublishedAt.Time
-					resp.LastSuccessfulPostAt = &t
-				}
+		if res.LastSuccessfulPostAt.Valid {
+			t := res.LastSuccessfulPostAt.Time
+			resp.LastSuccessfulPostAt = &t
+		}
+		if res.Status == "published" && res.PublishedAt.Valid {
+			if resp.LastSuccessfulPostAt == nil || res.PublishedAt.Time.After(*resp.LastSuccessfulPostAt) {
+				t := res.PublishedAt.Time
+				resp.LastSuccessfulPostAt = &t
 			}
-		case "failed":
-			if resp.LastError == nil ||
-				(res.PublishedAt.Valid && res.PublishedAt.Time.After(resp.LastError.OccurredAt)) {
-				msg := ""
-				if res.ErrorMessage.Valid {
-					msg = res.ErrorMessage.String
-				}
-				occurred := time.Time{}
-				if res.PublishedAt.Valid {
-					occurred = res.PublishedAt.Time
-				}
-				resp.LastError = &accountHealthLastError{
-					Code:       categorizeAccountError(msg),
-					Message:    msg,
-					OccurredAt: occurred,
-				}
-			}
-			resp.Status = "degraded"
 		}
 	}
-
-	writeSuccess(w, resp)
+	if len(results) == 0 || results[0].Status != "failed" {
+		return
+	}
+	res := results[0]
+	resp.Status = "degraded"
+	resp.LastError = &accountHealthLastError{
+		Code:       categorizeAccountError(res.ErrorMessage.String),
+		Message:    res.ErrorMessage.String,
+		OccurredAt: res.OccurredAt.Time,
+	}
 }
 
 // categorizeAccountError walks the platform's free-form error message
